@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Finance</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: #fafafa;
+    color: #1a1a1a;
+    padding: 2rem;
+    max-width: 1000px;
+    margin: 0 auto;
+  }
+  h1 { font-weight: 500; font-size: 1.6rem; margin-bottom: 0.25rem; }
+  .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 2rem; }
+  .totals {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 2.5rem;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 8px;
+    padding: 1.1rem 1.3rem;
+  }
+  .card .label { color: #888; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .card .value { font-size: 1.4rem; font-weight: 500; margin-top: 0.3rem; }
+  .card.net .value { color: #1a7f3e; }
+  .card.credit .value { color: #b0001f; }
+  h2 {
+    font-weight: 500;
+    font-size: 1.1rem;
+    margin: 2rem 0 0.75rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid #eee;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.5rem;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  th { font-weight: 500; color: #888; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.num { text-align: right; }
+  .muted { color: #999; }
+  .error { color: #b00020; font-size: 0.85rem; margin-top: 0.5rem; }
+  .empty {
+    background: #fff;
+    border: 1px dashed #ddd;
+    border-radius: 8px;
+    padding: 2rem;
+    text-align: center;
+    color: #666;
+  }
+  code {
+    background: #f0f0f0;
+    padding: 0.15rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.85em;
+  }
+</style>
+</head>
+<body>
+
+<h1>Finance</h1>
+<p class="subtitle">Live balances from Plaid</p>
+
+{% if no_user %}
+<div class="empty">
+  <p>No user provisioned yet.</p>
+  <p style="margin-top:0.5rem;font-size:0.85rem;">
+    Run <code>python code/cli.py seed-me</code> to migrate <code>permissions.env</code> into the DB.
+  </p>
+</div>
+{% elif not linked %}
+<div class="empty">
+  <p>No accounts linked yet.</p>
+  <p style="margin-top:0.5rem;font-size:0.85rem;">
+    Run <code>python code/enroll_plaid.py</code> to connect a bank or brokerage.
+  </p>
+</div>
+{% else %}
+
+<div class="totals">
+  <div class="card">
+    <div class="label">Cash</div>
+    <div class="value">${{ "{:,.2f}".format(cash_total) }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Investments</div>
+    <div class="value">${{ "{:,.2f}".format(investment_total) }}</div>
+  </div>
+  <div class="card credit">
+    <div class="label">Credit Owed</div>
+    <div class="value">${{ "{:,.2f}".format(credit_total) }}</div>
+  </div>
+  <div class="card net">
+    <div class="label">Net</div>
+    <div class="value">${{ "{:,.2f}".format(net_total) }}</div>
+  </div>
+</div>
+
+{% macro account_table(accounts) %}
+<table>
+  <thead>
+    <tr>
+      <th>Institution</th>
+      <th>Account</th>
+      <th>Type</th>
+      <th>Mask</th>
+      <th class="num">Available</th>
+      <th class="num">Balance</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for a in accounts %}
+    <tr>
+      <td>{{ a.institution }}</td>
+      <td>{{ a.name }}</td>
+      <td class="muted">{{ a.type }}</td>
+      <td class="muted">{{ "****" + a.mask if a.mask else "—" }}</td>
+      <td class="num">{% if a.available is not none %}${{ "{:,.2f}".format(a.available) }}{% else %}—{% endif %}</td>
+      <td class="num">{% if a.balance is not none %}${{ "{:,.2f}".format(a.balance) }}{% else %}—{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endmacro %}
+
+{% if cash_accounts %}
+<h2>Cash</h2>
+{{ account_table(cash_accounts) }}
+{% endif %}
+
+{% if credit_accounts %}
+<h2>Credit Cards</h2>
+{{ account_table(credit_accounts) }}
+{% endif %}
+
+{% if investment_accounts %}
+<h2>Investment Accounts</h2>
+{{ account_table(investment_accounts) }}
+{% endif %}
+
+{% if other_accounts %}
+<h2>Other</h2>
+{{ account_table(other_accounts) }}
+{% endif %}
+
+{% if holdings %}
+<h2>Holdings</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Institution</th>
+      <th>Security</th>
+      <th>Ticker</th>
+      <th class="num">Shares</th>
+      <th class="num">Price</th>
+      <th class="num">Value</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for h in holdings %}
+    <tr>
+      <td>{{ h.institution }}</td>
+      <td>{{ h.name }}</td>
+      <td class="muted">{{ h.ticker or "—" }}</td>
+      <td class="num">{{ "{:,.4f}".format(h.shares) }}</td>
+      <td class="num">${{ "{:,.2f}".format(h.price) }}</td>
+      <td class="num">${{ "{:,.2f}".format(h.value) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% endif %}
+
+{% for err in errors %}
+  <p class="error">{{ err }}</p>
+{% endfor %}
+
+</body>
+</html>

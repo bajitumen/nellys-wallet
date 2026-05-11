@@ -1,0 +1,32 @@
+# Credentials — NEVER commit
+permissions.env
+*.env
+.env
+.env.*
+# Exception: the template IS safe to commit
+!.env.example
+
+# Plaid token caches if anything writes them later
+tokens/
+*.token
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Local databases (when we add SQLite)
+*.db
+*.sqlite
+*.sqlite3
