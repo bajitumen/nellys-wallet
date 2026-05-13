@@ -1,11 +1,20 @@
 """Operational scripts. Run with: python code/cli.py <command>
 
 Commands:
-  init-db       Create all tables (idempotent).
-  seed-me       Create a placeholder User and migrate permissions.env into it.
-                Used once during the migration from the single-user prototype.
-                Replace the placeholder later when you sign up via Clerk.
-  show          Print all users and their linked items (with masked tokens).
+  init-db                 Create all tables (idempotent).
+  seed-me                 Create a placeholder User and migrate permissions.env into it.
+                          Used once during the migration from the single-user prototype.
+                          Replace the placeholder later when you sign up via Clerk.
+  show                    Print all users and their linked items (with masked tokens).
+  backfill-institutions   Fill in PlaidItem.institution_name for any item missing it.
+                          Idempotent — items that already have a name are skipped.
+  sync                    Pull the last 90 days of transactions from Plaid into the
+                          local DB. THIS USES PAID PLAID CREDITS — run sparingly.
+  reset-items             Delete every PlaidItem, Transaction, and TransactionOverride
+                          for all users. Use when switching Plaid teams — the existing
+                          items hold access tokens issued by the old team and won't
+                          work with the new team's credentials. Re-link via the + button
+                          after running.
 """
 
 import os
@@ -92,7 +101,89 @@ def cmd_show():
                       f"token=...{token[-4:]}")
 
 
-COMMANDS = {"init-db": cmd_init_db, "seed-me": cmd_seed_me, "show": cmd_show}
+def cmd_backfill_institutions():
+    """Fill in institution_name for any PlaidItem missing it."""
+    import plaid_link
+    from providers import plaid_client_for
+
+    with SessionLocal() as session:
+        missing = session.query(PlaidItem).filter(PlaidItem.institution_name.is_(None)).all()
+        if not missing:
+            print("No items need backfilling.")
+            return
+
+        clients: dict = {}
+        updated = 0
+        for item in missing:
+            client = clients.get(item.user_id)
+            if client is None:
+                try:
+                    client = plaid_client_for(item.user)
+                except ValueError as e:
+                    print(f"  - item id={item.id}: skipped ({e})")
+                    continue
+                clients[item.user_id] = client
+
+            name = plaid_link.lookup_institution_name(client, item.get_access_token())
+            if name:
+                item.institution_name = name
+                print(f"  - item id={item.id}: set institution_name={name!r}")
+                updated += 1
+            else:
+                print(f"  - item id={item.id}: lookup returned no institution")
+
+        session.commit()
+        print(f"Done. {updated}/{len(missing)} item(s) updated.")
+
+
+def cmd_sync():
+    """Sync the last 90 days of Plaid transactions into the local DB.
+    Burns paid Plaid credits — run sparingly."""
+    import spending
+    with SessionLocal() as session:
+        for user in session.query(User).all():
+            print(f"Syncing user id={user.id}...")
+            result = spending.sync_transactions(user, session)
+            print(f"  added={result['added']}  updated={result['updated']}  "
+                  f"errors={len(result['errors'])}")
+            for e in result["errors"]:
+                print(f"    - {e[:160]}")
+
+
+def cmd_reset_items():
+    """Wipe all PlaidItems, Transactions, and TransactionOverrides. Used when
+    switching Plaid teams — the old items' access tokens were issued by the
+    previous team and won't work under the new team's client_id/secret."""
+    from models import Transaction, TransactionOverride
+    with SessionLocal() as session:
+        users = session.query(User).all()
+        if not users:
+            print("(no users)")
+            return
+        for user in users:
+            n_items = session.query(PlaidItem).filter_by(user_id=user.id).count()
+            n_tx = session.query(Transaction).filter_by(user_id=user.id).count()
+            n_ov = session.query(TransactionOverride).filter_by(user_id=user.id).count()
+
+            session.query(TransactionOverride).filter_by(user_id=user.id).delete()
+            session.query(Transaction).filter_by(user_id=user.id).delete()
+            session.query(PlaidItem).filter_by(user_id=user.id).delete()
+            user.last_transactions_sync = None
+
+            print(f"User id={user.id} ({user.email}): "
+                  f"deleted {n_items} items, {n_tx} transactions, {n_ov} overrides")
+        session.commit()
+        print("Done. Restart the server and click + to re-link each institution.")
+
+
+COMMANDS = {
+    "init-db": cmd_init_db,
+    "seed-me": cmd_seed_me,
+    "show": cmd_show,
+    "backfill-institutions": cmd_backfill_institutions,
+    "sync": cmd_sync,
+    "reset-items": cmd_reset_items,
+}
 
 
 if __name__ == "__main__":

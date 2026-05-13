@@ -1,0 +1,10 @@
+{# Shared Jinja macros. Import per page: {% from "_macros.html" import empty_state %} #}
+
+{% macro empty_state(headline, hint="") %}
+<div class="empty">
+  <p>{{ headline }}</p>
+  {% if hint %}
+  <p style="margin-top:0.5rem;font-size:0.85rem;">{{ hint|safe }}</p>
+  {% endif %}
+</div>
+{% endmacro %}

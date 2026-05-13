@@ -12,19 +12,11 @@ import json
 import webbrowser
 from urllib.parse import parse_qs, urlparse
 
-import plaid
-from plaid.api import plaid_api
-from plaid.model.country_code import CountryCode
-from plaid.model.institutions_get_by_id_request import InstitutionsGetByIdRequest
-from plaid.model.item_get_request import ItemGetRequest
-from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
-from plaid.model.link_token_create_request import LinkTokenCreateRequest
-from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
-from plaid.model.products import Products
-
 import config  # noqa: F401 — side-effect import: loads .env and validates required vars
+import plaid_link
 from db import SessionLocal, init_db
-from models import PlaidItem, User
+from models import User
+from providers import plaid_client_for
 
 PORT = 8766
 
@@ -93,42 +85,7 @@ def build_html(link_token: str) -> str:
 </html>"""
 
 
-def save_item(client: plaid_api.PlaidApi, public_token: str) -> None:
-    exchange_response = client.item_public_token_exchange(
-        ItemPublicTokenExchangeRequest(public_token=public_token)
-    )
-    access_token = exchange_response.access_token
-    plaid_item_id = exchange_response.item_id
-
-    institution_name = None
-    try:
-        item_resp = client.item_get(ItemGetRequest(access_token=access_token))
-        institution_id = getattr(item_resp.item, "institution_id", None)
-        if institution_id:
-            inst_resp = client.institutions_get_by_id(
-                InstitutionsGetByIdRequest(
-                    institution_id=institution_id,
-                    country_codes=[CountryCode("US")],
-                )
-            )
-            institution_name = inst_resp.institution.name
-    except plaid.ApiException:
-        pass
-
-    with SessionLocal() as session:
-        user = current_user(session)
-        item = PlaidItem(
-            user_id=user.id,
-            plaid_item_id=plaid_item_id,
-            institution_name=institution_name,
-        )
-        item.set_access_token(access_token)
-        session.add(item)
-        session.commit()
-        print(f"Saved PlaidItem id={item.id}  institution={institution_name or '?'}")
-
-
-def make_handler(client: plaid_api.PlaidApi, html: str):
+def make_handler(client, html: str):
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             parsed = urlparse(self.path)
@@ -139,7 +96,13 @@ def make_handler(client: plaid_api.PlaidApi, html: str):
                     self.send_response(400)
                     self.end_headers()
                     return
-                save_item(client, public_token)
+                with SessionLocal() as session:
+                    user = current_user(session)
+                    item = plaid_link.exchange_and_save(
+                        client, session, user, public_token
+                    )
+                    print(f"Saved PlaidItem id={item.id}  "
+                          f"institution={item.institution_name or '?'}")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -162,30 +125,14 @@ def main() -> None:
         user = current_user(session)
         if user is None:
             raise SystemExit("No user in DB. Run: python code/cli.py seed-me")
-        creds = user.get_plaid_credentials()
-        if not creds:
-            raise SystemExit("User has no Plaid credentials configured.")
-        plaid_client_id, plaid_secret = creds
+        try:
+            client = plaid_client_for(user)
+        except ValueError as e:
+            raise SystemExit(str(e))
+        link_token = plaid_link.create_link_token(client, user)
         user_id_for_link = f"user-{user.id}"
 
-    configuration = plaid.Configuration(
-        host=plaid.Environment.Production,
-        api_key={"clientId": plaid_client_id, "secret": plaid_secret},
-    )
-    client = plaid_api.PlaidApi(plaid.ApiClient(configuration))
-
-    link_request = LinkTokenCreateRequest(
-        user=LinkTokenCreateRequestUser(client_user_id=user_id_for_link),
-        client_name="Nelly's Wallet",
-        products=[Products("transactions")],
-        optional_products=[Products("investments")],
-        country_codes=[CountryCode("US")],
-        language="en",
-    )
-    link_response = client.link_token_create(link_request)
-    link_token = link_response.link_token
     print(f"Link token created: {link_token[:20]}...")
-
     html = build_html(link_token)
     handler_cls = make_handler(client, html)
 

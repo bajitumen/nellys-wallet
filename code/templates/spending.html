@@ -1,0 +1,321 @@
+{% extends "_layout.html" %}
+{% from "_macros.html" import empty_state %}
+{% block title %}Spending · Nelly's Wallet{% endblock %}
+{% block heading %}Spending{% endblock %}
+{% block content %}
+
+<p class="subtitle">Grouped by category</p>
+
+{% if sources %}
+<div class="source-filter">
+  <a href="{{ url_for('spending_view', month=current_month) }}" class="{% if not current_source %}active{% endif %}">All</a>
+  {% for src in sources %}
+    <a href="{{ url_for('spending_view', source=src, month=current_month) }}" class="{% if current_source == src %}active{% endif %}">{{ src }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if no_user %}
+  {{ empty_state("No user provisioned yet.") }}
+{% elif not linked %}
+  {{ empty_state("No accounts linked yet.", "Run <code>python code/enroll_plaid.py</code> to connect a bank.") }}
+{% else %}
+
+<div class="totals" style="grid-template-columns: repeat(3, 1fr);">
+  <div class="card month-card">
+    <div class="label">Month</div>
+    <div class="value">
+      <button class="month-trigger" id="month-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+        {{ month_label }}
+        <i class="ph ph-caret-down"></i>
+      </button>
+    </div>
+    <div class="month-menu" id="month-menu" role="listbox" hidden>
+      {% for opt in month_options %}
+      <a href="{{ url_for('spending_view', month=opt.value, source=current_source) }}"
+         class="{% if opt.value == current_month %}active{% endif %}">{{ opt.label }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card credit">
+    <div class="label">Total Spent</div>
+    <div class="value">${{ "{:,.2f}".format(total) }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Transactions</div>
+    <div class="value">{{ count }}</div>
+  </div>
+</div>
+
+{% if chart %}
+<div class="chart-card">
+  <div class="label">Cumulative</div>
+  <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="{{ chart.area_path }}" fill="var(--negative)" fill-opacity="0.12"/>
+    <path d="{{ chart.line_path }}" fill="none" stroke="var(--negative)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+  </svg>
+</div>
+{% endif %}
+
+{% if not categories %}
+  {{ empty_state("No spending in " ~ month_label ~ ".", "Try a different month from the dropdown above, or Plaid may still be preparing recent transactions.") }}
+{% else %}
+
+<table>
+  <thead>
+    <tr>
+      <th>Category</th>
+      <th class="num">Transactions</th>
+      <th class="num">% of Total</th>
+      <th class="num">Spent</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for c in categories %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td class="num muted">{{ c.count }}</td>
+      <td class="num muted">{{ "{:.1f}%".format(c.total / total * 100) }}</td>
+      <td class="num">${{ "{:,.2f}".format(c.total) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if transactions %}
+<h2>Transactions</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Date</th>
+      {% if not current_source %}<th>Source</th>{% endif %}
+      <th>Description</th>
+      <th>Category</th>
+      <th class="num">Amount</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for tx in transactions %}
+    <tr>
+      <td class="muted">{{ tx.date.strftime('%b %d') }}</td>
+      {% if not current_source %}<td class="muted">{{ tx.source }}</td>{% endif %}
+      <td>{{ tx.name }}</td>
+      <td class="muted">{{ tx.category }}{% if tx.split_percentage %}<span class="split-tag">· {{ "{:g}".format(tx.split_percentage) }}% share</span>{% endif %}</td>
+      <td class="num">${{ "{:,.2f}".format(tx.amount) }}</td>
+      <td class="tx-actions">
+        <button class="kebab" type="button" aria-label="Transaction actions"
+                data-tx-id="{{ tx.plaid_id }}"
+                data-amount="{{ tx.amount }}">
+          <i class="ph ph-dots-three"></i>
+        </button>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<script>
+(function() {
+  var CATEGORIES = [
+    ['BANK_FEES', 'Bank Fees'],
+    ['ENTERTAINMENT', 'Entertainment'],
+    ['FOOD_AND_DRINK', 'Food And Drink'],
+    ['GENERAL_MERCHANDISE', 'General Merchandise'],
+    ['GENERAL_SERVICES', 'General Services'],
+    ['GOVERNMENT_AND_NON_PROFIT', 'Government And Non Profit'],
+    ['HOME_IMPROVEMENT', 'Home Improvement'],
+    ['LOAN_PAYMENTS', 'Loan Payments'],
+    ['MEDICAL', 'Medical'],
+    ['PERSONAL_CARE', 'Personal Care'],
+    ['RENT_AND_UTILITIES', 'Rent And Utilities'],
+    ['TRANSFER_IN', 'Transfer In'],
+    ['TRANSFER_OUT', 'Transfer Out'],
+    ['TRANSPORTATION', 'Transportation'],
+    ['TRAVEL', 'Travel'],
+    ['INCOME', 'Income']
+  ];
+
+  function closeAllMenus(except) {
+    document.querySelectorAll('.tx-menu').forEach(function(m) {
+      if (m !== except) m.remove();
+    });
+  }
+
+  function buildMenu() {
+    var menu = document.createElement('div');
+    menu.className = 'tx-menu';
+    menu.innerHTML =
+      '<button class="tx-menu-item" data-action="recategorize">Recategorize</button>' +
+      '<button class="tx-menu-item" data-action="split">Split</button>' +
+      '<button class="tx-menu-item" data-action="reset">Reset to original</button>';
+    return menu;
+  }
+
+  function buildRecategorizeForm() {
+    var opts = CATEGORIES.map(function(c) {
+      return '<option value="' + c[0] + '">' + c[1] + '</option>';
+    }).join('');
+    return (
+      '<form class="tx-form" data-form-type="recategorize">' +
+        '<label>New category</label>' +
+        '<select name="category">' + opts + '</select>' +
+        '<div class="tx-form-actions">' +
+          '<button type="button" class="cancel">Cancel</button>' +
+          '<button type="submit" class="primary">Save</button>' +
+        '</div>' +
+      '</form>'
+    );
+  }
+
+  function buildSplitForm(amount) {
+    return (
+      '<form class="tx-form" data-form-type="split">' +
+        '<label>Your share of $' + amount.toFixed(2) + '</label>' +
+        '<div class="tx-form-row">' +
+          '<label style="margin:0">% you owe</label>' +
+          '<input type="number" name="percentage" min="0.1" max="100" step="0.1" placeholder="e.g. 25">' +
+        '</div>' +
+        '<div class="tx-form-actions">' +
+          '<button type="button" class="cancel">Cancel</button>' +
+          '<button type="submit" class="primary">Save</button>' +
+        '</div>' +
+      '</form>'
+    );
+  }
+
+  function postOverride(txId, payload) {
+    return fetch('/transactions/' + encodeURIComponent(txId) + '/override', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  function positionMenu(menu) {
+    // Flip the menu upward if it would extend past the viewport bottom.
+    menu.classList.remove('tx-menu-up');
+    var rect = menu.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight - 8) {
+      menu.classList.add('tx-menu-up');
+    }
+  }
+
+  // Open / toggle menu when kebab clicked
+  document.addEventListener('click', function(e) {
+    var kebab = e.target.closest('.kebab');
+    if (kebab) {
+      e.stopPropagation();
+      var existing = kebab.parentElement.querySelector('.tx-menu');
+      closeAllMenus(existing);
+      if (existing) {
+        existing.remove();
+      } else {
+        var menu = buildMenu();
+        kebab.parentElement.appendChild(menu);
+        positionMenu(menu);
+      }
+      return;
+    }
+    // Click outside any menu closes them all
+    if (!e.target.closest('.tx-menu')) {
+      closeAllMenus();
+    }
+  });
+
+  // Menu item → swap menu contents for the appropriate form
+  document.addEventListener('click', function(e) {
+    var item = e.target.closest('.tx-menu-item');
+    if (!item) return;
+    e.stopPropagation();
+    var menu = item.closest('.tx-menu');
+    var kebab = menu.parentElement.querySelector('.kebab');
+    var txId = kebab.dataset.txId;
+    var amount = parseFloat(kebab.dataset.amount);
+    var action = item.dataset.action;
+
+    if (action === 'recategorize') {
+      menu.innerHTML = buildRecategorizeForm();
+      positionMenu(menu);
+    } else if (action === 'split') {
+      menu.innerHTML = buildSplitForm(amount);
+      positionMenu(menu);
+    } else if (action === 'reset') {
+      postOverride(txId, { clear: true }).then(function(r) {
+        if (r.ok) window.location.reload();
+        else alert('Failed to reset');
+      });
+    }
+  });
+
+  // Cancel inside a form closes the menu
+  document.addEventListener('click', function(e) {
+    if (e.target.matches('.tx-form .cancel')) {
+      e.stopPropagation();
+      var menu = e.target.closest('.tx-menu');
+      if (menu) menu.remove();
+    }
+  });
+
+  // Form submit → POST override
+  document.addEventListener('submit', function(e) {
+    var form = e.target.closest('.tx-form');
+    if (!form) return;
+    e.preventDefault();
+    var menu = form.closest('.tx-menu');
+    var kebab = menu.parentElement.querySelector('.kebab');
+    var txId = kebab.dataset.txId;
+    var origAmount = parseFloat(kebab.dataset.amount);
+    var payload = {};
+
+    if (form.dataset.formType === 'recategorize') {
+      payload.category = form.querySelector('select[name="category"]').value;
+    } else if (form.dataset.formType === 'split') {
+      var pct = parseFloat(form.querySelector('input[name="percentage"]').value);
+      if (pct > 0 && pct <= 100) {
+        payload.amount = origAmount * pct / 100;
+        payload.split_percentage = pct;
+      } else {
+        alert('Enter a percentage between 0 and 100.');
+        return;
+      }
+    }
+
+    postOverride(txId, payload).then(function(r) {
+      if (r.ok) window.location.reload();
+      else alert('Failed to save');
+    });
+  });
+})();
+</script>
+{% endif %}
+
+{% endif %}
+
+<script>
+(function() {
+  var trigger = document.getElementById('month-trigger');
+  var menu = document.getElementById('month-menu');
+  if (!trigger || !menu) return;
+  trigger.addEventListener('click', function(e) {
+    e.stopPropagation();
+    var open = !menu.hidden;
+    menu.hidden = open;
+    trigger.setAttribute('aria-expanded', String(!open));
+  });
+  document.addEventListener('click', function(e) {
+    if (!menu.hidden && !e.target.closest('.month-menu')) {
+      menu.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+    }
+  });
+})();
+</script>
+
+{% endif %}
+
+{% for err in errors %}
+  <p class="error">{{ err }}</p>
+{% endfor %}
+
+{% endblock %}
