@@ -8,6 +8,7 @@ overrides, aggregates by category. Wrapped in a short-lived in-memory cache so
 repeated page loads don't repeat the DB scan.
 """
 
+import logging
 import threading
 import time
 from calendar import monthrange
@@ -19,19 +20,26 @@ import plaid
 from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 
+import budget as budget_mod
+import pfc
 from models import PlaidItem, Transaction, TransactionOverride, User
 from providers import plaid_client_for
 
-EXCLUDED_CATEGORIES = {"INCOME", "TRANSFER_IN", "TRANSFER_OUT"}
+log = logging.getLogger(__name__)
 
 _CACHE_TTL = 60.0
 _cache: dict = {}
 _cache_lock = threading.Lock()
+_keylocks: dict[tuple, threading.Lock] = {}
 
 
-def _humanize(category: str) -> str:
-    """FOOD_AND_DRINK → Food And Drink."""
-    return category.replace("_", " ").title()
+def _get_keylock(key: tuple) -> threading.Lock:
+    with _cache_lock:
+        lock = _keylocks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _keylocks[key] = lock
+        return lock
 
 
 def available_sources(user: User) -> list[str]:
@@ -39,7 +47,7 @@ def available_sources(user: User) -> list[str]:
     return sorted({(item.institution_name or "Unknown") for item in user.items})
 
 
-def _resolve_month(month: str | None) -> tuple[str, date, date, str]:
+def resolve_month(month: str | None) -> tuple[str, date, date, str]:
     """Parse 'YYYY-MM' into (month_str, start, end, label). Caps end at today
     if the month extends into the future. Falls back to the current month if
     `month` is empty or malformed."""
@@ -73,6 +81,7 @@ def clear_cache() -> None:
     """Drop the entire cache. Useful for tests."""
     with _cache_lock:
         _cache.clear()
+        _keylocks.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +106,7 @@ def _fetch_raw_transactions(client, item, start: date, end: date) -> dict:
             ))
         except plaid.ApiException as e:
             body = getattr(e, "body", str(e)) or ""
+            log.warning("transactions_get failed for %s: %s", institution, body[:500])
             if "PRODUCT_NOT_READY" in body:
                 out["errors"].append(f"{institution}: transactions not yet ready")
             elif "NO_ACCOUNTS" in body or "PRODUCTS_NOT_SUPPORTED" in body:
@@ -152,14 +162,18 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
     for item, result in per_item:
         out["errors"].extend(result["errors"])
         for tx in result["transactions"]:
-            pfc = getattr(tx, "personal_finance_category", None)
-            pfc_primary = pfc.primary if pfc and getattr(pfc, "primary", None) else None
+            pfc_obj = getattr(tx, "personal_finance_category", None)
+            pfc_primary = pfc_obj.primary if pfc_obj and getattr(pfc_obj, "primary", None) else None
+            pfc_detailed = (
+                pfc_obj.detailed if pfc_obj and getattr(pfc_obj, "detailed", None) else None
+            )
             row = existing.get(tx.transaction_id)
             if row is not None:
                 row.amount = float(tx.amount or 0)
                 row.name = tx.name
                 row.merchant_name = getattr(tx, "merchant_name", None)
                 row.pfc_primary = pfc_primary
+                row.pfc_detailed = pfc_detailed
                 row.item_id = item.id
                 out["updated"] += 1
             else:
@@ -172,12 +186,20 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
                     name=tx.name,
                     merchant_name=getattr(tx, "merchant_name", None),
                     pfc_primary=pfc_primary,
+                    pfc_detailed=pfc_detailed,
                 ))
                 out["added"] += 1
 
     user.last_transactions_sync = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()
     invalidate_cache(user.id)
+    # New transactions can land in either spend or income buckets; bust both.
+    import income as _income
+    _income.invalidate_cache(user.id)
+    log.info(
+        "sync_transactions user_id=%s added=%s updated=%s errors=%s",
+        user.id, out["added"], out["updated"], len(out["errors"]),
+    )
     return out
 
 
@@ -191,24 +213,56 @@ def fetch_last_month(
     """Read transactions from the local DB for a month, apply overrides, and
     aggregate. Returns the same shape as before:
     {total, count, categories, errors, source, transactions, month, month_label}."""
-    month_str, start, end, month_label = _resolve_month(month)
+    month_str, start, end, month_label = resolve_month(month)
     out: dict = {
         "total": 0.0, "count": 0, "categories": [], "errors": [],
         "source": source, "transactions": [],
         "month": month_str, "month_label": month_label,
-        "chart": None,
+        "daily_avg": 0.0,
+        "prev_month_change_pct": None,
     }
 
     if session is None or not user.items:
         return out
 
     cache_key = (user.id, month_str, source or "_all")
-    with _cache_lock:
-        cached = _cache.get(cache_key)
+
+    def _read_cached():
+        with _cache_lock:
+            cached = _cache.get(cache_key)
+        if cached is not None:
+            ts, data = cached
+            if time.time() - ts < _CACHE_TTL:
+                return data
+        return None
+
+    cached = _read_cached()
     if cached is not None:
-        ts, data = cached
-        if time.time() - ts < _CACHE_TTL:
-            return data
+        return cached
+
+    # Serialize concurrent misses for the same (user, month, source).
+    with _get_keylock(cache_key):
+        cached = _read_cached()
+        if cached is not None:
+            return cached
+
+        return _fetch_last_month_uncached(
+            user, source, session, start, end, month_str, month_label, cache_key,
+        )
+
+
+def _fetch_last_month_uncached(
+    user, source, session, start, end, month_str, month_label, cache_key,
+):
+    """The pre-cache work for fetch_last_month, factored out so both the
+    fast-path and the locked path can call the same code."""
+    out: dict = {
+        "total": 0.0, "count": 0, "categories": [], "errors": [],
+        "source": source, "transactions": [],
+        "month": month_str, "month_label": month_label,
+        "daily_avg": 0.0,
+        "prev_month_change_pct": None,
+    }
 
     items_by_id = {it.id: it for it in user.items}
     if source:
@@ -231,29 +285,48 @@ def fetch_last_month(
         .all()
     )
 
-    overrides_by_tx: dict[str, TransactionOverride] = {
-        o.plaid_transaction_id: o
-        for o in session.query(TransactionOverride)
-        .filter(TransactionOverride.user_id == user.id)
-        .all()
-    }
+    # Only load overrides for the txs in scope, not every override the user
+    # has ever made. Avoids reading rows that contribute nothing to this page.
+    tx_ids = [t.plaid_transaction_id for t in tx_rows]
+    overrides_by_tx: dict[str, TransactionOverride] = (
+        {
+            o.plaid_transaction_id: o
+            for o in session.query(TransactionOverride)
+            .filter(
+                TransactionOverride.user_id == user.id,
+                TransactionOverride.plaid_transaction_id.in_(tx_ids),
+            )
+            .all()
+        }
+        if tx_ids else {}
+    )
 
     totals: dict[str, float] = defaultdict(float)
     counts: dict[str, int] = defaultdict(int)
     tx_list: list[dict] = []
     for tx in tx_rows:
+        ov = overrides_by_tx.get(tx.plaid_transaction_id)
+        if ov and ov.dismissed:
+            continue  # user dismissed this tx — exclude from list and totals
+
         category = tx.pfc_primary or "UNKNOWN"
         amount = tx.amount
         split_percentage = None
-        ov = overrides_by_tx.get(tx.plaid_transaction_id)
+        detailed = None
         if ov:
             if ov.category_override:
                 category = ov.category_override
             if ov.amount_override is not None:
                 amount = ov.amount_override
             split_percentage = ov.split_percentage
+            detailed = ov.detailed_override
+        # Fall back to Plaid's detailed only when no override exists AND the
+        # detailed belongs to the displayed category (a stale Plaid detail
+        # under a user-recategorized row would be misleading).
+        if detailed is None and tx.pfc_detailed and pfc.primary_of(tx.pfc_detailed) == category:
+            detailed = tx.pfc_detailed
 
-        if category in EXCLUDED_CATEGORIES:
+        if category in pfc.EXCLUDED_CATEGORIES:
             continue
         totals[category] += amount
         counts[category] += 1
@@ -262,87 +335,242 @@ def fetch_last_month(
             "date": tx.date,
             "source": items_by_id[tx.item_id].institution_name or "Unknown",
             "name": tx.merchant_name or tx.name or "(no description)",
-            "category": _humanize(category),
+            "category": pfc.humanize_primary(category),
+            "category_raw": category,
+            "detailed_raw": detailed,
+            "detailed_label": (
+                pfc.humanize_detailed(detailed, category) if detailed else None
+            ),
             "amount": amount,
             "split_percentage": split_percentage,
         })
 
     out["total"] = sum(totals.values())
     out["count"] = len(tx_list)
+
+    # Per-primary budgets = sum of each primary's detailed budget rows.
+    # One query, summed in Python — cheaper than 13 separate primary_sum calls.
+    primary_budgets: dict[str, float] = defaultdict(float)
+    for detailed, amount in budget_mod.get_budgets(user, session).items():
+        primary = pfc.primary_of(detailed)
+        if primary:
+            primary_budgets[primary] += amount
+
+    # Without a source filter ("All" tab), show every spending primary even
+    # when there was no spend in that bucket — gives the budget column
+    # something to display for un-spent categories.
+    category_keys = set(totals.keys())
+    if source is None:
+        category_keys.update(pfc.PFC_TAXONOMY.keys())
+
     out["categories"] = sorted(
-        ({"name": _humanize(k), "total": v, "count": counts[k]} for k, v in totals.items()),
+        (
+            {
+                "name": pfc.humanize_primary(k),
+                "total": totals.get(k, 0.0),
+                "count": counts.get(k, 0),
+                "color": pfc.CATEGORY_COLORS.get(k, pfc.DEFAULT_COLOR),
+                "budget": primary_budgets.get(k, 0.0),
+            }
+            for k in category_keys
+        ),
         key=lambda c: -c["total"],
     )
     out["transactions"] = sorted(tx_list, key=lambda t: t["date"], reverse=True)
-    out["chart"] = _build_chart(_cumulative_series(tx_list, start, end))
+
+    days_elapsed = max(1, (end - start).days + 1)
+    out["daily_avg"] = out["total"] / days_elapsed
+
+    prev_start, prev_end = previous_month_window(start, end)
+    prev_total = _spending_total(
+        user.id, list(items_by_id.keys()), prev_start, prev_end,
+        overrides_by_tx, session,
+    )
+    if prev_total > 0:
+        out["prev_month_change_pct"] = (out["total"] - prev_total) / prev_total * 100
 
     with _cache_lock:
         _cache[cache_key] = (time.time(), out)
     return out
 
 
-def _cumulative_series(transactions: list[dict], start: date, end: date) -> list[tuple[date, float]]:
-    """Build [(date, running_total)] for the cumulative spending chart.
+def previous_month_window(start: date, end: date) -> tuple[date, date]:
+    """Day-aligned previous-month window for vs.-last-month comparisons.
+    May 1–12 → April 1–12; March 1–31 → February 1–28 (capped at month length)."""
+    if start.month == 1:
+        prev_start = date(start.year - 1, 12, 1)
+    else:
+        prev_start = date(start.year, start.month - 1, 1)
+    days = (end - start).days + 1
+    prev_month_len = monthrange(prev_start.year, prev_start.month)[1]
+    prev_end = date(prev_start.year, prev_start.month, min(days, prev_month_len))
+    return prev_start, prev_end
 
-    Anchors at (start, 0) so every month's chart begins at zero, and extends a
-    flat segment to `end` if the last transaction came before the period end —
-    keeps the X axis consistent across months. Returns [] when there are no
-    transactions to plot."""
-    if not transactions:
+
+def _spending_total(
+    user_id: int, item_ids: list[int], start: date, end: date,
+    overrides_by_tx: dict, session,
+) -> float:
+    """Sum positive, non-excluded transaction amounts in the window with
+    overrides applied. Used by fetch_last_month for the prev-month comparison."""
+    if not item_ids:
+        return 0.0
+    rows = (
+        session.query(Transaction)
+        .filter(
+            Transaction.user_id == user_id,
+            Transaction.date >= start,
+            Transaction.date <= end,
+            Transaction.item_id.in_(item_ids),
+            Transaction.amount > 0,
+        )
+        .all()
+    )
+    total = 0.0
+    for tx in rows:
+        ov = overrides_by_tx.get(tx.plaid_transaction_id)
+        if ov and ov.dismissed:
+            continue
+        category = tx.pfc_primary or "UNKNOWN"
+        amount = tx.amount
+        if ov:
+            if ov.category_override:
+                category = ov.category_override
+            if ov.amount_override is not None:
+                amount = ov.amount_override
+        if category in pfc.EXCLUDED_CATEGORIES:
+            continue
+        total += amount
+    return total
+
+
+def monthly_totals(user: User, session, n_months: int = 6) -> list[dict]:
+    """Total spending per month over the last `n_months`, oldest first.
+    Months with no recorded transactions return 0 — keeps the chart's x-axis
+    consistent even when the 90-day sync window doesn't reach back far enough.
+
+    Each entry: {month: 'YYYY-MM', label: 'May 2026', total: 1234.56}.
+    Aggregation respects user overrides and EXCLUDED_CATEGORIES, same as the
+    per-month Spending page."""
+    if not user.items:
         return []
-    by_date: dict[date, float] = defaultdict(float)
-    for tx in transactions:
-        by_date[tx["date"]] += tx["amount"]
 
-    series: list[tuple[date, float]] = [(start, 0.0)]
-    running = 0.0
-    for d in sorted(by_date.keys()):
-        running += by_date[d]
-        series.append((d, running))
-    if series[-1][0] < end:
-        series.append((end, running))
-    return series
+    today = date.today()
+    y, m = today.year, today.month
+    m -= n_months - 1
+    while m <= 0:
+        m += 12
+        y -= 1
+    start = date(y, m, 1)
+    end = today
+
+    item_ids = [it.id for it in user.items]
+    tx_rows = (
+        session.query(Transaction)
+        .filter(
+            Transaction.user_id == user.id,
+            Transaction.date >= start,
+            Transaction.date <= end,
+            Transaction.item_id.in_(item_ids),
+            Transaction.amount > 0,
+        )
+        .all()
+    )
+    tx_ids = [t.plaid_transaction_id for t in tx_rows]
+    overrides_by_tx = (
+        {
+            o.plaid_transaction_id: o
+            for o in session.query(TransactionOverride)
+            .filter(
+                TransactionOverride.user_id == user.id,
+                TransactionOverride.plaid_transaction_id.in_(tx_ids),
+            )
+            .all()
+        }
+        if tx_ids else {}
+    )
+
+    totals: dict[tuple[int, int], float] = defaultdict(float)
+    for tx in tx_rows:
+        ov = overrides_by_tx.get(tx.plaid_transaction_id)
+        if ov and ov.dismissed:
+            continue
+        category = tx.pfc_primary or "UNKNOWN"
+        amount = tx.amount
+        if ov:
+            if ov.category_override:
+                category = ov.category_override
+            if ov.amount_override is not None:
+                amount = ov.amount_override
+        if category in pfc.EXCLUDED_CATEGORIES:
+            continue
+        totals[(tx.date.year, tx.date.month)] += amount
+
+    out = []
+    y, m = start.year, start.month
+    for _ in range(n_months):
+        out.append({
+            "month": f"{y:04d}-{m:02d}",
+            "label": date(y, m, 1).strftime("%b %Y"),
+            "total": totals.get((y, m), 0.0),
+            "ts": int(datetime(y, m, 1).timestamp()),
+        })
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return out
 
 
-def _build_chart(series: list[tuple[date, float]], width: int = 1000, height: int = 120) -> dict | None:
-    """Return SVG `line_path` and `area_path` for the cumulative series, or
-    None if there are fewer than 2 points to draw a line between."""
-    if len(series) < 2:
+def _rounded_top_path(x: float, y: float, w: float, h: float, r: float = 10.0) -> str:
+    """SVG path for a rectangle with only the top corners rounded. Clamps
+    the radius so short bars and narrow bars don't produce a malformed path."""
+    r = max(0.0, min(r, w / 2, h))
+    return (
+        f"M {x:.2f},{y + r:.2f} "
+        f"Q {x:.2f},{y:.2f} {x + r:.2f},{y:.2f} "
+        f"L {x + w - r:.2f},{y:.2f} "
+        f"Q {x + w:.2f},{y:.2f} {x + w:.2f},{y + r:.2f} "
+        f"L {x + w:.2f},{y + h:.2f} "
+        f"L {x:.2f},{y + h:.2f} Z"
+    )
+
+
+def build_monthly_chart(totals: list[dict], width: int = 500, height: int = 150) -> dict | None:
+    """SVG bar chart for `monthly_totals`. Each bar carries a pre-rendered
+    `path` for a rect with rounded top corners. Returns None when there's
+    nothing to plot."""
+    if not totals:
         return None
 
     pad_x = 4
-    pad_y = 8
+    pad_y = 12
     plot_w = width - 2 * pad_x
     plot_h = height - 2 * pad_y
 
-    x_min = series[0][0].toordinal()
-    x_max = series[-1][0].toordinal()
-    x_span = max(1, x_max - x_min)
-    y_max = max(v for _, v in series)
-    y_span = max(1.0, y_max)  # baseline is 0
+    values = [t["total"] for t in totals]
+    y_max = max(values) if any(values) else 1.0
 
-    def to_x(d: date) -> float:
-        return pad_x + (d.toordinal() - x_min) / x_span * plot_w
+    n = len(totals)
+    bar_gap = 6
+    bar_w = (plot_w - bar_gap * (n - 1)) / n
 
-    def to_y(v: float) -> float:
-        return pad_y + (y_max - v) / y_span * plot_h
+    bars = []
+    for i, t in enumerate(totals):
+        bar_h = (t["total"] / y_max) * plot_h
+        bar_x = pad_x + i * (bar_w + bar_gap)
+        bar_y = pad_y + plot_h - bar_h
+        bars.append({
+            "x": bar_x,
+            "y": bar_y,
+            "width": bar_w,
+            "height": bar_h,
+            "path": _rounded_top_path(bar_x, bar_y, bar_w, bar_h),
+            "label": t["label"],
+            "total": t["total"],
+        })
 
-    points = [(to_x(d), to_y(v)) for d, v in series]
-    baseline_y = to_y(0.0)
-
-    line_path = "M " + " L ".join(f"{x:.2f},{y:.2f}" for x, y in points)
-    area_path = " ".join(
-        [f"M {points[0][0]:.2f},{baseline_y:.2f}"]
-        + [f"L {x:.2f},{y:.2f}" for x, y in points]
-        + [f"L {points[-1][0]:.2f},{baseline_y:.2f}", "Z"]
-    )
-
-    return {
-        "width": width,
-        "height": height,
-        "line_path": line_path,
-        "area_path": area_path,
-    }
+    return {"width": width, "height": height, "bars": bars}
 
 
 def relative_time(dt: datetime | None) -> str:

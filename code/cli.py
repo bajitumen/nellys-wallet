@@ -6,10 +6,14 @@ Commands:
                           Used once during the migration from the single-user prototype.
                           Replace the placeholder later when you sign up via Clerk.
   show                    Print all users and their linked items (with masked tokens).
-  backfill-institutions   Fill in PlaidItem.institution_name for any item missing it.
-                          Idempotent — items that already have a name are skipped.
-  sync                    Pull the last 90 days of transactions from Plaid into the
-                          local DB. THIS USES PAID PLAID CREDITS — run sparingly.
+  backfill-institutions   Fill in PlaidItem.institution_name and .logo for any
+                          item missing either. Idempotent — items with both set
+                          are skipped.
+  sync [--days N]         Pull the last N days of transactions from Plaid into
+                          the local DB (default 90). Use --days 730 (~2 years)
+                          once after first link to backfill history; the in-app
+                          Refresh button always uses 90 to keep credits cheap.
+                          THIS USES PAID PLAID CREDITS — run sparingly.
   reset-items             Delete every PlaidItem, Transaction, and TransactionOverride
                           for all users. Use when switching Plaid teams — the existing
                           items hold access tokens issued by the old team and won't
@@ -102,12 +106,16 @@ def cmd_show():
 
 
 def cmd_backfill_institutions():
-    """Fill in institution_name for any PlaidItem missing it."""
+    """Fill in institution_name and logo for any PlaidItem missing either."""
     import plaid_link
+    from sqlalchemy import or_
+
     from providers import plaid_client_for
 
     with SessionLocal() as session:
-        missing = session.query(PlaidItem).filter(PlaidItem.institution_name.is_(None)).all()
+        missing = session.query(PlaidItem).filter(
+            or_(PlaidItem.institution_name.is_(None), PlaidItem.logo.is_(None))
+        ).all()
         if not missing:
             print("No items need backfilling.")
             return
@@ -124,10 +132,14 @@ def cmd_backfill_institutions():
                     continue
                 clients[item.user_id] = client
 
-            name = plaid_link.lookup_institution_name(client, item.get_access_token())
-            if name:
-                item.institution_name = name
-                print(f"  - item id={item.id}: set institution_name={name!r}")
+            info = plaid_link.lookup_institution(client, item.get_access_token())
+            if info:
+                if info.get("name") and not item.institution_name:
+                    item.institution_name = info["name"]
+                if info.get("logo") and not item.logo:
+                    item.logo = info["logo"]
+                print(f"  - item id={item.id}: name={item.institution_name!r} "
+                      f"logo={'set' if item.logo else 'missing'}")
                 updated += 1
             else:
                 print(f"  - item id={item.id}: lookup returned no institution")
@@ -137,13 +149,24 @@ def cmd_backfill_institutions():
 
 
 def cmd_sync():
-    """Sync the last 90 days of Plaid transactions into the local DB.
+    """Sync the last N days of Plaid transactions into the local DB.
+    Accepts an optional `--days N` flag; defaults to 90.
     Burns paid Plaid credits — run sparingly."""
     import spending
+    days = 90
+    if "--days" in sys.argv:
+        try:
+            days = int(sys.argv[sys.argv.index("--days") + 1])
+            if days <= 0:
+                raise ValueError("must be positive")
+        except (IndexError, ValueError) as e:
+            print(f"Bad --days value: {e}. Usage: python code/cli.py sync [--days N]")
+            return
+    print(f"Syncing {days} day(s) of transactions...")
     with SessionLocal() as session:
         for user in session.query(User).all():
             print(f"Syncing user id={user.id}...")
-            result = spending.sync_transactions(user, session)
+            result = spending.sync_transactions(user, session, days=days)
             print(f"  added={result['added']}  updated={result['updated']}  "
                   f"errors={len(result['errors'])}")
             for e in result["errors"]:

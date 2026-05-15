@@ -1,0 +1,53 @@
+{% extends "_layout.html" %}
+{% from "_macros.html" import empty_state %}
+{% block title %}Budget · Nelly's Wallet{% endblock %}
+{% block heading %}Budget{% endblock %}
+{% block content %}
+
+<p class="subtitle">Monthly spending targets by sub-category</p>
+
+{% if no_user %}
+  {{ empty_state("No user provisioned yet.", "Run <code>python code/cli.py seed-me</code> to migrate <code>permissions.env</code> into the DB.") }}
+{% else %}
+
+<div class="budget-columns">
+{% for g in groups %}
+<div class="budget-group">
+  <div class="budget-group-header">
+    <span class="budget-group-name">
+      <span class="cat-dot" style="background: {{ g.color }};"></span>
+      {{ g.primary_label }}
+    </span>
+    <span class="budget-group-total" data-primary="{{ g.primary }}">${{ "{:,.2f}".format(g.total) }}</span>
+  </div>
+  <table class="budget-table">
+    <tbody>
+    {% for s in g.subitems %}
+    <tr>
+      <td class="budget-sub-label">{{ s.label }}</td>
+      <td class="budget-sub-amount">
+        <span class="budget-input-wrap">
+          <span class="prefix">$</span>
+          <input type="number" min="0" step="0.01" placeholder="0.00"
+                 inputmode="decimal"
+                 class="budget-input"
+                 data-code="{{ s.code }}"
+                 data-primary="{{ g.primary }}"
+                 value="{% if s.amount %}{{ "{:.2f}".format(s.amount) }}{% endif %}">
+        </span>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+</div>
+
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='budget.js') }}"></script>
+{% endblock %}

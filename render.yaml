@@ -1,0 +1,44 @@
+# Render blueprint. Push to a Render-connected GitHub repo and Render will
+# read this on next push.
+#
+# Notes:
+#   - Single web service + a 1GB persistent disk mounted at /var/data.
+#     SQLite + Litestream lives there. Render's free disk tier survives
+#     across deploys.
+#   - Env vars marked `sync: false` are secrets — set them once in the
+#     Render dashboard, they aren't committed here.
+services:
+  - type: web
+    name: nellys-wallet
+    runtime: docker
+    plan: starter   # cheapest plan that allows persistent disks
+    region: oregon
+    healthCheckPath: /sign-in
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      # Required app secrets (paste in dashboard).
+      - key: FERNET_KEY
+        sync: false
+      - key: FLASK_SECRET_KEY
+        sync: false
+      # Clerk auth.
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_JWT_PUBLIC_KEY
+        sync: false
+      - key: CLERK_FRONTEND_API
+        sync: false
+      # Litestream backup target.
+      - key: LITESTREAM_REPLICA_URL
+        sync: false
+      - key: LITESTREAM_ACCESS_KEY_ID
+        sync: false
+      - key: LITESTREAM_SECRET_ACCESS_KEY
+        sync: false

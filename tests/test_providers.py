@@ -88,6 +88,48 @@ def test_fetch_all_with_no_items(user, patch_plaid_client):
     patch_plaid_client.accounts_get.assert_not_called()
 
 
+def test_fetch_one_includes_logo(user_with_item, patch_plaid_client, db_session):
+    """`_fetch_one` passes the linked item's logo through to each account dict."""
+    from providers import _fetch_one
+    item = user_with_item.items[0]
+    item.logo = "BASE64_PNG_DATA"
+    db_session.commit()
+    accounts_resp = MagicMock()
+    accounts_resp.accounts = [_mock_account("depository", "checking")]
+    patch_plaid_client.accounts_get.return_value = accounts_resp
+    result = _fetch_one(patch_plaid_client, item)
+    assert result["cash"][0]["logo"] == "BASE64_PNG_DATA"
+
+
+def test_source_logos_returns_per_institution_map(user_with_item, db_session):
+    """source_logos collects {institution_name: logo} across the user's items."""
+    from providers import source_logos
+    user_with_item.items[0].logo = "LOGO_A"
+    db_session.commit()
+    logos = source_logos(user_with_item)
+    assert logos == {"TestBank": "LOGO_A"}
+
+
+def test_humanize_account_type():
+    """Title-case for common types, explicit overrides for acronyms."""
+    from providers import humanize_account_type
+    assert humanize_account_type("checking") == "Checking"
+    assert humanize_account_type("credit card") == "Credit Card"
+    assert humanize_account_type("money market") == "Money Market"
+    # Acronyms preserved.
+    assert humanize_account_type("ira") == "IRA"
+    assert humanize_account_type("hsa") == "HSA"
+    assert humanize_account_type("cd") == "CD"
+    # Mixed: SEP IRA, Roth IRA.
+    assert humanize_account_type("sep ira") == "SEP IRA"
+    assert humanize_account_type("roth ira") == "Roth IRA"
+    # 401k → 401(k).
+    assert humanize_account_type("401k") == "401(k)"
+    assert humanize_account_type("403b") == "403(b)"
+    # Empty / None safe.
+    assert humanize_account_type("") == ""
+
+
 def test_classify_account_buckets():
     """Smoke test for the account classifier."""
     from providers import _classify

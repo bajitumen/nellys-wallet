@@ -1,0 +1,16 @@
+# Litestream config: stream the SQLite WAL to a single S3-compatible bucket.
+#
+# The replica URL itself is provided via the LITESTREAM_REPLICA_URL env var
+# (e.g. `s3://my-bucket/nellys-wallet`); litestream substitutes it in below.
+# Credentials come from standard provider env vars:
+#   - AWS S3:      AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#   - Backblaze B2: LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY +
+#                   the bucket region in the replica URL
+#   - Cloudflare R2: same as B2 with R2's S3-compatible endpoint
+dbs:
+  - path: /var/data/finance.db
+    replicas:
+      - url: ${LITESTREAM_REPLICA_URL}
+        retention: 168h          # keep 7 days of WAL history
+        snapshot-interval: 24h   # full snapshot once a day
+        sync-interval: 1s        # stream WAL changes near-realtime

@@ -59,9 +59,11 @@ session-resolved users without restructuring.
   primary tier (`FOOD_AND_DRINK`, `TRANSPORTATION`, …).
 - **Month picker** with the last 12 months in a dropdown.
 - **Source filter** (tabbed) to narrow to a single institution.
-- **Cumulative chart**: inline SVG anchored at (start-of-month, $0) and
-  stepping up on each transaction date. No JS chart library — the path is
-  computed server-side in [code/spending.py](code/spending.py).
+- **Stacked-bar breakdown**: a single horizontal bar segmented by category,
+  segment width proportional to spend. Each category's row in the table
+  carries a matching colored dot so the eye can link a slice to its row.
+  Colors are a stable per-PFC palette in [code/spending.py](code/spending.py)
+  (`CATEGORY_COLORS`).
 - **Transactions table** with a kebab menu per row offering:
   - *Recategorize* — pick a new PFC primary category.
   - *Split* — enter the percentage you actually owe (e.g. 25% of a group
@@ -369,6 +371,80 @@ For production-style serving (the `prod` extra installs gunicorn):
 uv sync --extra prod
 gunicorn -w 2 -b 0.0.0.0:5001 --chdir code app:app
 ```
+
+---
+
+## Deployment (friends-ready)
+
+For a small public-internet deployment (you + ~10 friends), the stack is:
+
+- **Render** web service (Starter plan, ~$7/mo at time of writing) with a 1GB
+  persistent disk for the SQLite file. Renders out of the [Dockerfile](Dockerfile)
+  in the repo root via the included [render.yaml](render.yaml) blueprint.
+- **Clerk** for authentication. Free tier covers ~10K MAU.
+- **Litestream** streams the SQLite WAL to S3-compatible object storage
+  ([Backblaze B2](https://www.backblaze.com/b2/) is cheap; Cloudflare R2 has
+  free egress) — restores on container restart so a fresh deploy doesn't lose
+  net-worth snapshots, budgets, overrides, etc.
+- **Plaid** per-user credentials: each friend pastes their own Plaid Trial
+  keys via the in-app `/settings/plaid` page after signing in.
+
+### Render
+
+```bash
+git push origin main         # to a repo connected to Render
+```
+
+Then in the Render dashboard, paste the secrets listed in [render.yaml](render.yaml)
+as `sync: false` env vars:
+
+| Var | What it is |
+|---|---|
+| `FERNET_KEY` | the same value you use locally — **rotating breaks all encrypted tokens** |
+| `FLASK_SECRET_KEY` | any long random string |
+| `CLERK_PUBLISHABLE_KEY` | Clerk dashboard → API Keys |
+| `CLERK_SECRET_KEY` | Clerk dashboard → API Keys |
+| `CLERK_JWT_PUBLIC_KEY` | Clerk dashboard → API Keys (PEM, multi-line) |
+| `CLERK_FRONTEND_API` | host portion of the JS snippet URL |
+| `LITESTREAM_REPLICA_URL` | e.g. `s3://my-bucket/nellys-wallet` (B2, R2, or AWS) |
+| `LITESTREAM_ACCESS_KEY_ID` | provider access key |
+| `LITESTREAM_SECRET_ACCESS_KEY` | provider secret |
+
+Render gives you HTTPS by default at `https://nellys-wallet.onrender.com`
+(or your custom domain). Plaid Production OAuth and Clerk session cookies
+both require HTTPS, so this is a hard requirement.
+
+### Litestream backups
+
+Replica retention defaults are in [litestream.yml](litestream.yml):
+- WAL kept for 7 days
+- Snapshot every 24 hours
+- WAL sync interval 1 second (near-realtime)
+
+To restore from backup outside a container (e.g., locally):
+
+```bash
+litestream restore -o instance/finance.db s3://my-bucket/nellys-wallet
+```
+
+If `LITESTREAM_REPLICA_URL` isn't set, the [entrypoint.sh](entrypoint.sh)
+script skips litestream entirely and just runs gunicorn — useful for testing
+the Dockerfile locally without provisioning S3.
+
+### Clerk onboarding for friends
+
+After deploy:
+1. You sign in first via `/sign-in`. The placeholder-claim logic in
+   [code/auth.py](code/auth.py) detects you're the only existing user
+   and swaps your placeholder row's `clerk_user_id` to your real Clerk ID,
+   so all your historical data carries over.
+2. Each friend signs up at `/sign-up`. New User row, no Plaid credentials
+   attached.
+3. They land on `/settings/plaid` (forced by the `@with_user` decorator)
+   to paste their own Plaid Trial `client_id` and `secret`. Each Plaid
+   Trial account gives 100 free items, so each friend brings their own
+   billing.
+4. Refresh — they can link banks via the `+` button as you do.
 
 ---
 

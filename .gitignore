@@ -26,7 +26,12 @@ __pycache__/
 .vscode/
 .idea/
 
-# Local databases (when we add SQLite)
+# Local databases + everything else the app writes at runtime
+instance/
 *.db
 *.sqlite
 *.sqlite3
+*.bak
+
+# Docker
+.docker/

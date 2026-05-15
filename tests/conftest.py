@@ -38,13 +38,16 @@ def fresh_db():
 @pytest.fixture(autouse=True)
 def clear_caches():
     """Reset all in-process caches between tests."""
+    import income
     import providers
     import spending
     providers.clear_cache()
     spending.clear_cache()
+    income.clear_cache()
     yield
     providers.clear_cache()
     spending.clear_cache()
+    income.clear_cache()
 
 
 @pytest.fixture
@@ -78,7 +81,21 @@ def user_with_item(db_session, user):
 
 
 @pytest.fixture
+def patch_plaid():
+    """Mock providers.plaid_client_for via the spending module so sync_transactions
+    doesn't hit real Plaid. Shared across test modules."""
+    from unittest.mock import MagicMock, patch
+    with patch("spending.plaid_client_for") as mock_for:
+        client = MagicMock()
+        mock_for.return_value = client
+        yield client
+
+
+@pytest.fixture
 def client():
     from app import app as flask_app
     flask_app.config["TESTING"] = True
+    # flask-wtf rejects POSTs without a CSRF token; tests exercise the routes
+    # directly and don't render the meta tag we'd read the token from.
+    flask_app.config["WTF_CSRF_ENABLED"] = False
     return flask_app.test_client()

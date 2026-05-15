@@ -9,6 +9,7 @@ import plaid
 from plaid.api import plaid_api
 from plaid.model.country_code import CountryCode
 from plaid.model.institutions_get_by_id_request import InstitutionsGetByIdRequest
+from plaid.model.institutions_get_by_id_request_options import InstitutionsGetByIdRequestOptions
 from plaid.model.item_get_request import ItemGetRequest
 from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
@@ -31,9 +32,10 @@ def create_link_token(client: plaid_api.PlaidApi, user: User) -> str:
     return client.link_token_create(req).link_token
 
 
-def lookup_institution_name(client: plaid_api.PlaidApi, access_token: str) -> str | None:
-    """Resolve the friendly institution name for a Plaid item.
-    Returns None if Plaid has no institution_id or the call fails."""
+def lookup_institution(client: plaid_api.PlaidApi, access_token: str) -> dict | None:
+    """Resolve {name, logo} for a Plaid item. `logo` is a base64-encoded PNG
+    string (Plaid returns it that way) or None if Plaid doesn't have one.
+    Returns None entirely if the lookup itself fails."""
     try:
         item_resp = client.item_get(ItemGetRequest(access_token=access_token))
         institution_id = getattr(item_resp.item, "institution_id", None)
@@ -43,28 +45,41 @@ def lookup_institution_name(client: plaid_api.PlaidApi, access_token: str) -> st
             InstitutionsGetByIdRequest(
                 institution_id=institution_id,
                 country_codes=[CountryCode("US")],
+                options=InstitutionsGetByIdRequestOptions(include_optional_metadata=True),
             )
         )
-        return inst_resp.institution.name
+        inst = inst_resp.institution
+        return {
+            "name": inst.name,
+            "logo": getattr(inst, "logo", None),
+        }
     except plaid.ApiException:
         return None
+
+
+def lookup_institution_name(client: plaid_api.PlaidApi, access_token: str) -> str | None:
+    """Backward-compatible wrapper. Returns the institution name only."""
+    info = lookup_institution(client, access_token)
+    return info["name"] if info else None
 
 
 def exchange_and_save(
     client: plaid_api.PlaidApi, session, user: User, public_token: str
 ) -> PlaidItem:
-    """Exchange a public_token for an access_token, look up institution name,
-    persist a PlaidItem with the encrypted access token. Returns the saved item."""
+    """Exchange a public_token for an access_token, look up institution name
+    + logo, persist a PlaidItem with the encrypted access token."""
     exchange_response = client.item_public_token_exchange(
         ItemPublicTokenExchangeRequest(public_token=public_token)
     )
     access_token = exchange_response.access_token
     plaid_item_id = exchange_response.item_id
 
+    info = lookup_institution(client, access_token) or {}
     item = PlaidItem(
         user_id=user.id,
         plaid_item_id=plaid_item_id,
-        institution_name=lookup_institution_name(client, access_token),
+        institution_name=info.get("name"),
+        logo=info.get("logo"),
     )
     item.set_access_token(access_token)
     session.add(item)

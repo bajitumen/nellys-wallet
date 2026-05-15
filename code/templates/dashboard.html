@@ -31,6 +31,49 @@
   </div>
 </div>
 
+{% if networth_chart or networth_snapshot_count == 1 or monthly_chart %}
+<div class="overview-charts">
+  {% if networth_chart %}
+  <div class="chart-card networth-chart {{ 'trend-up' if networth_chart.trend == 'up' else 'trend-down' }}">
+    <div class="label">Net Worth</div>
+    <svg viewBox="0 0 {{ networth_chart.width }} {{ networth_chart.height }}"
+         preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="{{ networth_chart.area_path }}" class="networth-area"/>
+      <path d="{{ networth_chart.line_path }}" class="networth-line"
+            fill="none" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+    </svg>
+    <div class="chart-range-filter" data-chart="networth">
+      {% for r in ['30D', '3M', '6M', 'YTD', 'All'] %}
+      <button type="button" class="chart-range-btn{% if r == '30D' %} active{% endif %}" data-range="{{ r }}">{{ r }}</button>
+      {% endfor %}
+    </div>
+  </div>
+  {% elif networth_snapshot_count == 1 %}
+  <div class="chart-card">
+    <div class="label">Net Worth</div>
+    <p class="networth-waiting">First snapshot captured. Click Refresh once more to draw the line.</p>
+  </div>
+  {% else %}
+  <div></div>
+  {% endif %}
+
+  {% if monthly_chart %}
+  <div class="chart-card monthly-spend-chart">
+    <div class="label">Cash Flow</div>
+    <svg viewBox="0 0 500 180" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="chart-range-filter" data-chart="monthly">
+      {% for r in ['30D', '3M', '6M', 'YTD', 'All'] %}
+      <button type="button" class="chart-range-btn{% if r == '6M' %} active{% endif %}" data-range="{{ r }}">{{ r }}</button>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div></div>
+  {% endif %}
+</div>
+{% endif %}
+
 {% macro account_table(accounts, show_available=True) %}
 <table>
   <thead>
@@ -46,7 +89,10 @@
   <tbody>
   {% for a in accounts %}
     <tr>
-      <td>{{ a.institution }}</td>
+      <td>
+        {% if a.logo %}<img class="inst-logo" src="data:image/png;base64,{{ a.logo }}" alt="">{% endif %}
+        {{ a.institution }}
+      </td>
       <td>{{ a.name }}</td>
       <td class="muted">{{ a.type }}</td>
       <td class="muted">{{ "****" + a.mask if a.mask else "—" }}</td>
@@ -84,4 +130,26 @@
   <p class="error">{{ err }}</p>
 {% endfor %}
 
+{% endblock %}
+
+{% block scripts %}
+{% if networth_chart %}
+<script>
+  window.NETWORTH_CHART = {
+    width: {{ networth_chart.width }},
+    height: {{ networth_chart.height }},
+    points: {{ networth_chart.points | tojson }},
+  };
+</script>
+{% endif %}
+{% if monthly_chart %}
+<script>
+  window.MONTHLY_CHART = {
+    width: 500,
+    height: 180,
+    totals: {{ monthly_totals_raw | tojson }},
+  };
+</script>
+{% endif %}
+<script src="{{ url_for('static', filename='dashboard.js') }}"></script>
 {% endblock %}

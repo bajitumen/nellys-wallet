@@ -5,11 +5,13 @@ description = "Personal finance dashboard backed by Plaid."
 requires-python = ">=3.11"
 dependencies = [
     "flask>=3.1",
+    "flask-wtf>=1.2",
     "sqlalchemy>=2.0",
     "alembic>=1.13",
     "cryptography>=42",
     "python-dotenv>=1.0",
     "plaid-python>=38",
+    "pyjwt[crypto]>=2.8",
     "requests>=2.32",
 ]
 

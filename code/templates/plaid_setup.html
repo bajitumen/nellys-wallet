@@ -1,0 +1,41 @@
+{% extends "_layout.html" %}
+{% block title %}Plaid Setup · Nelly's Wallet{% endblock %}
+{% block heading %}Connect Plaid{% endblock %}
+{% block content %}
+
+<p class="subtitle">
+  {% if has_creds %}
+    Update your Plaid Trial credentials.
+  {% else %}
+    Paste your Plaid Trial credentials to get started. Each row stays
+    Fernet-encrypted at rest.
+  {% endif %}
+</p>
+
+<div class="plaid-setup-card">
+  <form method="POST" action="{{ url_for('plaid_setup') }}" class="plaid-setup-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="plaid-setup-label">
+      Plaid client ID
+      <input type="text" name="plaid_client_id" autocomplete="off"
+             spellcheck="false" required>
+    </label>
+    <label class="plaid-setup-label">
+      Plaid secret
+      <input type="password" name="plaid_secret" autocomplete="off"
+             spellcheck="false" required>
+    </label>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <div class="plaid-setup-actions">
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+
+  <p class="plaid-setup-help">
+    Don't have these yet? Sign up at
+    <a href="https://dashboard.plaid.com" target="_blank" rel="noopener">dashboard.plaid.com</a>
+    — the free Trial tier gives you 100 free items.
+  </p>
+</div>
+
+{% endblock %}

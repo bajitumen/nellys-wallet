@@ -16,7 +16,7 @@ def _empty_spending():
         "total": 0.0, "count": 0, "categories": [], "errors": [],
         "source": None, "transactions": [],
         "month": "2026-05", "month_label": "May 2026",
-        "chart": None,
+        "daily_avg": 0.0, "prev_month_change_pct": None,
     }
 
 
@@ -98,6 +98,60 @@ def test_override_set_category(client, user_with_item, db_session):
     assert ov.category_override == "FOOD_AND_DRINK"
 
 
+def test_override_set_detailed(client, user_with_item, db_session):
+    """POST with `detailed` stores the PFC detailed code."""
+    from models import TransactionOverride
+    r = client.post(
+        "/transactions/tx1/override",
+        json={"detailed": "FOOD_AND_DRINK_COFFEE"},
+    )
+    assert r.status_code == 200
+    ov = (
+        db_session.query(TransactionOverride)
+        .filter_by(plaid_transaction_id="tx1")
+        .one()
+    )
+    assert ov.detailed_override == "FOOD_AND_DRINK_COFFEE"
+
+
+def test_override_rejects_invalid_detailed(client, user_with_item):
+    """An unknown detailed code is rejected with 400."""
+    r = client.post(
+        "/transactions/tx1/override",
+        json={"detailed": "BOGUS_DETAILED_CODE"},
+    )
+    assert r.status_code == 400
+
+
+def test_override_clear_detailed_with_null(client, user_with_item, db_session):
+    """Sending detailed: null clears just that field."""
+    from models import TransactionOverride
+    client.post(
+        "/transactions/tx1/override",
+        json={"detailed": "FOOD_AND_DRINK_COFFEE"},
+    )
+    client.post("/transactions/tx1/override", json={"detailed": None})
+    ov = (
+        db_session.query(TransactionOverride)
+        .filter_by(plaid_transaction_id="tx1")
+        .one()
+    )
+    assert ov.detailed_override is None
+
+
+def test_override_dismiss_sets_flag(client, user_with_item, db_session):
+    """POST {dismiss: true} flags the override as dismissed."""
+    from models import TransactionOverride
+    r = client.post("/transactions/tx1/override", json={"dismiss": True})
+    assert r.status_code == 200
+    ov = (
+        db_session.query(TransactionOverride)
+        .filter_by(plaid_transaction_id="tx1")
+        .one()
+    )
+    assert ov.dismissed is True
+
+
 def test_override_split(client, user_with_item, db_session):
     """Split override stores amount + split_percentage."""
     r = client.post("/transactions/tx1/override", json={
@@ -128,6 +182,107 @@ def test_link_exchange_invalidates_cache(client, user_with_item):
     assert user_with_item.id not in providers._cache
 
 
+def test_csrf_rejects_post_without_token(user_with_item):
+    """With CSRF enabled, POSTs lacking the token are rejected with 400."""
+    from app import app as flask_app
+    flask_app.config["TESTING"] = True
+    flask_app.config["WTF_CSRF_ENABLED"] = True
+    try:
+        bare = flask_app.test_client()
+        r = bare.post("/transactions/tx1/override", json={"category": "TRAVEL"})
+        assert r.status_code == 400
+    finally:
+        flask_app.config["WTF_CSRF_ENABLED"] = False
+
+
+def test_security_headers_present(client):
+    """Every response carries the basic security headers."""
+    r = client.get("/")
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["X-Frame-Options"] == "DENY"
+    assert "Referrer-Policy" in r.headers
+
+
+def test_plaid_setup_renders(client, user):
+    """A user with creds (the fixture default) sees the update form."""
+    r = client.get("/settings/plaid")
+    assert r.status_code == 200
+    assert b"Plaid client ID" in r.data
+    assert b"Plaid secret" in r.data
+
+
+def test_plaid_setup_post_saves_credentials(client, db_session):
+    """Posting valid creds saves them encrypted and redirects to /."""
+    from models import User
+    u = User(clerk_user_id="needs-plaid", email="x@x")
+    db_session.add(u)
+    db_session.commit()
+    assert u.get_plaid_credentials() is None
+
+    r = client.post("/settings/plaid", data={
+        "plaid_client_id": "abc123",
+        "plaid_secret": "xyz789",
+    }, follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/")
+
+    db_session.expire_all()
+    refreshed = db_session.query(User).filter_by(id=u.id).one()
+    assert refreshed.get_plaid_credentials() == ("abc123", "xyz789")
+
+
+def test_plaid_setup_post_rejects_empty(client, db_session):
+    """Empty fields re-render the form with an error, don't save."""
+    from models import User
+    u = User(clerk_user_id="needs-plaid", email="x@x")
+    db_session.add(u)
+    db_session.commit()
+
+    r = client.post("/settings/plaid", data={
+        "plaid_client_id": "",
+        "plaid_secret": "",
+    })
+    assert r.status_code == 200
+    assert b"Both fields are required" in r.data
+    db_session.expire_all()
+    assert db_session.query(User).filter_by(id=u.id).one().get_plaid_credentials() is None
+
+
+def test_dashboard_redirects_to_plaid_setup_when_no_creds(client, db_session):
+    """A signed-in user with no Plaid creds gets bounced to setup."""
+    from models import User
+    db_session.add(User(clerk_user_id="needs-plaid", email="x@x"))
+    db_session.commit()
+
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/settings/plaid")
+
+
+def test_sign_in_redirects_when_clerk_disabled(client):
+    """No Clerk keys configured → /sign-in bounces to the dashboard."""
+    r = client.get("/sign-in", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/")
+
+
+def test_sign_in_renders_when_clerk_enabled(client):
+    """With Clerk configured, /sign-in renders the placeholder div the JS
+    will mount the widget into."""
+    from app import app as flask_app
+    flask_app.config["TESTING"] = True
+    flask_app.config["WTF_CSRF_ENABLED"] = False
+    import auth
+    orig_enabled = auth.clerk_enabled
+    auth.clerk_enabled = lambda: True
+    try:
+        r = client.get("/sign-in")
+        assert r.status_code == 200
+        assert b'id="clerk-sign-in"' in r.data
+    finally:
+        auth.clerk_enabled = orig_enabled
+
+
 def test_static_favicon_cache_header(client):
     """Static assets get a Cache-Control max-age."""
     r = client.get("/static/favicon.svg")
@@ -138,7 +293,8 @@ def test_static_favicon_cache_header(client):
 def test_sync_route(client, user_with_item):
     """POST /sync invokes sync_transactions and returns counts."""
     with patch("spending.sync_transactions",
-               return_value={"added": 3, "updated": 1, "errors": []}) as mock:
+               return_value={"added": 3, "updated": 1, "errors": []}) as mock, \
+         patch("networth.capture", return_value=None):
         r = client.post("/sync")
     assert r.status_code == 200
     body = r.get_json()
@@ -146,3 +302,12 @@ def test_sync_route(client, user_with_item):
     assert body["added"] == 3
     assert body["updated"] == 1
     mock.assert_called_once()
+
+
+def test_sync_route_captures_networth_snapshot(client, user_with_item):
+    """Each Refresh appends one net-worth data point."""
+    with patch("spending.sync_transactions",
+               return_value={"added": 0, "updated": 0, "errors": []}), \
+         patch("networth.capture") as mock_capture:
+        client.post("/sync")
+    mock_capture.assert_called_once()

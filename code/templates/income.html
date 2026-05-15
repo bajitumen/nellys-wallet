@@ -1,0 +1,134 @@
+{% extends "_layout.html" %}
+{% from "_macros.html" import empty_state %}
+{% block title %}Income · Nelly's Wallet{% endblock %}
+{% block heading %}Income{% endblock %}
+{% block content %}
+
+<p class="subtitle">Grouped by payer</p>
+
+{% if sources %}
+<div class="source-filter">
+  <a href="{{ url_for('income_view', month=current_month) }}" class="{% if not current_source %}active{% endif %}">All</a>
+  {% for src in sources %}
+    <a href="{{ url_for('income_view', source=src, month=current_month) }}" class="{% if current_source == src %}active{% endif %}">
+      {% if source_logos.get(src) %}<img class="inst-logo" src="data:image/png;base64,{{ source_logos[src] }}" alt="">{% endif %}{{ src }}
+    </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if no_user %}
+  {{ empty_state("No user provisioned yet.") }}
+{% elif not linked %}
+  {{ empty_state("No accounts linked yet.", "Run <code>python code/enroll_plaid.py</code> to connect a bank.") }}
+{% else %}
+
+<div class="totals" style="grid-template-columns: repeat(4, 1fr);">
+  <div class="card month-card">
+    <div class="label">Month</div>
+    <div class="value">
+      <button class="month-trigger" id="month-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+        {{ month_label }}
+        <i class="ph ph-caret-down"></i>
+      </button>
+    </div>
+    <div class="month-menu" id="month-menu" role="listbox" hidden>
+      {% for opt in month_options %}
+      <a href="{{ url_for('income_view', month=opt.value, source=current_source) }}"
+         class="{% if opt.value == current_month %}active{% endif %}">{{ opt.label }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="label">Total Earned</div>
+    {# delta-up: income went up = green; delta-down: income went down = red. Opposite sign from spending. #}
+    <div class="value">${{ "{:,.2f}".format(total) }}{% if prev_month_change_pct is not none %}<span class="delta{% if prev_month_change_pct > 0 %} delta-good{% elif prev_month_change_pct < 0 %} delta-bad{% endif %}">({{ "{:+.0f}".format(prev_month_change_pct) }}%)</span>{% endif %}</div>
+  </div>
+  <div class="card">
+    <div class="label">Transactions</div>
+    <div class="value">{{ count }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Daily Avg</div>
+    <div class="value">${{ "{:,.2f}".format(daily_avg) }}</div>
+  </div>
+</div>
+
+{% if payers and total %}
+<div class="chart-card">
+  <div class="label">Breakdown</div>
+  <div class="stacked-bar" role="img" aria-label="Income by payer">
+    {% for p in payers %}{% if p.total %}
+    <div class="stacked-bar-segment"
+         style="flex: {{ p.total }} 0 0; background: {{ p.color }};"
+         data-tooltip="{{ p.name }} · ${{ '{:,.2f}'.format(p.total) }}"></div>
+    {% endif %}{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if not payers %}
+  {{ empty_state("No income in " ~ month_label ~ ".", "Try a different month from the dropdown above. Plaid sometimes takes a few days to classify recent deposits as income.") }}
+{% else %}
+
+<table class="sortable-table">
+  <thead>
+    <tr>
+      <th class="cat-dot-col"></th>
+      <th data-sort="string">Payer</th>
+      <th class="num" data-sort="number">Transactions</th>
+      <th class="num" data-sort="number">% of Total</th>
+      <th class="num" data-sort="number" data-dir="desc">Earned</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in payers %}
+    <tr>
+      <td class="cat-dot-col"><span class="cat-dot" style="background: {{ p.color }};"></span></td>
+      <td>{{ p.name }}</td>
+      <td class="num muted" data-value="{{ p.count }}">{{ p.count }}</td>
+      <td class="num muted" data-value="{{ p.total }}">{{ "{:.1f}%".format(p.total / total * 100) }}</td>
+      <td class="num" data-value="{{ p.total }}">${{ "{:,.2f}".format(p.total) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if transactions %}
+<h2>Transactions</h2>
+<table class="sortable-table">
+  <thead>
+    <tr>
+      <th data-sort="date" data-dir="desc">Date</th>
+      {% if not current_source %}<th data-sort="string">Source</th>{% endif %}
+      <th data-sort="string">Payer</th>
+      <th data-sort="string">Description</th>
+      <th class="num" data-sort="number">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for tx in transactions %}
+    <tr>
+      <td class="muted" data-value="{{ tx.date.isoformat() }}">{{ tx.date.strftime('%b %d') }}</td>
+      {% if not current_source %}<td class="muted">{{ tx.source }}</td>{% endif %}
+      <td>
+        <span class="cat-dot" style="background: {{ tx.color }};"></span>
+        {{ tx.payer }}
+      </td>
+      <td class="muted">{{ tx.name }}</td>
+      <td class="num" data-value="{{ tx.amount }}">${{ "{:,.2f}".format(tx.amount) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% endif %}
+
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='income.js') }}"></script>
+{% endblock %}
