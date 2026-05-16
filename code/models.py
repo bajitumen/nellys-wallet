@@ -60,6 +60,10 @@ class PlaidItem(Base):
     institution_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # Base64-encoded PNG from Plaid's institutions_get_by_id. Small (~1-3KB).
     logo: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Plaid's institution URL (used later for logo.dev fallback) + brand color
+    # (used now as the letter-tile background when no logo is available).
+    institution_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    primary_color: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     plaid_item_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
     access_token_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -101,6 +105,22 @@ class TransactionOverride(Base):
     # Dismissed = remove the tx entirely from spending lists and totals.
     # Reversible by un-dismissing or clearing the override row.
     dismissed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class AccountRate(Base):
+    """User-set annual interest rate for one Plaid account (APY for cash,
+    expected return for investments, APR for credit cards). Used by the
+    Planning page to project balances forward."""
+
+    __tablename__ = "account_rates"
+    __table_args__ = (
+        UniqueConstraint("user_id", "plaid_account_id", name="uq_rate_user_acct"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    plaid_account_id: Mapped[str] = mapped_column(String(64), index=True)
+    rate: Mapped[float] = mapped_column(Float)  # annual %, e.g. 4.5 = 4.5%
 
 
 class Budget(Base):

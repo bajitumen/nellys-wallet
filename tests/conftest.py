@@ -13,6 +13,14 @@ import tempfile
 # Test env vars — must be set before app modules import config.
 os.environ["FERNET_KEY"] = "Wx_G6C2NkMruRUn9P2Tb_KGFSKyZEQIX2KbEv_g6dkw="
 os.environ["FLASK_SECRET_KEY"] = "test-secret-key"
+# Force-disable Clerk in tests so @with_user uses the placeholder-user path
+# instead of redirecting every request to /sign-in. Without this, a real
+# CLERK_JWT_PUBLIC_KEY in the developer's .env leaks into the test process
+# and breaks every route test.
+os.environ["CLERK_PUBLISHABLE_KEY"] = ""
+os.environ["CLERK_SECRET_KEY"] = ""
+os.environ["CLERK_JWT_PUBLIC_KEY"] = ""
+os.environ["CLERK_FRONTEND_API"] = ""
 _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp.name}"

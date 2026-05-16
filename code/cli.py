@@ -19,6 +19,11 @@ Commands:
                           items hold access tokens issued by the old team and won't
                           work with the new team's credentials. Re-link via the + button
                           after running.
+  probe-logo <item_id>    Make a fresh institutions_get_by_id call for a specific
+                          PlaidItem and print the raw fields Plaid returned —
+                          institution_id, logo presence + length, URL, primary_color.
+                          Useful when a logo is mysteriously missing from the DB.
+                          Costs ~1 Plaid credit per call.
 """
 
 import os
@@ -106,7 +111,8 @@ def cmd_show():
 
 
 def cmd_backfill_institutions():
-    """Fill in institution_name and logo for any PlaidItem missing either."""
+    """Fill in institution_name / logo / url / primary_color for any
+    PlaidItem missing any of them."""
     import plaid_link
     from sqlalchemy import or_
 
@@ -114,7 +120,12 @@ def cmd_backfill_institutions():
 
     with SessionLocal() as session:
         missing = session.query(PlaidItem).filter(
-            or_(PlaidItem.institution_name.is_(None), PlaidItem.logo.is_(None))
+            or_(
+                PlaidItem.institution_name.is_(None),
+                PlaidItem.logo.is_(None),
+                PlaidItem.institution_url.is_(None),
+                PlaidItem.primary_color.is_(None),
+            )
         ).all()
         if not missing:
             print("No items need backfilling.")
@@ -138,8 +149,15 @@ def cmd_backfill_institutions():
                     item.institution_name = info["name"]
                 if info.get("logo") and not item.logo:
                     item.logo = info["logo"]
-                print(f"  - item id={item.id}: name={item.institution_name!r} "
-                      f"logo={'set' if item.logo else 'missing'}")
+                if info.get("url") and not item.institution_url:
+                    item.institution_url = info["url"]
+                if info.get("primary_color") and not item.primary_color:
+                    item.primary_color = info["primary_color"]
+                print(
+                    f"  - item id={item.id}: name={item.institution_name!r} "
+                    f"logo={'set' if item.logo else 'missing'} "
+                    f"color={item.primary_color or 'missing'}"
+                )
                 updated += 1
             else:
                 print(f"  - item id={item.id}: lookup returned no institution")
@@ -199,6 +217,64 @@ def cmd_reset_items():
         print("Done. Restart the server and click + to re-link each institution.")
 
 
+def cmd_probe_logo():
+    """Dump the raw institutions_get_by_id response for one PlaidItem.
+    Pass the item_id as a positional arg: `python code/cli.py probe-logo 3`."""
+    from plaid.model.country_code import CountryCode
+    from plaid.model.institutions_get_by_id_request import InstitutionsGetByIdRequest
+    from plaid.model.institutions_get_by_id_request_options import (
+        InstitutionsGetByIdRequestOptions,
+    )
+    from plaid.model.item_get_request import ItemGetRequest
+
+    from providers import plaid_client_for
+
+    if len(sys.argv) < 3:
+        print("Usage: python code/cli.py probe-logo <item_id>")
+        return
+    try:
+        target_id = int(sys.argv[2])
+    except ValueError:
+        print(f"Bad item_id: {sys.argv[2]!r}")
+        return
+
+    with SessionLocal() as session:
+        item = session.query(PlaidItem).filter_by(id=target_id).one_or_none()
+        if item is None:
+            print(f"No PlaidItem with id={target_id}")
+            return
+        print(f"PlaidItem id={item.id}  institution_name={item.institution_name!r}")
+        try:
+            client = plaid_client_for(item.user)
+        except ValueError as e:
+            print(f"Plaid client error: {e}")
+            return
+
+        item_resp = client.item_get(ItemGetRequest(access_token=item.get_access_token()))
+        institution_id = getattr(item_resp.item, "institution_id", None)
+        print(f"Plaid institution_id: {institution_id}")
+        if not institution_id:
+            print("Item has no institution_id; can't fetch institution.")
+            return
+
+        inst_resp = client.institutions_get_by_id(InstitutionsGetByIdRequest(
+            institution_id=institution_id,
+            country_codes=[CountryCode("US")],
+            options=InstitutionsGetByIdRequestOptions(include_optional_metadata=True),
+        ))
+        inst = inst_resp.institution
+        logo = getattr(inst, "logo", None)
+        print(f"name:           {getattr(inst, 'name', None)!r}")
+        print(f"url:            {getattr(inst, 'url', None)!r}")
+        print(f"primary_color:  {getattr(inst, 'primary_color', None)!r}")
+        print(f"logo present:   {bool(logo)}")
+        print(f"logo length:    {len(logo) if logo else 0}")
+        if logo:
+            print(f"logo prefix:    {logo[:40]}...")
+        else:
+            print("→ Plaid did not return a logo for this institution_id.")
+
+
 COMMANDS = {
     "init-db": cmd_init_db,
     "seed-me": cmd_seed_me,
@@ -206,6 +282,7 @@ COMMANDS = {
     "backfill-institutions": cmd_backfill_institutions,
     "sync": cmd_sync,
     "reset-items": cmd_reset_items,
+    "probe-logo": cmd_probe_logo,
 }
 
 

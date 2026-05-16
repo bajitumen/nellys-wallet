@@ -20,6 +20,7 @@ import config
 import income as income_mod
 import networth as networth_mod
 import pfc
+import planning as planning_mod
 import plaid_link
 import providers
 import spending as spending_mod
@@ -42,6 +43,10 @@ app.config.update(
 # CSRF protection on every state-changing route. The token is rendered into
 # a <meta> tag in the layout and read by fetch() calls as `X-CSRFToken`.
 csrf = CSRFProtect(app)
+
+# Template filter for the letter-tile fallback color. Used wherever an
+# institution name appears without a logo.
+app.jinja_env.filters["letter_color"] = providers.institution_letter_color
 
 
 @app.context_processor
@@ -329,7 +334,7 @@ def spending_view(session, user):
         transactions=data["transactions"],
         errors=data["errors"],
         sources=sources,
-        source_logos=providers.source_logos(user),
+        source_logos=providers.source_avatars(user),
         current_source=source,
         month_options=month_options,
         current_month=data["month"],
@@ -478,7 +483,7 @@ def income_view(session, user):
         payers=data["payers"],
         transactions=data["transactions"],
         sources=sources,
-        source_logos=providers.source_logos(user),
+        source_logos=providers.source_avatars(user),
         current_source=source,
         month_options=month_options,
         current_month=data["month"],
@@ -486,6 +491,67 @@ def income_view(session, user):
         daily_avg=data["daily_avg"],
         prev_month_change_pct=data["prev_month_change_pct"],
     )
+
+
+@app.route("/planning")
+@with_user
+def planning_view(session, user):
+    """Project net worth or a single account forward using user-set rates.
+    Account list + balances come from the live Plaid fetch; rates come from
+    the AccountRate table; the projection itself runs in the browser."""
+    if user is None:
+        return render_template(
+            "planning.html", active_page="planning", no_user=True, linked=False,
+            accounts=[], rates={},
+        )
+    data = providers.fetch_all(user)
+    # Flatten the bucketed account dicts into one list the template can
+    # iterate. Tag each account with its sign in the net-worth sum (credit
+    # subtracts) and a bucket name for grouping in the rate table.
+    accounts: list[dict] = []
+    for bucket, sign in (("cash", 1), ("investment", 1), ("credit", -1), ("other", 1)):
+        for acct in data[bucket]:
+            if acct.get("balance") is None:
+                continue
+            accounts.append({
+                "id": acct["plaid_account_id"],
+                "institution": acct["institution"],
+                "logo": acct.get("logo"),
+                "primary_color": acct.get("primary_color"),
+                "name": acct["name"],
+                "type": acct["type"],
+                "balance": acct["balance"],
+                "bucket": bucket,
+                "sign": sign,
+            })
+    rates = planning_mod.get_rates(user, session)
+    return render_template(
+        "planning.html",
+        active_page="planning",
+        no_user=False,
+        linked=bool(user.items),
+        accounts=accounts,
+        rates=rates,
+    )
+
+
+@app.route("/planning/rate/<account_id>", methods=["POST"])
+@with_user
+def planning_rate_save(session, user, account_id):
+    """Upsert a per-account rate. Empty value clears the row."""
+    if user is None:
+        return jsonify({"error": "No user"}), 400
+    data = request.get_json(silent=True) or {}
+    rate = data.get("rate")
+    if rate in (None, ""):
+        planning_mod.clear_rate(user, account_id, session)
+        return jsonify({"ok": True, "rate": None})
+    try:
+        value = float(rate)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid rate"}), 400
+    planning_mod.upsert_rate(user, account_id, value, session)
+    return jsonify({"ok": True, "rate": value})
 
 
 @app.route("/budget")

@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% from "_macros.html" import empty_state %}
+{% from "_macros.html" import empty_state, inst_avatar %}
 {% block title %}Spending · Nelly's Wallet{% endblock %}
 {% block heading %}Spending{% endblock %}
 {% block content %}
@@ -11,7 +11,8 @@
   <a href="{{ url_for('spending_view', month=current_month) }}" class="{% if not current_source %}active{% endif %}">All</a>
   {% for src in sources %}
     <a href="{{ url_for('spending_view', source=src, month=current_month) }}" class="{% if current_source == src %}active{% endif %}">
-      {% if source_logos.get(src) %}<img class="inst-logo" src="data:image/png;base64,{{ source_logos[src] }}" alt="">{% endif %}{{ src }}
+      {% set av = source_logos.get(src) or {} %}
+      {{ inst_avatar(src, av.get('logo'), av.get('primary_color')) }}{{ src }}
     </a>
   {% endfor %}
 </div>

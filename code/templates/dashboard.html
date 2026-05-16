@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% from "_macros.html" import empty_state %}
+{% from "_macros.html" import empty_state, inst_avatar %}
 {% block title %}Overview · Nelly's Wallet{% endblock %}
 {% block heading %}Overview{% endblock %}
 {% block content %}
@@ -90,7 +90,7 @@
   {% for a in accounts %}
     <tr>
       <td>
-        {% if a.logo %}<img class="inst-logo" src="data:image/png;base64,{{ a.logo }}" alt="">{% endif %}
+        {{ inst_avatar(a.institution, a.logo, a.primary_color) }}
         {{ a.institution }}
       </td>
       <td>{{ a.name }}</td>

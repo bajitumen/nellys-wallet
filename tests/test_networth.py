@@ -52,17 +52,17 @@ def test_capture_replaces_existing_same_day_snapshot(user_with_item, db_session)
 
 
 def test_get_snapshots_dedupes_legacy_same_day_rows(user_with_item, db_session):
-    """Legacy DBs may have multiple same-day rows. Reads keep only the latest."""
-    from datetime import timedelta
+    """Legacy DBs may have multiple same-day rows. Reads keep only the latest.
+    Use fixed mid-day timestamps so the test isn't flaky around midnight UTC."""
     from models import NetWorthSnapshot
     import networth
-    now = _utcnow_naive()
+    base = datetime(2026, 5, 1, 12, 0, 0)
     db_session.add_all([
-        NetWorthSnapshot(user_id=user_with_item.id, taken_at=now - timedelta(hours=5),
+        NetWorthSnapshot(user_id=user_with_item.id, taken_at=base,
                          cash_total=0, investment_total=0, credit_total=0, net_worth=100.0),
-        NetWorthSnapshot(user_id=user_with_item.id, taken_at=now - timedelta(hours=2),
+        NetWorthSnapshot(user_id=user_with_item.id, taken_at=base.replace(hour=14),
                          cash_total=0, investment_total=0, credit_total=0, net_worth=150.0),
-        NetWorthSnapshot(user_id=user_with_item.id, taken_at=now,
+        NetWorthSnapshot(user_id=user_with_item.id, taken_at=base.replace(hour=18),
                          cash_total=0, investment_total=0, credit_total=0, net_worth=200.0),
     ])
     db_session.commit()

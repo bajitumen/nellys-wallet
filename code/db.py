@@ -92,6 +92,14 @@ def init_db():
         }
         if item_cols and "logo" not in item_cols:
             conn.execute(text("ALTER TABLE plaid_items ADD COLUMN logo TEXT"))
+        if item_cols and "institution_url" not in item_cols:
+            conn.execute(text(
+                "ALTER TABLE plaid_items ADD COLUMN institution_url VARCHAR(255)"
+            ))
+        if item_cols and "primary_color" not in item_cols:
+            conn.execute(text(
+                "ALTER TABLE plaid_items ADD COLUMN primary_color VARCHAR(16)"
+            ))
 
         conn.commit()
     _restrict_sqlite_perms()

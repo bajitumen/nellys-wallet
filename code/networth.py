@@ -21,7 +21,10 @@ def capture(user: User, session) -> NetWorthSnapshot | None:
     credit = providers.sum_balances(data["credit"])
 
     # Drop today's existing snapshots so this one is the single row for today.
-    today = datetime.now().date()
+    # Use UTC consistently — `taken_at` is stored as naive UTC, so the day
+    # boundary must be in UTC too, otherwise around midnight UTC the
+    # local-date boundary misses the existing row and we end up with two.
+    today = datetime.now(timezone.utc).date()
     start_of_day = datetime.combine(today, datetime.min.time())
     end_of_day = start_of_day + timedelta(days=1)
     session.query(NetWorthSnapshot).filter(

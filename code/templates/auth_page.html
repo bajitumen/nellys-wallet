@@ -1,11 +1,5 @@
-{% extends "_layout.html" %}
+{% extends "auth_layout.html" %}
 {% block title %}{% if page == 'sign-up' %}Sign up{% else %}Sign in{% endif %} · Nelly's Wallet{% endblock %}
-{% block heading %}{% if page == 'sign-up' %}Sign up{% else %}Sign in{% endif %}{% endblock %}
 {% block content %}
-
-<div class="auth-mount-wrap">
-  {# clerk-js mounts the Sign In / Sign Up widget into this div on page load. #}
-  <div id="clerk-{{ page }}" data-clerk-component="{{ page }}"></div>
-</div>
-
+<div id="clerk-{{ page }}" data-clerk-component="{{ page }}"></div>
 {% endblock %}

@@ -8,3 +8,14 @@
   {% endif %}
 </div>
 {% endmacro %}
+
+{# Render an institution's avatar inline with text: Plaid logo if present,
+   else a colored letter-tile using the institution's brand color (or a
+   hash-derived fallback when even that's missing). #}
+{% macro inst_avatar(name, logo, primary_color) -%}
+  {%- if logo -%}
+    <img class="inst-logo" src="data:image/png;base64,{{ logo }}" alt="">
+  {%- else -%}
+    <span class="inst-letter" style="background: {{ name | letter_color(primary_color) }};">{{ (name or '?')[0] | upper }}</span>
+  {%- endif -%}
+{%- endmacro %}

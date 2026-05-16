@@ -89,12 +89,12 @@
     background: var(--bg);
     font-weight: 500;
   }
-  .sidebar-user-button {
-    margin-top: auto;
-    padding: 0.85rem 1.5rem;
-    border-top: 1px solid var(--line);
+  .header-user-button {
+    display: inline-flex;
+    align-items: center;
+    height: 34px;
+    margin-left: 0.25rem;
   }
-  .sidebar-user-button + .theme-toggle { margin-top: 0; border-top: none; }
   .auth-mount-wrap {
     display: flex;
     justify-content: center;
@@ -288,15 +288,32 @@
   .diff { font-variant-numeric: tabular-nums; }
   .diff-good { color: var(--positive); }
   .diff-bad { color: var(--negative); }
-  .inst-logo {
+  /* Avatars (PNG logos + letter-tile fallbacks) share these box rules so a
+     row's vertical rhythm stays consistent regardless of which form renders.
+     vertical-align: middle pins both to the text x-height — simpler and
+     more reliable across cells than a hardcoded pixel offset. */
+  .inst-logo,
+  .inst-letter {
     display: inline-block;
-    width: 16px;
-    height: 16px;
-    border-radius: 3px;
-    vertical-align: -3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    vertical-align: middle;
     margin-right: 0.45rem;
+    margin-top: -2px;  /* nudge to optically center with text */
+    flex-shrink: 0;
+  }
+  .inst-logo {
     object-fit: contain;
     background: var(--surface);
+  }
+  .inst-letter {
+    text-align: center;
+    line-height: 18px;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
   }
   .error { color: var(--negative); font-size: 0.85rem; margin-top: 0.5rem; }
   .empty {
@@ -680,6 +697,99 @@
     -moz-appearance: textfield;
     appearance: textfield;
   }
+
+  /* Planning page */
+  .planning-chart-card { padding: 1rem 1.3rem; }
+  .planning-chart-card svg {
+    display: block;
+    width: 100%;
+    height: 220px;
+    margin-top: 0.6rem;
+  }
+  .planning-chart-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .planning-target {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .planning-target-label {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .planning-target select {
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.3rem 0.55rem;
+    font: inherit;
+    font-size: 0.92rem;
+    color: var(--text);
+  }
+  .planning-target select:focus { outline: none; border-color: var(--text-mid); }
+  .planning-horizon-filter {
+    display: flex;
+    gap: 0.25rem;
+  }
+  .planning-line { stroke: var(--text); }
+  .planning-area { fill: var(--text); fill-opacity: 0.06; }
+  .planning-trend-up.planning-line { stroke: var(--positive); }
+  .planning-trend-up.planning-area { fill: var(--positive); fill-opacity: 0.12; }
+  .planning-trend-down.planning-line { stroke: var(--negative); }
+  .planning-trend-down.planning-area { fill: var(--negative); fill-opacity: 0.12; }
+  .planning-summary {
+    margin-top: 0.7rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .planning-rates-table { width: 100%; margin-top: 0.5rem; }
+  .planning-acct-name { font-weight: 500; }
+  .planning-acct-type { margin-left: 0.4rem; font-size: 0.82rem; }
+  .planning-rate-input-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.05rem 0.5rem;
+    transition: border-color 0.1s;
+    min-width: 100px;
+  }
+  .planning-rate-input-wrap:focus-within { border-color: var(--text-mid); }
+  .planning-rate-input-wrap .prefix {
+    color: var(--text-faint);
+    font-size: 0.92rem;
+  }
+  .planning-rate-input {
+    width: 75px;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.92rem;
+    text-align: right;
+    padding: 0.3rem 0;
+  }
+  .planning-rate-input:focus { outline: none; }
+  .planning-rate-input::-webkit-outer-spin-button,
+  .planning-rate-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+  .planning-rate-input[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
 </style>
 </head>
 <body>
@@ -693,10 +803,8 @@
     <a href="/spending" class="{% if active_page == 'spending' %}active{% endif %}">Spending</a>
     <a href="/income" class="{% if active_page == 'income' %}active{% endif %}">Income</a>
     <a href="/budget" class="{% if active_page == 'budget' %}active{% endif %}">Budget</a>
+    <a href="/planning" class="{% if active_page == 'planning' %}active{% endif %}">Planning</a>
   </nav>
-  {% if clerk_enabled and g.user %}
-  <div class="sidebar-user-button" id="clerk-user-button"></div>
-  {% endif %}
   <button class="theme-toggle" type="button" aria-label="Toggle dark mode">
     <svg class="icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
     <svg class="icon icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/></svg>
@@ -719,6 +827,9 @@
             title="Add account">
       <i class="ph ph-plus"></i>
     </button>
+    {% if clerk_enabled %}
+    <div class="header-user-button" id="clerk-user-button"></div>
+    {% endif %}
   </div>
   {% endif %}
 </div>

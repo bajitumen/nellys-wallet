@@ -110,6 +110,31 @@ def test_source_logos_returns_per_institution_map(user_with_item, db_session):
     assert logos == {"TestBank": "LOGO_A"}
 
 
+def test_institution_letter_color_uses_brand_when_available():
+    """Plaid's primary_color is preferred over the hash-based fallback."""
+    from providers import institution_letter_color
+    assert institution_letter_color("Chase", "#095aa6") == "#095aa6"
+
+
+def test_institution_letter_color_falls_back_to_hash():
+    """No brand color → stable hash-derived palette color."""
+    from providers import institution_letter_color
+    c1 = institution_letter_color("Chase", None)
+    c2 = institution_letter_color("Chase", "")
+    assert c1.startswith("#") and len(c1) == 7
+    assert c1 == c2  # stable across calls
+
+
+def test_source_avatars_pairs_logo_and_color(user_with_item, db_session):
+    """source_avatars exposes both logo + primary_color per institution."""
+    from providers import source_avatars
+    user_with_item.items[0].logo = "BASE64"
+    user_with_item.items[0].primary_color = "#095aa6"
+    db_session.commit()
+    av = source_avatars(user_with_item)
+    assert av["TestBank"] == {"logo": "BASE64", "primary_color": "#095aa6"}
+
+
 def test_humanize_account_type():
     """Title-case for common types, explicit overrides for acronyms."""
     from providers import humanize_account_type

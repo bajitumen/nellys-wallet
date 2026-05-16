@@ -33,9 +33,10 @@ def create_link_token(client: plaid_api.PlaidApi, user: User) -> str:
 
 
 def lookup_institution(client: plaid_api.PlaidApi, access_token: str) -> dict | None:
-    """Resolve {name, logo} for a Plaid item. `logo` is a base64-encoded PNG
-    string (Plaid returns it that way) or None if Plaid doesn't have one.
-    Returns None entirely if the lookup itself fails."""
+    """Resolve {name, logo, url, primary_color} for a Plaid item. Every
+    field besides name is optional and may come back as None — notably
+    Plaid doesn't ship a logo for every institution. Returns None entirely
+    if the lookup itself fails."""
     try:
         item_resp = client.item_get(ItemGetRequest(access_token=access_token))
         institution_id = getattr(item_resp.item, "institution_id", None)
@@ -52,6 +53,8 @@ def lookup_institution(client: plaid_api.PlaidApi, access_token: str) -> dict | 
         return {
             "name": inst.name,
             "logo": getattr(inst, "logo", None),
+            "url": getattr(inst, "url", None),
+            "primary_color": getattr(inst, "primary_color", None),
         }
     except plaid.ApiException:
         return None
@@ -80,6 +83,8 @@ def exchange_and_save(
         plaid_item_id=plaid_item_id,
         institution_name=info.get("name"),
         logo=info.get("logo"),
+        institution_url=info.get("url"),
+        primary_color=info.get("primary_color"),
     )
     item.set_access_token(access_token)
     session.add(item)

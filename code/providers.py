@@ -129,6 +129,7 @@ def _fetch_one(client: plaid_api.PlaidApi, item: PlaidItem) -> dict:
     token = item.get_access_token()
     institution = item.institution_name or "Unknown"
     logo = item.logo
+    primary_color = item.primary_color
 
     try:
         resp = client.accounts_get(AccountsGetRequest(access_token=token))
@@ -142,6 +143,7 @@ def _fetch_one(client: plaid_api.PlaidApi, item: PlaidItem) -> dict:
         result[_classify(acct)].append({
             "institution": institution,
             "logo": logo,
+            "primary_color": primary_color,
             "name": acct.name,
             "type": humanize_account_type(
                 str(acct.subtype) if acct.subtype else str(acct.type)
@@ -222,16 +224,45 @@ def clear_cache() -> None:
         _keylocks.clear()
 
 
-def source_logos(user: User) -> dict[str, str]:
-    """{institution_name: base64_png_logo} for the user's linked items.
-    Used by the Spending/Income source filter tabs to render an inline logo
-    alongside the institution name."""
-    out: dict[str, str] = {}
+def source_avatars(user: User) -> dict[str, dict]:
+    """{institution_name: {logo, primary_color}} for the user's linked items.
+    Used by the Spending/Income source filter tabs to render either Plaid's
+    logo or a letter-tile in the institution's brand color as a fallback."""
+    out: dict[str, dict] = {}
     for item in user.items:
         name = item.institution_name or "Unknown"
-        if item.logo and name not in out:
-            out[name] = item.logo
+        if name in out:
+            continue
+        out[name] = {
+            "logo": item.logo,
+            "primary_color": item.primary_color,
+        }
     return out
+
+
+# Backwards-compat alias — keeps any older template using `source_logos` working
+# while the codebase migrates to the richer source_avatars structure.
+def source_logos(user: User) -> dict[str, str]:
+    return {
+        name: data["logo"]
+        for name, data in source_avatars(user).items()
+        if data.get("logo")
+    }
+
+
+def institution_letter_color(name: str, primary_color: str | None) -> str:
+    """Color for a letter-tile fallback when Plaid has no logo. Prefers the
+    institution's published brand color, falls back to a stable hash of the
+    name so each institution keeps a consistent color across pages."""
+    if primary_color and primary_color.startswith("#"):
+        return primary_color
+    import hashlib
+    palette = [
+        "#3b82f6", "#22c55e", "#a855f7", "#ec4899", "#f97316",
+        "#14b8a6", "#eab308", "#8b5cf6", "#06b6d4", "#f59e0b",
+    ]
+    digest = hashlib.md5((name or "?").encode("utf-8")).hexdigest()
+    return palette[int(digest, 16) % len(palette)]
 
 
 def sum_balances(accounts: list[dict]) -> float:
