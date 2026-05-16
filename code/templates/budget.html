@@ -10,6 +10,51 @@
   {{ empty_state("No user provisioned yet.", "Run <code>python code/cli.py seed-me</code> to migrate <code>permissions.env</code> into the DB.") }}
 {% else %}
 
+{% set total_budget = groups | sum(attribute='total') %}
+{% set difference = total_budget - total_spent %}
+
+<div class="totals" style="grid-template-columns: repeat(4, 1fr);">
+  <div class="card month-card">
+    <div class="label">Month</div>
+    <div class="value">
+      <button class="month-trigger" id="month-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+        <span class="month-label">{{ month_label }}</span>
+        <i class="ph ph-caret-down"></i>
+      </button>
+    </div>
+    <div class="month-menu" id="month-menu" role="listbox" hidden>
+      {% for opt in month_options %}
+      <a href="{{ url_for('budget_view', month=opt.value) }}"
+         class="{% if opt.value == current_month %}active{% endif %}">{{ opt.label }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="label">Total Budget</div>
+    <div class="value" id="card-total-budget">${{ "{:,.2f}".format(total_budget) }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Total Spent</div>
+    <div class="value" id="card-total-spent">${{ "{:,.2f}".format(total_spent) }}</div>
+  </div>
+  <div class="card{% if difference < 0 %} credit{% elif difference > 0 %} net{% endif %}">
+    <div class="label">Difference</div>
+    <div class="value" id="card-difference">${{ "{:,.2f}".format(difference) }}</div>
+  </div>
+</div>
+
+<div class="chart-card budget-summary-card" data-month-spent="{{ total_spent }}">
+  <div class="label">Budget breakdown</div>
+  <div class="stacked-bar budget-stacked-bar" role="img" aria-label="Budget by category">
+    {% for g in groups %}
+    <div class="stacked-bar-segment"
+         data-primary="{{ g.primary }}"
+         style="flex: {{ g.total }} 0 0; background: {{ g.color }};"
+         data-tooltip="{{ g.primary_label }} · ${{ '{:,.2f}'.format(g.total) }}"></div>
+    {% endfor %}
+  </div>
+</div>
+
 <div class="budget-columns">
 {% for g in groups %}
 <div class="budget-group">
@@ -30,7 +75,7 @@
           <span class="prefix">$</span>
           <input type="number" min="0" step="0.01" placeholder="0.00"
                  inputmode="decimal"
-                 class="budget-input"
+                 class="budget-input numeric-input"
                  data-code="{{ s.code }}"
                  data-primary="{{ g.primary }}"
                  value="{% if s.amount %}{{ "{:.2f}".format(s.amount) }}{% endif %}">

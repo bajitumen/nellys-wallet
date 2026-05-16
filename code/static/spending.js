@@ -225,53 +225,7 @@ function spendingPostOverride(txId, payload) {
   });
 })();
 
-// ---------------------------------------------------------------------------
-// Month picker dropdown
-// ---------------------------------------------------------------------------
-(function() {
-  var trigger = document.getElementById('month-trigger');
-  var menu = document.getElementById('month-menu');
-  if (!trigger || !menu) return;
-  trigger.addEventListener('click', function(e) {
-    e.stopPropagation();
-    var open = !menu.hidden;
-    menu.hidden = open;
-    trigger.setAttribute('aria-expanded', String(!open));
-  });
-  document.addEventListener('click', function(e) {
-    if (!menu.hidden && !e.target.closest('.month-menu')) {
-      menu.hidden = true;
-      trigger.setAttribute('aria-expanded', 'false');
-    }
-  });
-})();
-
-// ---------------------------------------------------------------------------
-// Stacked-bar hover tooltip
-// ---------------------------------------------------------------------------
-(function() {
-  var bar = document.querySelector('.stacked-bar');
-  if (!bar) return;
-  var tooltip = document.createElement('div');
-  tooltip.className = 'bar-tooltip';
-  document.body.appendChild(tooltip);
-
-  function show(seg) {
-    tooltip.textContent = seg.dataset.tooltip;
-    var rect = seg.getBoundingClientRect();
-    tooltip.style.left = (rect.left + rect.width / 2) + 'px';
-    tooltip.style.top = rect.top + 'px';
-    tooltip.classList.add('visible');
-  }
-  function hide() { tooltip.classList.remove('visible'); }
-
-  bar.addEventListener('mouseover', function(e) {
-    var seg = e.target.closest('.stacked-bar-segment');
-    if (seg) show(seg);
-  });
-  bar.addEventListener('mouseleave', hide);
-  window.addEventListener('scroll', hide, { passive: true });
-})();
+// Month-picker dropdown and stacked-bar tooltip live in layout.js now.
 
 // ---------------------------------------------------------------------------
 // Sortable tables: each <th data-sort="number|date|string"> becomes a click

@@ -370,6 +370,8 @@ function buildDivergingGeometry(totals, width, height) {
   var bars = [];
   totals.forEach(function(t, i) {
     var x = padX + i * (barW + barGap);
+    // Light "gross" bars first: full height of income above zero and spend
+    // below zero. These read as the envelope of cash flow each month.
     if (t.income > 0) {
       var topY = toY(t.income);
       var h = zeroY - topY;
@@ -390,8 +392,30 @@ function buildDivergingGeometry(totals, width, height) {
         amount: t.spend,
       });
     }
+    // Darker "net" overlay bar sitting inside the appropriate gross bar.
+    // Drawn after the gross bar so it paints on top.
+    var net = t.income - t.spend;
+    if (net > 0) {
+      var nTopY = toY(net);
+      var nH = zeroY - nTopY;
+      bars.push({
+        path: roundedTopPath(x, nTopY, barW, nH, 6),
+        kind: 'net-positive',
+        label: t.label,
+        amount: net,
+      });
+    } else if (net < 0) {
+      var nBottomY = toY(net);
+      var nH2 = nBottomY - zeroY;
+      bars.push({
+        path: roundedBottomPath(x, zeroY, barW, nH2, 6),
+        kind: 'net-negative',
+        label: t.label,
+        amount: -net,
+      });
+    }
   });
-  return { bars: bars, zeroY: zeroY, width: width };
+  return { bars: bars, zeroY: zeroY, width: width, height: height };
 }
 
 (function() {
@@ -426,10 +450,14 @@ function buildDivergingGeometry(totals, width, height) {
       var path = document.createElementNS(SVG_NS, 'path');
       path.setAttribute('class', 'bar bar-' + bar.kind);
       path.setAttribute('d', bar.path);
-      var sideLabel = bar.kind === 'income' ? 'Earned' : 'Spent';
+      var sideLabel;
+      if (bar.kind === 'income') sideLabel = 'Earned';
+      else if (bar.kind === 'spend') sideLabel = 'Spent';
+      else if (bar.kind === 'net-positive') sideLabel = 'Net +';
+      else sideLabel = 'Net −';
       path.setAttribute(
         'data-tooltip',
-        bar.label + ' · ' + sideLabel + ' $' + bar.amount.toLocaleString('en-US', {
+        bar.label + ' · ' + sideLabel + '$' + bar.amount.toLocaleString('en-US', {
           minimumFractionDigits: 2, maximumFractionDigits: 2,
         })
       );

@@ -1,5 +1,7 @@
 // Auto-save each sub-category budget on blur (or Enter). The server returns
 // the new primary-group total so the header refreshes without a page reload.
+// Month picker, stacked-bar tooltip, and on-blur decimal formatting all live
+// in layout.js (used by Spending / Income / Budget).
 
 (function() {
   function formatUsd(n) {
@@ -8,10 +10,132 @@
     });
   }
 
+  // Tween el's text from its current numeric content to `target` over ~350ms,
+  // matching the segment animation duration so the ticker and the bar arrive
+  // together. cubic-bezier(0.4, 0, 0.2, 1) is the same standard ease-out the
+  // bar uses. Each element gets its own RAF handle so concurrent tickers
+  // (Total Budget + Difference) don't cancel each other.
+  var TICKER_MS = 350;
+  function easeOut(t) {
+    return 1 - Math.pow(1 - t, 3);
+  }
+  function animateTicker(el, from, to) {
+    if (el._tickerRaf) cancelAnimationFrame(el._tickerRaf);
+    var start = performance.now();
+    function step(now) {
+      var t = Math.min(1, (now - start) / TICKER_MS);
+      var v = from + (to - from) * easeOut(t);
+      el.textContent = formatUsd(v);
+      if (t < 1) {
+        el._tickerRaf = requestAnimationFrame(step);
+      } else {
+        el._tickerRaf = null;
+      }
+    }
+    el._tickerRaf = requestAnimationFrame(step);
+  }
+
+  function readNumeric(el) {
+    if (!el) return 0;
+    var v = parseFloat(el.textContent.replace(/[$,]/g, ''));
+    return isNaN(v) ? 0 : v;
+  }
+
+  // Each save returns the new sum for one primary. Sum across all primary
+  // headers on the page to refresh the cards + segment widths — keeps the
+  // summary in sync with whatever the user just typed.
+  function refreshSummary(primary, newPrimarySum) {
+    var totalEl = document.getElementById('card-total-budget');
+    var diffEl = document.getElementById('card-difference');
+    var summaryCard = document.querySelector('.budget-summary-card');
+    if (!totalEl) return;
+    var primaryTotals = {};
+    document.querySelectorAll('.budget-group-total').forEach(function(el) {
+      primaryTotals[el.dataset.primary] = readNumeric(el);
+    });
+    primaryTotals[primary] = newPrimarySum;  // freshest read
+    var grand = Object.values(primaryTotals).reduce(function(s, v) { return s + v; }, 0);
+    var prevTotal = readNumeric(totalEl);
+    animateTicker(totalEl, prevTotal, grand);
+
+    if (diffEl && summaryCard) {
+      var spent = parseFloat(summaryCard.dataset.monthSpent) || 0;
+      tickerDifference(diffEl, grand - spent);
+    }
+
+    document.querySelectorAll('.budget-stacked-bar .stacked-bar-segment').forEach(function(seg) {
+      var p = seg.dataset.primary;
+      var v = primaryTotals[p] || 0;
+      seg.style.flex = v + ' 0 0';
+      // data-tooltip carries the human-readable label up front; preserve it.
+      var label = (seg.dataset.tooltip || '').split('·')[0].trim();
+      seg.dataset.tooltip = label + ' · ' + formatUsd(v);
+    });
+  }
+
+  // Helper that mirrors the Difference card's class state to its computed
+  // sign. Shared between the input-save handler and the month-change AJAX
+  // handler.
+  function tickerDifference(diffEl, newDiff) {
+    if (!diffEl) return;
+    var prevDiff = readNumeric(diffEl);
+    var diffCard = diffEl.closest('.card');
+    if (diffCard) {
+      diffCard.classList.remove('credit', 'net');
+      if (newDiff < 0) diffCard.classList.add('credit');
+      else if (newDiff > 0) diffCard.classList.add('net');
+    }
+    animateTicker(diffEl, prevDiff, newDiff);
+  }
+
+  // Month-dropdown click → fetch the new month's spending total via
+  // /budget/summary and animate the Spent + Difference cards. Avoids a
+  // full page reload so the cards ticker in place.
+  (function() {
+    var menu = document.getElementById('month-menu');
+    if (!menu) return;
+    menu.addEventListener('click', function(e) {
+      var link = e.target.closest('a');
+      if (!link) return;
+      var url = new URL(link.href, window.location.href);
+      var newMonth = url.searchParams.get('month');
+      if (!newMonth) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      history.pushState({}, '', url.pathname + url.search);
+      menu.querySelectorAll('a').forEach(function(a) { a.classList.remove('active'); });
+      link.classList.add('active');
+      var trigger = document.getElementById('month-trigger');
+      var labelEl = trigger && trigger.querySelector('.month-label');
+      if (labelEl) labelEl.textContent = link.textContent.trim();
+      menu.hidden = true;
+      if (trigger) trigger.setAttribute('aria-expanded', 'false');
+
+      fetch('/budget/summary?month=' + encodeURIComponent(newMonth))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var spentEl = document.getElementById('card-total-spent');
+          var summaryCard = document.querySelector('.budget-summary-card');
+          var totalBudgetEl = document.getElementById('card-total-budget');
+          var diffEl = document.getElementById('card-difference');
+          if (spentEl) {
+            animateTicker(spentEl, readNumeric(spentEl), data.total_spent);
+          }
+          if (summaryCard) summaryCard.dataset.monthSpent = data.total_spent;
+          if (totalBudgetEl && diffEl) {
+            tickerDifference(diffEl, readNumeric(totalBudgetEl) - data.total_spent);
+          }
+        });
+    });
+  })();
+
   document.querySelectorAll('.budget-input').forEach(function(input) {
     var lastValue = input.value;
 
     function save() {
+      // layout.js's capture-phase blur handler already normalized the value
+      // to fixed-2 by the time we get here.
       if (input.value === lastValue) return;
       lastValue = input.value;
       var payload = input.value === ''
@@ -32,6 +156,7 @@
             '.budget-group-total[data-primary="' + input.dataset.primary + '"]'
           );
           if (totalEl) totalEl.textContent = formatUsd(res.data.primary_sum);
+          refreshSummary(input.dataset.primary, res.data.primary_sum);
         });
     }
 

@@ -600,15 +600,46 @@ def planning_cashflow_save(session, user):
 @app.route("/budget")
 @with_user
 def budget_view(session, user):
+    month_options = _month_options(12)
     if user is None:
         return render_template(
             "budget.html", active_page="budget", no_user=True, groups=[],
+            month_options=month_options,
+            current_month=month_options[0]["value"],
+            month_label=month_options[0]["label"],
+            total_spent=0.0,
         )
     budgets = budget_mod.get_budgets(user, session)
     groups = budget_mod.build_groups(budgets)
+    month_arg = request.args.get("month")
+    spend = spending_mod.fetch_last_month(
+        user, month=month_arg, source=None, session=session,
+    )
     return render_template(
         "budget.html", active_page="budget", no_user=False, groups=groups,
+        month_options=month_options,
+        current_month=spend["month"],
+        month_label=spend["month_label"],
+        total_spent=spend["total"],
     )
+
+
+@app.route("/budget/summary")
+@with_user
+def budget_summary(session, user):
+    """Per-month spending total for the Budget page's four cards. Total
+    budget itself doesn't depend on month, so it's not returned here."""
+    if user is None:
+        return jsonify({"error": "No user"}), 401
+    month_arg = request.args.get("month")
+    spend = spending_mod.fetch_last_month(
+        user, month=month_arg, source=None, session=session,
+    )
+    return jsonify({
+        "month": spend["month"],
+        "month_label": spend["month_label"],
+        "total_spent": spend["total"],
+    })
 
 
 @app.route("/budget/<detailed>", methods=["POST"])

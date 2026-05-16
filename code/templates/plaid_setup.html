@@ -2,6 +2,9 @@
 {% block title %}Connect Plaid · Nelly's Wallet{% endblock %}
 {% block content %}
 <div class="plaid-setup-card">
+  {% if clerk_enabled %}
+  <button type="button" class="plaid-setup-back" id="plaid-setup-signout">&larr; Back to sign in</button>
+  {% endif %}
   <h1 class="plaid-setup-title">Connect Plaid</h1>
   <p class="plaid-setup-subtitle">
     {% if has_creds %}
@@ -33,4 +36,25 @@
     <a href="{{ url_for('plaid_faq') }}">How to set up Plaid →</a>
   </p>
 </div>
+{% if clerk_enabled %}
+<script>
+  // Clerk-js is loaded by auth_layout. mountClerkWidgets() in auth.js will
+  // have called Clerk.load() before we need .signOut() — but in case the
+  // user clicks fast, lazy-load on demand.
+  document.getElementById('plaid-setup-signout').addEventListener('click', async function() {
+    if (typeof Clerk === 'undefined') {
+      // Clerk-js hasn't finished loading; reload to /sign-in (which will
+      // bounce them through Clerk's session check).
+      window.location.href = '/sign-in';
+      return;
+    }
+    try {
+      await Clerk.load();
+      await Clerk.signOut({ redirectUrl: '/sign-in' });
+    } catch (e) {
+      window.location.href = '/sign-in';
+    }
+  });
+</script>
+{% endif %}
 {% endblock %}
