@@ -1,18 +1,17 @@
-{% extends "_layout.html" %}
-{% block title %}Plaid Setup · Nelly's Wallet{% endblock %}
-{% block heading %}Connect Plaid{% endblock %}
+{% extends "auth_layout.html" %}
+{% block title %}Connect Plaid · Nelly's Wallet{% endblock %}
 {% block content %}
-
-<p class="subtitle">
-  {% if has_creds %}
-    Update your Plaid Trial credentials.
-  {% else %}
-    Paste your Plaid Trial credentials to get started. Each row stays
-    Fernet-encrypted at rest.
-  {% endif %}
-</p>
-
 <div class="plaid-setup-card">
+  <h1 class="plaid-setup-title">Connect Plaid</h1>
+  <p class="plaid-setup-subtitle">
+    {% if has_creds %}
+      Update your Plaid Trial credentials.
+    {% else %}
+      Paste your Plaid Trial credentials to get started.
+      Stored Fernet-encrypted at rest.
+    {% endif %}
+  </p>
+
   <form method="POST" action="{{ url_for('plaid_setup') }}" class="plaid-setup-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label class="plaid-setup-label">
@@ -25,10 +24,8 @@
       <input type="password" name="plaid_secret" autocomplete="off"
              spellcheck="false" required>
     </label>
-    {% if error %}<p class="error">{{ error }}</p>{% endif %}
-    <div class="plaid-setup-actions">
-      <button type="submit" class="primary">Save</button>
-    </div>
+    {% if error %}<p class="plaid-setup-error">{{ error }}</p>{% endif %}
+    <button type="submit" class="plaid-setup-submit">Save</button>
   </form>
 
   <p class="plaid-setup-help">
@@ -37,5 +34,4 @@
     — the free Trial tier gives you 100 free items.
   </p>
 </div>
-
 {% endblock %}
