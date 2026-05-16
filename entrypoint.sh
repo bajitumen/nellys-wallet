@@ -20,8 +20,8 @@ if [[ -n "${LITESTREAM_REPLICA_URL:-}" ]]; then
     }
   fi
   exec litestream replicate -config /app/litestream.yml -exec \
-    "gunicorn -w 2 -b 0.0.0.0:${PORT:-5001} --chdir /app/code app:app"
+    "gunicorn -w 2 --preload -b 0.0.0.0:${PORT:-5001} --chdir /app/code app:app"
 else
   echo "LITESTREAM_REPLICA_URL not set — running without backups."
-  exec gunicorn -w 2 -b "0.0.0.0:${PORT:-5001}" --chdir /app/code app:app
+  exec gunicorn -w 2 --preload -b "0.0.0.0:${PORT:-5001}" --chdir /app/code app:app
 fi
