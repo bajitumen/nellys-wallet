@@ -14,26 +14,56 @@
   {{ empty_state("No accounts with balances.", "Click Refresh to pull current balances from Plaid.") }}
 {% else %}
 
-<div class="chart-card planning-chart-card">
-  <div class="planning-chart-controls">
-    <div class="planning-target">
-      <span class="planning-target-label">Project</span>
-      <select id="planning-target" aria-label="Account to project">
-        <option value="__net__" selected>Total net worth</option>
-        {% for a in accounts %}
-        <option value="{{ a.id }}">{{ a.institution }} · {{ a.name }}</option>
+<div class="planning-top-row">
+  <div class="chart-card planning-chart-card">
+    <div class="planning-chart-controls">
+      <div class="planning-target">
+        <span class="planning-target-label">Project</span>
+        <div class="inline-dropdown">
+          <button class="inline-dropdown-trigger planning-target-trigger" type="button"
+                  data-value="__net__"
+                  aria-haspopup="listbox" aria-expanded="false">
+            <span class="inline-dropdown-label">Total net worth</span>
+            <i class="ph ph-caret-down"></i>
+          </button>
+        </div>
+      </div>
+      <div class="planning-horizon-filter">
+        {% for h in [1, 5, 10, 20, 30] %}
+        <button type="button" class="chart-range-btn{% if h == 10 %} active{% endif %}" data-years="{{ h }}">{{ h }}Y</button>
         {% endfor %}
-      </select>
+      </div>
     </div>
-    <div class="planning-horizon-filter">
-      {% for h in [1, 5, 10, 20, 30] %}
-      <button type="button" class="chart-range-btn{% if h == 10 %} active{% endif %}" data-years="{{ h }}">{{ h }}Y</button>
-      {% endfor %}
+    <svg id="planning-svg" viewBox="0 0 1000 220" preserveAspectRatio="none"
+         xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="planning-summary" class="planning-summary"></div>
+  </div>
+
+  <div class="chart-card planning-cashflow-card">
+    <h3 class="planning-cashflow-title">Monthly cash flow</h3>
+    <p class="planning-cashflow-help muted">Added to balances each projected month.</p>
+    <label class="planning-cashflow-field">
+      <span class="planning-cashflow-label">Income</span>
+      <span class="planning-cashflow-input-wrap">
+        <span class="prefix-left">$</span>
+        <input type="number" id="planning-monthly-income" step="1" min="0"
+               placeholder="0"
+               value="{% if monthly_income is not none %}{{ '%.0f'|format(monthly_income) }}{% endif %}">
+      </span>
+    </label>
+    <label class="planning-cashflow-field">
+      <span class="planning-cashflow-label">Spend</span>
+      <span class="planning-cashflow-input-wrap">
+        <span class="prefix-left">$</span>
+        <input type="number" id="planning-monthly-spend" step="1" min="0"
+               placeholder="0"
+               value="{% if monthly_spend is not none %}{{ '%.0f'|format(monthly_spend) }}{% endif %}">
+      </span>
+    </label>
+    <div class="planning-cashflow-net">
+      Net: <span id="planning-net-flow">$0</span>/mo
     </div>
   </div>
-  <svg id="planning-svg" viewBox="0 0 1000 220" preserveAspectRatio="none"
-       xmlns="http://www.w3.org/2000/svg"></svg>
-  <div id="planning-summary" class="planning-summary"></div>
 </div>
 
 <h2>Rates</h2>

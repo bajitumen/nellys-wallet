@@ -78,6 +78,10 @@ def init_db():
             conn.execute(text(
                 "ALTER TABLE users ADD COLUMN last_transactions_sync TIMESTAMP"
             ))
+        if user_cols and "monthly_income" not in user_cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN monthly_income FLOAT"))
+        if user_cols and "monthly_spend" not in user_cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN monthly_spend FLOAT"))
 
         tx_cols = {
             row[1] for row in conn.execute(text("PRAGMA table_info(transactions)"))

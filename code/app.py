@@ -25,6 +25,11 @@ import plaid_link
 import providers
 import spending as spending_mod
 from db import SessionLocal, init_db
+
+# Run idempotent schema setup at import time so gunicorn workers find the
+# tables on the first request. `if __name__ == "__main__"` only fires for
+# `python app.py`, not under WSGI.
+init_db()
 from models import TransactionOverride, User
 
 log = logging.getLogger(__name__)
@@ -532,6 +537,8 @@ def planning_view(session, user):
         linked=bool(user.items),
         accounts=accounts,
         rates=rates,
+        monthly_income=user.monthly_income,
+        monthly_spend=user.monthly_spend,
     )
 
 
@@ -552,6 +559,35 @@ def planning_rate_save(session, user, account_id):
         return jsonify({"error": "Invalid rate"}), 400
     planning_mod.upsert_rate(user, account_id, value, session)
     return jsonify({"ok": True, "rate": value})
+
+
+@app.route("/planning/cashflow", methods=["POST"])
+@with_user
+def planning_cashflow_save(session, user):
+    """Save the user's monthly income / spend for the projection.
+    Either field may be null to clear it."""
+    if user is None:
+        return jsonify({"error": "No user"}), 400
+    data = request.get_json(silent=True) or {}
+    field = data.get("field")
+    value = data.get("value")
+    if field not in ("income", "spend"):
+        return jsonify({"error": "Invalid field"}), 400
+    if value in (None, ""):
+        parsed = None
+    else:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid value"}), 400
+        if parsed < 0:
+            return jsonify({"error": "Must be non-negative"}), 400
+    if field == "income":
+        user.monthly_income = parsed
+    else:
+        user.monthly_spend = parsed
+    session.commit()
+    return jsonify({"ok": True, "value": parsed})
 
 
 @app.route("/budget")
@@ -615,5 +651,4 @@ def sync_route(session, user):
 
 
 if __name__ == "__main__":
-    init_db()
     app.run(debug=config.FLASK_ENV == "development", port=5001)

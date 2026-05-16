@@ -31,8 +31,11 @@ function rangeBounds(range, dataMinTs, dataMaxTs) {
   var nowMs = Date.now();
   var nowTs = Math.floor(nowMs / 1000);
   if (range === 'All') {
+    // Anchor the axis to the actual data span — otherwise when the latest
+    // snapshot is from a few days ago, the right side of the chart is
+    // empty as we wait for "now" to roll in.
     if (dataMinTs == null) return { startTs: 0, endTs: nowTs };
-    return { startTs: dataMinTs, endTs: Math.max(dataMaxTs, nowTs) };
+    return { startTs: dataMinTs, endTs: dataMaxTs };
   }
   if (range === 'YTD') {
     var jan1 = new Date(new Date().getFullYear(), 0, 1);

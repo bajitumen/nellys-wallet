@@ -33,6 +33,11 @@ class User(Base):
     # the "Last synced X ago" indicator on the Spending page.
     last_transactions_sync: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # Planning page: user-entered monthly contributions used by the projection.
+    # Net flow = income - spend, added to balances each projected month.
+    monthly_income: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    monthly_spend: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     items: Mapped[list["PlaidItem"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

@@ -432,6 +432,14 @@
     border-color: var(--line);
   }
   .inline-dropdown-trigger:focus { outline: none; }
+  .inline-dropdown-label {
+    display: inline-block;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
   .inline-dropdown-trigger i {
     font-size: 0.7rem;
     color: var(--text-faint);
@@ -724,16 +732,10 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
-  .planning-target select {
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 0.3rem 0.55rem;
-    font: inherit;
-    font-size: 0.92rem;
-    color: var(--text);
-  }
-  .planning-target select:focus { outline: none; border-color: var(--text-mid); }
+  /* The Project dropdown reuses the .inline-dropdown-* pattern, so no
+     bespoke styling needed beyond a small min-width to keep account names
+     from squishing the caret. */
+  .planning-target-trigger { min-width: 140px; }
   .planning-horizon-filter {
     display: flex;
     gap: 0.25rem;
@@ -790,6 +792,89 @@
     -moz-appearance: textfield;
     appearance: textfield;
   }
+  /* Chart + cashflow side-by-side. Cashflow card is a fixed narrow width
+     ("one card wide") so the chart takes the remaining space. */
+  .planning-top-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 240px;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  @media (max-width: 900px) {
+    .planning-top-row { grid-template-columns: 1fr; }
+  }
+  .planning-cashflow-card {
+    padding: 1rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+  .planning-cashflow-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin: 0;
+  }
+  .planning-cashflow-help {
+    font-size: 0.8rem;
+    margin: -0.4rem 0 0.2rem;
+  }
+  .planning-cashflow-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .planning-cashflow-label {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .planning-cashflow-input-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.2rem 0.55rem;
+    transition: border-color 0.1s;
+  }
+  .planning-cashflow-input-wrap:focus-within { border-color: var(--text-mid); }
+  .planning-cashflow-input-wrap .prefix-left {
+    color: var(--text-faint);
+    font-size: 0.92rem;
+  }
+  .planning-cashflow-input-wrap input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.95rem;
+    text-align: right;
+    padding: 0.25rem 0;
+  }
+  .planning-cashflow-input-wrap input:focus { outline: none; }
+  .planning-cashflow-input-wrap input::-webkit-outer-spin-button,
+  .planning-cashflow-input-wrap input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+  .planning-cashflow-input-wrap input[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  .planning-cashflow-net {
+    margin-top: auto;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--line);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .planning-cashflow-net #planning-net-flow { color: var(--text); font-weight: 500; }
 </style>
 </head>
 <body>

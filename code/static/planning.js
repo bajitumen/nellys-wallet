@@ -6,13 +6,77 @@
 
 (function() {
   var svg = document.getElementById('planning-svg');
-  var targetEl = document.getElementById('planning-target');
+  var trigger = document.querySelector('.planning-target-trigger');
+  var triggerLabel = trigger && trigger.querySelector('.inline-dropdown-label');
   var summaryEl = document.getElementById('planning-summary');
   var inputs = document.querySelectorAll('.planning-rate-input');
   var horizonFilter = document.querySelector('.planning-horizon-filter');
-  if (!svg || !targetEl || !inputs.length) return;
+  var incomeInput = document.getElementById('planning-monthly-income');
+  var spendInput = document.getElementById('planning-monthly-spend');
+  var netFlowEl = document.getElementById('planning-net-flow');
+  if (!svg || !trigger || !inputs.length) return;
 
   var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  // --- Inline dropdown (same pattern as Category/Item on Spending) -------
+
+  function buildTargetOptions() {
+    var opts = [{ value: '__net__', label: 'Total net worth' }];
+    inputs.forEach(function(input) {
+      var row = input.closest('tr');
+      var name = row.querySelector('.planning-acct-name');
+      opts.push({
+        value: input.dataset.account,
+        label: name ? name.textContent.trim() : input.dataset.account,
+      });
+    });
+    return opts;
+  }
+
+  function closeMenu() {
+    var existing = trigger.parentElement.querySelector('.inline-dropdown-menu');
+    if (existing) existing.remove();
+    trigger.setAttribute('aria-expanded', 'false');
+  }
+
+  function openMenu() {
+    closeMenu();
+    var menu = document.createElement('div');
+    menu.className = 'inline-dropdown-menu';
+    buildTargetOptions().forEach(function(opt) {
+      var item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'inline-dropdown-option';
+      item.textContent = opt.label;
+      if (opt.value === trigger.dataset.value) item.classList.add('active');
+      item.addEventListener('click', function(e) {
+        e.stopPropagation();
+        trigger.dataset.value = opt.value;
+        triggerLabel.textContent = opt.label;
+        closeMenu();
+        render();
+      });
+      menu.appendChild(item);
+    });
+    trigger.parentElement.appendChild(menu);
+    trigger.setAttribute('aria-expanded', 'true');
+    // Flip upward if it would overflow the viewport.
+    var rect = menu.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight - 8) {
+      menu.classList.add('inline-dropdown-menu-up');
+    }
+  }
+
+  trigger.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (trigger.getAttribute('aria-expanded') === 'true') closeMenu();
+    else openMenu();
+  });
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.inline-dropdown-menu')) closeMenu();
+  });
+
+  function activeTarget() { return trigger.dataset.value; }
   var WIDTH = 1000, HEIGHT = 220;
   var PAD_X = 8, PAD_Y = 14;
 
@@ -36,37 +100,44 @@
     });
   }
 
-  function projectSeries(startValue, annualRatePct, months) {
+  function projectSeries(startValue, annualRatePct, months, monthlyContribution) {
     // Compound monthly so the chart looks smooth even at 30 years and a
     // big rate; (1 + r)^(t/12) gives same end value as (1 + r/12)^t at
-    // small r and is more honest about "annual rate" semantics.
+    // small r and is more honest about "annual rate" semantics. The monthly
+    // contribution is added at the end of each month, after growth.
     var out = [startValue];
     var monthly = Math.pow(1 + annualRatePct / 100, 1 / 12) - 1;
+    var contrib = monthlyContribution || 0;
     var v = startValue;
     for (var m = 1; m <= months; m++) {
-      v = v * (1 + monthly);
+      v = v * (1 + monthly) + contrib;
       out.push(v);
     }
     return out;
   }
 
-  function buildSeriesFor(targetId, accounts, months) {
+  function buildSeriesFor(targetId, accounts, months, netMonthly) {
     if (targetId === '__net__') {
-      // Per month: sum of each asset's projected balance minus each debt's
-      // projected balance. Keep them independent so each grows at its own
-      // rate.
+      // Net cash flow rolls into the *aggregate* (it isn't tied to one
+      // account in this view), so project accounts at zero contribution
+      // and add netMonthly cumulatively to the total.
       var series = new Array(months + 1).fill(0);
       accounts.forEach(function(a) {
-        var p = projectSeries(a.balance, a.rateAnnual, months);
+        var p = projectSeries(a.balance, a.rateAnnual, months, 0);
         for (var i = 0; i <= months; i++) {
           series[i] += a.sign * p[i];
         }
       });
+      for (var j = 1; j <= months; j++) {
+        series[j] += netMonthly * j;
+      }
       return series;
     }
     var acct = accounts.find(function(a) { return a.id === targetId; });
     if (!acct) return [];
-    return projectSeries(acct.balance, acct.rateAnnual, months);
+    // For a single-account view, treat the cash flow as flowing into that
+    // account each month (most useful for "how fast does my savings grow?").
+    return projectSeries(acct.balance, acct.rateAnnual, months, netMonthly);
   }
 
   function pathFromSeries(series) {
@@ -85,7 +156,7 @@
     var points = series.map(function(v, i) {
       var x = PAD_X + (i / (n - 1)) * plotW;
       var y = PAD_Y + (yMax - v) / ySpan * plotH;
-      return { x: x, y: y };
+      return { x: x, y: y, value: v, monthIdx: i };
     });
     var baseY = PAD_Y + plotH;
     var line = 'M ' + points.map(function(p) {
@@ -106,14 +177,56 @@
     });
   }
 
+  function monthLabel(monthIdx) {
+    if (monthIdx === 0) return 'Today';
+    var d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + monthIdx);
+    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  }
+
+  // Shared tooltip + dot (HTML on body so the SVG's preserveAspectRatio="none"
+  // can't squash them).
+  var tooltipEl = document.createElement('div');
+  tooltipEl.className = 'bar-tooltip';
+  document.body.appendChild(tooltipEl);
+  var dot = document.createElement('div');
+  dot.className = 'networth-dot';
+  dot.style.display = 'none';
+  document.body.appendChild(dot);
+
+  var renderedPoints = [];
+  var renderedTrend = 'up';
+
+  function readNumberInput(el) {
+    if (!el) return 0;
+    var v = parseFloat(el.value);
+    return isNaN(v) ? 0 : v;
+  }
+
+  function netMonthlyFlow() {
+    return readNumberInput(incomeInput) - readNumberInput(spendInput);
+  }
+
+  function updateNetDisplay() {
+    if (!netFlowEl) return;
+    var net = netMonthlyFlow();
+    netFlowEl.textContent = formatUsd(net);
+    netFlowEl.style.color = net > 0
+      ? 'var(--positive)'
+      : (net < 0 ? 'var(--negative)' : '');
+  }
+
   function render() {
     var years = activeYears();
     var months = years * 12;
     var accounts = snapshotAccounts();
-    var series = buildSeriesFor(targetEl.value, accounts, months);
+    var series = buildSeriesFor(activeTarget(), accounts, months, netMonthlyFlow());
+    updateNetDisplay();
     if (!series.length) {
       svg.innerHTML = '';
       summaryEl.textContent = '';
+      renderedPoints = [];
       return;
     }
     var paths = pathFromSeries(series);
@@ -134,10 +247,53 @@
     lineEl.setAttribute('vector-effect', 'non-scaling-stroke');
     svg.appendChild(lineEl);
 
-    var label = targetEl.options[targetEl.selectedIndex].text;
+    renderedPoints = paths.points;
+    renderedTrend = trend;
+
+    var label = triggerLabel.textContent;
     summaryEl.textContent = label + ' · today ' + formatUsd(series[0])
       + ' → ' + years + 'y ' + formatUsd(series[series.length - 1]);
   }
+
+  function nearest(svgX) {
+    if (renderedPoints.length === 0) return null;
+    var n = renderedPoints[0];
+    var minDist = Math.abs(n.x - svgX);
+    for (var i = 1; i < renderedPoints.length; i++) {
+      var d = Math.abs(renderedPoints[i].x - svgX);
+      if (d < minDist) { minDist = d; n = renderedPoints[i]; }
+    }
+    return n;
+  }
+
+  svg.addEventListener('mousemove', function(e) {
+    if (!renderedPoints.length) return;
+    var rect = svg.getBoundingClientRect();
+    if (rect.width === 0) return;
+    var svgX = (e.clientX - rect.left) / rect.width * WIDTH;
+    var p = nearest(svgX);
+    if (!p) return;
+
+    var screenX = rect.left + (p.x / WIDTH) * rect.width;
+    var screenY = rect.top + (p.y / HEIGHT) * rect.height;
+    dot.style.left = screenX + 'px';
+    dot.style.top = screenY + 'px';
+    dot.style.display = '';
+    dot.style.borderColor = renderedTrend === 'up'
+      ? 'var(--positive)' : 'var(--negative)';
+
+    tooltipEl.textContent = monthLabel(p.monthIdx) + ' · ' + formatUsd(p.value);
+    tooltipEl.style.left = screenX + 'px';
+    tooltipEl.style.top = screenY + 'px';
+    tooltipEl.classList.add('visible');
+  });
+  svg.addEventListener('mouseleave', function() {
+    dot.style.display = 'none';
+    tooltipEl.classList.remove('visible');
+  });
+  window.addEventListener('scroll', function() {
+    tooltipEl.classList.remove('visible');
+  }, { passive: true });
 
   // Auto-save a rate to the server on blur or Enter.
   inputs.forEach(function(input) {
@@ -161,7 +317,33 @@
     });
   });
 
-  targetEl.addEventListener('change', render);
+  // Monthly income / spend: live-update the chart on input; persist on blur.
+  function wireCashflowInput(input, field) {
+    if (!input) return;
+    var lastValue = input.value;
+    function save() {
+      if (input.value === lastValue) return;
+      lastValue = input.value;
+      var payload = {
+        field: field,
+        value: input.value === '' ? null : parseFloat(input.value),
+      };
+      csrfFetch('/planning/cashflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch(function() { /* swallow; UI already shows new value */ });
+    }
+    input.addEventListener('input', render);
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    });
+  }
+  wireCashflowInput(incomeInput, 'income');
+  wireCashflowInput(spendInput, 'spend');
+
+  // Target changes are handled by the option-click handler in openMenu().
   horizonFilter.addEventListener('click', function(e) {
     var btn = e.target.closest('.chart-range-btn');
     if (!btn) return;
