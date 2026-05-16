@@ -208,6 +208,13 @@ def plaid_setup(session, user):
     )
 
 
+@app.route("/settings/plaid/faq")
+def plaid_faq():
+    """Walkthrough for users who don't yet have Plaid credentials. Public —
+    a user might want to read it before signing up."""
+    return render_template("plaid_faq.html")
+
+
 @app.route("/sign-in", defaults={"page": "sign-in"})
 @app.route("/sign-up", defaults={"page": "sign-up"})
 def auth_page(page):

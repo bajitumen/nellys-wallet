@@ -9,7 +9,7 @@
 {% if no_user %}
   {{ empty_state("No user provisioned yet.", "Run <code>python code/cli.py seed-me</code> to migrate <code>permissions.env</code> into the DB.") }}
 {% elif not linked %}
-  {{ empty_state("No accounts linked yet.", "Click the + button above, or run <code>python code/enroll_plaid.py</code> to connect a bank or brokerage.") }}
+  {{ empty_state("No accounts linked yet.", "Click the + button above to connect an account.") }}
 {% else %}
 
 <div class="totals">

@@ -35,7 +35,7 @@
     --negative: #e26060;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
+  html, body { min-height: 100%; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     background: var(--bg);
@@ -43,7 +43,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 1rem;
+    /* Vertical padding lives on the body so it applies whether the content
+       fits in the viewport (sign-in / credentials form — centered with
+       padding around it) or overflows (FAQ — scrollable with padding above
+       and below the card). min-height + this padding means the top of the
+       card is never clipped above the fold. */
+    padding: 2.5rem 1rem;
   }
   /* Plaid-setup card: same minimal-page treatment as the Clerk sign-in
      widget — narrow column floating on a blank background. */
@@ -117,6 +122,102 @@
     line-height: 1.5;
   }
   .plaid-setup-help a { color: var(--text); }
+  /* Plaid FAQ: wider than the credentials card since it carries prose, but
+     still a contained reading column on a blank backdrop. */
+  .plaid-faq-card {
+    width: 100%;
+    max-width: 560px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 2.25rem 2rem;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.06);
+  }
+  .plaid-faq-back {
+    display: inline-block;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    text-decoration: none;
+    margin-bottom: 1rem;
+  }
+  .plaid-faq-back:hover { color: var(--text); }
+  .plaid-faq-title {
+    font-size: 1.45rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+  .plaid-faq-intro {
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    margin-bottom: 1.5rem;
+  }
+  .plaid-faq-steps {
+    list-style: none;
+    counter-reset: faq;
+    padding: 0;
+    margin: 0;
+  }
+  .plaid-faq-steps > li {
+    counter-increment: faq;
+    position: relative;
+    padding: 0 0 1.25rem 2.5rem;
+    border-left: 1px solid var(--line);
+    margin-left: 0.7rem;
+  }
+  .plaid-faq-steps > li:last-child {
+    border-left-color: transparent;
+    padding-bottom: 0;
+  }
+  .plaid-faq-steps > li::before {
+    content: counter(faq);
+    position: absolute;
+    left: -0.85rem;
+    top: -0.15rem;
+    width: 1.7rem;
+    height: 1.7rem;
+    border-radius: 50%;
+    background: var(--text);
+    color: var(--bg);
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .plaid-faq-steps h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+  }
+  .plaid-faq-steps p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.55;
+  }
+  .plaid-faq-steps a { color: var(--text); }
+  .plaid-faq-substeps {
+    margin-top: 0.5rem;
+    padding-left: 1.25rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.7;
+  }
+  .plaid-faq-substeps code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85em;
+    background: var(--bg);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+  }
+  .plaid-faq-note {
+    margin-top: 0.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--line);
+    color: var(--text-faint);
+    font-size: 0.82rem;
+    line-height: 1.5;
+  }
 </style>
 </head>
 <body>

@@ -21,7 +21,7 @@
 {% if no_user %}
   {{ empty_state("No user provisioned yet.") }}
 {% elif not linked %}
-  {{ empty_state("No accounts linked yet.", "Run <code>python code/enroll_plaid.py</code> to connect a bank.") }}
+  {{ empty_state("No accounts linked yet.", "Click the + button above to connect an account.") }}
 {% else %}
 
 <div class="totals" style="grid-template-columns: repeat(4, 1fr);">

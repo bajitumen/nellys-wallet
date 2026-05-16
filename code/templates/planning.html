@@ -9,7 +9,7 @@
 {% if no_user %}
   {{ empty_state("No user provisioned yet.") }}
 {% elif not linked %}
-  {{ empty_state("No accounts linked yet.", "Link a bank or brokerage to get started.") }}
+  {{ empty_state("No accounts linked yet.", "Click the + button above to connect an account.") }}
 {% elif not accounts %}
   {{ empty_state("No accounts with balances.", "Click Refresh to pull current balances from Plaid.") }}
 {% else %}

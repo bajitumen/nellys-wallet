@@ -1,0 +1,67 @@
+{% extends "auth_layout.html" %}
+{% block title %}How to set up Plaid · Nelly's Wallet{% endblock %}
+{% block content %}
+<div class="plaid-faq-card">
+  <a href="{{ url_for('plaid_setup') }}" class="plaid-faq-back">&larr; Back</a>
+  <h1 class="plaid-faq-title">How to set up Plaid</h1>
+  <p class="plaid-faq-intro">
+    Nelly's Wallet reads your account balances and transactions through
+    Plaid. Plaid is free for personal use — you just need to make an
+    account and grab two keys.
+  </p>
+
+  <ol class="plaid-faq-steps">
+    <li>
+      <h2>Create a Plaid account</h2>
+      <p>
+        Sign up at
+        <a href="https://dashboard.plaid.com/signup" target="_blank" rel="noopener">dashboard.plaid.com/signup</a>.
+        Use a personal email — no credit card required.
+      </p>
+    </li>
+    <li>
+      <h2>Tell Plaid what you're building</h2>
+      <p>
+        When asked about your use case, choose <strong>Hobbyist</strong>
+        and <strong>Personal finances</strong>. This routes you to the
+        free Developer plan instead of an enterprise sales call.
+      </p>
+    </li>
+    <li>
+      <h2>Sign up for the free Developer tier</h2>
+      <p>
+        The free tier gives you <strong>10 live items</strong> (10 linked
+        institutions) — plenty for personal use. No payment info needed.
+      </p>
+    </li>
+    <li>
+      <h2>Copy your credentials</h2>
+      <p>
+        In the Plaid dashboard:
+      </p>
+      <ol class="plaid-faq-substeps">
+        <li>Open the <strong>Developers</strong> tab in the left sidebar.</li>
+        <li>Click <strong>Keys</strong>.</li>
+        <li>
+          Copy your <code>client_id</code> and your
+          <strong>Production</strong> secret.
+        </li>
+      </ol>
+    </li>
+    <li>
+      <h2>Paste them in</h2>
+      <p>
+        Head back to the
+        <a href="{{ url_for('plaid_setup') }}">credentials page</a>,
+        paste both values, and save. From there, click the <strong>+</strong>
+        button in the header to link your first account.
+      </p>
+    </li>
+  </ol>
+
+  <p class="plaid-faq-note">
+    Your credentials are stored Fernet-encrypted at rest. Plaid charges
+    Nelly's Wallet nothing — you pay nothing.
+  </p>
+</div>
+{% endblock %}
