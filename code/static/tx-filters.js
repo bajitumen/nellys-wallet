@@ -77,7 +77,9 @@ window.setupTxFilters = function(config) {
       url.searchParams.delete(c.urlParam);
       state[c.key].forEach(function(v) { url.searchParams.append(c.urlParam, v); });
     });
-    history.replaceState({}, '', url.pathname + (url.search || '') + '#transactions');
+    // No #transactions hash — replaceFilter handles user-initiated scroll. A
+    // hash here would cause future reloads to auto-scroll past the breakdown.
+    history.replaceState({}, '', url.pathname + (url.search || ''));
   }
 
   function uniqueValues(col) {
@@ -159,20 +161,20 @@ window.setupTxFilters = function(config) {
   function buildValuePicker(colKey) {
     var col = COLUMNS.find(function(c) { return c.key === colKey; });
     var values = uniqueValues(col).filter(function(v) { return !state[colKey].has(v.value); });
-    var parts = ['<button type="button" class="filter-menu-back" data-back="1">‹ Columns</button>'];
-    values.forEach(function(v) {
-      parts.push(
-        '<a class="filter-menu-val" data-column="' + colKey +
-        '" data-value="' + escapeHtml(v.value) + '">' + escapeHtml(v.label) + '</a>'
-      );
-    });
-    return parts.join('');
+    return values.map(function(v) {
+      return '<a class="filter-menu-val" data-column="' + colKey +
+             '" data-value="' + escapeHtml(v.value) + '">' + escapeHtml(v.label) + '</a>';
+    }).join('');
   }
 
   function openMenu(html) {
     var menu = document.getElementById('filter-menu');
     menu.innerHTML = html;
     menu.hidden = false;
+    menu.classList.remove('filter-menu-up');
+    // Flip upward if it would overflow the viewport bottom.
+    var rect = menu.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight - 8) menu.classList.add('filter-menu-up');
     var plus = document.getElementById('filter-add');
     if (plus) plus.setAttribute('aria-expanded', 'true');
   }
@@ -205,9 +207,6 @@ window.setupTxFilters = function(config) {
       closeMenu();
       return;
     }
-
-    var back = e.target.closest('.filter-menu-back');
-    if (back) { e.preventDefault(); e.stopPropagation(); openMenu(buildColumnPicker()); return; }
 
     var plus = e.target.closest('#filter-add');
     if (plus) {
