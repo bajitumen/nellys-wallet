@@ -147,6 +147,27 @@ def test_prev_month_change_percent(user_with_item, db_session):
     assert out["prev_month_change_pct"] == 50.0
 
 
+def test_dismissed_income_excluded_from_total(user_with_item, db_session):
+    """A dismissed income transaction must be excluded from the income page,
+    same as Spending. Was a silent inconsistency before income started
+    applying overrides."""
+    from models import TransactionOverride
+    from income import fetch_last_month
+    item = user_with_item.items[0]
+    today = date.today()
+    _seed_inflow(db_session, item, "in1", 2500.0, "Acme", date_=today)
+    _seed_inflow(db_session, item, "in2", 500.0, "RandomGift", date_=today)
+    db_session.add(TransactionOverride(
+        user_id=user_with_item.id,
+        plaid_transaction_id="in2",
+        dismissed=True,
+    ))
+    db_session.commit()
+    out = fetch_last_month(user_with_item, session=db_session)
+    assert out["total"] == 2500.0
+    assert {t["plaid_id"] for t in out["transactions"]} == {"in1"}
+
+
 def test_prev_month_change_none_when_no_prior(user_with_item, db_session):
     from income import fetch_last_month
     item = user_with_item.items[0]

@@ -1,11 +1,5 @@
-"""Plaid Personal Finance Category taxonomy.
-
-Plaid does not expose this taxonomy via API — it has to be hardcoded.
-Excludes INCOME, TRANSFER_IN, TRANSFER_OUT (these aren't spending and are
-already excluded from the Spending page totals via EXCLUDED_CATEGORIES).
-
-Source: plaid.com/docs/api/products/transactions/#personal-finance-category-taxonomy
-"""
+# Hardcoded because Plaid does not expose the PFC taxonomy via API.
+# Source: plaid.com/docs/api/products/transactions/#personal-finance-category-taxonomy
 
 import re
 
@@ -124,10 +118,6 @@ PFC_TAXONOMY: dict[str, list[str]] = {
     ],
 }
 
-# Stable palette keyed by PFC primary code. Drives the stacked-bar segments
-# on the Spending page, the dots in the categories table, and the dots in
-# the Budget page headers — anything that visually links a category across
-# the UI shares this color.
 CATEGORY_COLORS: dict[str, str] = {
     "FOOD_AND_DRINK": "#ef4444",
     "TRANSPORTATION": "#f97316",
@@ -147,12 +137,7 @@ CATEGORY_COLORS: dict[str, str] = {
 DEFAULT_COLOR: str = CATEGORY_COLORS["UNKNOWN"]
 
 
-# All 16 primary categories including INCOME / TRANSFER_IN / TRANSFER_OUT —
-# these are valid recategorize targets (a user marking a charge as a transfer
-# pulls it out of spending totals) even though they're not budgeted.
-# PFC primaries that don't belong in spending totals (still valid as
-# recategorize targets — marking something as a transfer pulls it out
-# of spend, which is the intended use).
+# Excluded from spending totals but kept as recategorize targets.
 EXCLUDED_CATEGORIES: set[str] = {"INCOME", "TRANSFER_IN", "TRANSFER_OUT"}
 
 
@@ -192,8 +177,7 @@ def primary_of(code: str) -> str | None:
     return _PRIMARY_BY_DETAILED.get(code)
 
 
-# Detailed codes that are 3-item lists need an Oxford comma; the default
-# humanizer can't infer item boundaries from underscores alone.
+# 3-item lists need explicit Oxford comma; underscores don't carry that info.
 _DETAILED_OVERRIDES: dict[str, str] = {
     "FOOD_AND_DRINK_BEER_WINE_AND_LIQUOR": "Beer, Wine, and Liquor",
     "ENTERTAINMENT_SPORTING_EVENTS_AMUSEMENT_PARKS_AND_MUSEUMS":
@@ -201,26 +185,21 @@ _DETAILED_OVERRIDES: dict[str, str] = {
 }
 
 
-# Title-casing acronyms that .title() butchers (Tv → TV, Atm → ATM).
+# .title() butchers these acronyms.
 _ACRONYM_FIXUPS = {"Tv": "TV", "Atm": "ATM"}
 _ACRONYM_RE = re.compile(r"\b(" + "|".join(_ACRONYM_FIXUPS) + r")\b")
 
 
 def _titlecase(s: str) -> str:
-    """Title-case with 'and' lowercase and a few acronyms preserved
-    ('TV and Movies', not 'Tv And Movies'; 'ATM Fees', not 'Atm Fees')."""
     out = s.replace("_", " ").title().replace(" And ", " and ")
     return _ACRONYM_RE.sub(lambda m: _ACRONYM_FIXUPS[m.group(1)], out)
 
 
 def humanize_primary(primary: str) -> str:
-    """FOOD_AND_DRINK → 'Food and Drink'."""
     return _titlecase(primary)
 
 
 def humanize_detailed(detailed: str, primary: str | None = None) -> str:
-    """FOOD_AND_DRINK_FAST_FOOD → 'Fast Food' (strip the primary prefix).
-    Falls back to a plain humanize if the prefix can't be determined."""
     if detailed in _DETAILED_OVERRIDES:
         return _DETAILED_OVERRIDES[detailed]
     primary = primary or primary_of(detailed) or ""
@@ -228,7 +207,7 @@ def humanize_detailed(detailed: str, primary: str | None = None) -> str:
         rest = detailed[len(primary) + 1 :]
     else:
         rest = detailed
-    # "OTHER_FOOD_AND_DRINK" → "Other Food and Drink" reads worse than "Other".
+    # Collapse "OTHER_*" tails to plain "OTHER" — reads better.
     if rest.startswith("OTHER_"):
         rest = "OTHER"
     return _titlecase(rest)

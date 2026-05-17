@@ -44,8 +44,6 @@ def cmd_init_db():
 
 
 def cmd_seed_me():
-    """Migrate the single-user permissions.env into a placeholder User row.
-    Idempotent: skips creation if the placeholder already exists."""
     if not os.path.exists(PERMISSIONS_ENV):
         print("No permissions.env found; nothing to migrate.")
         return
@@ -93,6 +91,43 @@ def cmd_seed_me():
         print(f"Plaid credentials set, {added} new item(s) added.")
 
 
+def cmd_claim_placeholder():
+    # Local-only by design; never exposed via HTTP so external sign-ups can't trigger it.
+    if len(sys.argv) < 3:
+        print("Usage: cli.py claim-placeholder <clerk_user_id>")
+        sys.exit(1)
+    new_clerk_id = sys.argv[2].strip()
+    if not new_clerk_id:
+        print("clerk_user_id must be non-empty.")
+        sys.exit(1)
+    init_db()
+    with SessionLocal() as session:
+        placeholder = (
+            session.query(User)
+            .filter_by(clerk_user_id=PLACEHOLDER_CLERK_ID)
+            .one_or_none()
+        )
+        if placeholder is None:
+            print("No placeholder row to claim.")
+            return
+        existing = (
+            session.query(User)
+            .filter_by(clerk_user_id=new_clerk_id)
+            .one_or_none()
+        )
+        if existing is not None:
+            print(
+                f"User id={existing.id} already exists for clerk_user_id={new_clerk_id}. "
+                "Refusing to overwrite — merge manually."
+            )
+            sys.exit(1)
+        placeholder.clerk_user_id = new_clerk_id
+        session.commit()
+        print(
+            f"Claimed placeholder row id={placeholder.id} for clerk_user_id={new_clerk_id}."
+        )
+
+
 def cmd_show():
     with SessionLocal() as session:
         users = session.query(User).all()
@@ -111,8 +146,6 @@ def cmd_show():
 
 
 def cmd_backfill_institutions():
-    """Fill in institution_name / logo / url / primary_color for any
-    PlaidItem missing any of them."""
     import plaid_link
     from sqlalchemy import or_
 
@@ -167,9 +200,7 @@ def cmd_backfill_institutions():
 
 
 def cmd_sync():
-    """Sync the last N days of Plaid transactions into the local DB.
-    Accepts an optional `--days N` flag; defaults to 90.
-    Burns paid Plaid credits — run sparingly."""
+    # Burns paid Plaid credits — run sparingly.
     import spending
     days = 90
     if "--days" in sys.argv:
@@ -192,9 +223,7 @@ def cmd_sync():
 
 
 def cmd_reset_items():
-    """Wipe all PlaidItems, Transactions, and TransactionOverrides. Used when
-    switching Plaid teams — the old items' access tokens were issued by the
-    previous team and won't work under the new team's client_id/secret."""
+    # Old access tokens are bound to the issuing Plaid team; switching teams needs a wipe.
     from models import Transaction, TransactionOverride
     with SessionLocal() as session:
         users = session.query(User).all()
@@ -218,8 +247,6 @@ def cmd_reset_items():
 
 
 def cmd_probe_logo():
-    """Dump the raw institutions_get_by_id response for one PlaidItem.
-    Pass the item_id as a positional arg: `python code/cli.py probe-logo 3`."""
     from plaid.model.country_code import CountryCode
     from plaid.model.institutions_get_by_id_request import InstitutionsGetByIdRequest
     from plaid.model.institutions_get_by_id_request_options import (
@@ -278,6 +305,7 @@ def cmd_probe_logo():
 COMMANDS = {
     "init-db": cmd_init_db,
     "seed-me": cmd_seed_me,
+    "claim-placeholder": cmd_claim_placeholder,
     "show": cmd_show,
     "backfill-institutions": cmd_backfill_institutions,
     "sync": cmd_sync,

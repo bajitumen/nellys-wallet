@@ -1,5 +1,3 @@
-{# Shared Jinja macros. Import per page: {% from "_macros.html" import empty_state %} #}
-
 {% macro empty_state(headline, hint="") %}
 <div class="empty">
   <p>{{ headline }}</p>
@@ -9,9 +7,6 @@
 </div>
 {% endmacro %}
 
-{# Render an institution's avatar inline with text: Plaid logo if present,
-   else a colored letter-tile using the institution's brand color (or a
-   hash-derived fallback when even that's missing). #}
 {% macro inst_avatar(name, logo, primary_color) -%}
   {%- if logo -%}
     <img class="inst-logo" src="data:image/png;base64,{{ logo }}" alt="">
@@ -19,3 +14,34 @@
     <span class="inst-letter" style="background: {{ name | letter_color(primary_color) }};">{{ (name or '?')[0] | upper }}</span>
   {%- endif -%}
 {%- endmacro %}
+
+{# Inline SVG icons — replaces the @phosphor-icons stylesheets (which were
+   pulling ~300KB and two font files just to render five glyphs). Visually
+   close to Phosphor Regular at 1em sizes. #}
+{% macro icon_caret_down() -%}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>{%- endmacro %}
+
+{% macro icon_plus() -%}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>{%- endmacro %}
+
+{% macro icon_refresh() -%}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15.5 -6.3 L 21 8"/><polyline points="21 3 21 8 16 8"/><path d="M21 12a9 9 0 0 1 -15.5 6.3 L 3 16"/><polyline points="3 21 3 16 8 16"/></svg>{%- endmacro %}
+
+{% macro icon_dots_three() -%}<svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>{%- endmacro %}
+
+{% macro month_picker_card(month_label, month_options, current_month, route_name, route_kwargs={}) -%}
+<div class="card month-card">
+  <div class="label">Month</div>
+  <div class="value">
+    <button class="month-trigger" id="month-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+      <span class="month-label">{{ month_label }}</span>
+      {{ icon_caret_down() }}
+    </button>
+  </div>
+  <div class="month-menu" id="month-menu" role="listbox" hidden>
+    {% for opt in month_options %}
+    <a href="{{ url_for(route_name, month=opt.value, **route_kwargs) }}"
+       class="{% if opt.value == current_month %}active{% endif %}">{{ opt.label }}</a>
+    {% endfor %}
+  </div>
+</div>
+{%- endmacro %}
+
+{% macro icon_paw() -%}<svg class="icon icon-paw" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><ellipse cx="5.5" cy="10" rx="1.8" ry="2.4"/><ellipse cx="9.5" cy="6.5" rx="1.8" ry="2.4"/><ellipse cx="14.5" cy="6.5" rx="1.8" ry="2.4"/><ellipse cx="18.5" cy="10" rx="1.8" ry="2.4"/><path d="M12 12 c -3 0 -5 2.5 -5 5 c 0 1.7 1.3 2.5 2.6 2.5 c 1.2 0 1.6 -0.7 2.4 -0.7 s 1.2 0.7 2.4 0.7 c 1.3 0 2.6 -0.8 2.6 -2.5 c 0 -2.5 -2 -5 -5 -5 z"/></svg>{%- endmacro %}

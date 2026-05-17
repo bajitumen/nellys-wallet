@@ -38,13 +38,8 @@
 </div>
 {% if clerk_enabled %}
 <script>
-  // Clerk-js is loaded by auth_layout. mountClerkWidgets() in auth.js will
-  // have called Clerk.load() before we need .signOut() — but in case the
-  // user clicks fast, lazy-load on demand.
   document.getElementById('plaid-setup-signout').addEventListener('click', async function() {
     if (typeof Clerk === 'undefined') {
-      // Clerk-js hasn't finished loading; reload to /sign-in (which will
-      // bounce them through Clerk's session check).
       window.location.href = '/sign-in';
       return;
     }

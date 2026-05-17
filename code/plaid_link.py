@@ -1,10 +1,3 @@
-"""Plaid Link helpers: create link tokens, look up institution names,
-and exchange public tokens for access tokens.
-
-Used by both `enroll_plaid.py` (standalone script), `app.py` (the in-app "+"
-button flow), and `cli.py` (institution-name backfill).
-"""
-
 import plaid
 from plaid.api import plaid_api
 from plaid.model.country_code import CountryCode
@@ -20,7 +13,6 @@ from models import PlaidItem, User
 
 
 def create_link_token(client: plaid_api.PlaidApi, user: User) -> str:
-    """Generate a Plaid Link token scoped to this user."""
     req = LinkTokenCreateRequest(
         user=LinkTokenCreateRequestUser(client_user_id=f"user-{user.id}"),
         client_name="Nelly's Wallet",
@@ -33,10 +25,7 @@ def create_link_token(client: plaid_api.PlaidApi, user: User) -> str:
 
 
 def lookup_institution(client: plaid_api.PlaidApi, access_token: str) -> dict | None:
-    """Resolve {name, logo, url, primary_color} for a Plaid item. Every
-    field besides name is optional and may come back as None — notably
-    Plaid doesn't ship a logo for every institution. Returns None entirely
-    if the lookup itself fails."""
+    # Plaid doesn't ship a logo for every institution; fields besides name may be None.
     try:
         item_resp = client.item_get(ItemGetRequest(access_token=access_token))
         institution_id = getattr(item_resp.item, "institution_id", None)
@@ -60,17 +49,9 @@ def lookup_institution(client: plaid_api.PlaidApi, access_token: str) -> dict | 
         return None
 
 
-def lookup_institution_name(client: plaid_api.PlaidApi, access_token: str) -> str | None:
-    """Backward-compatible wrapper. Returns the institution name only."""
-    info = lookup_institution(client, access_token)
-    return info["name"] if info else None
-
-
 def exchange_and_save(
     client: plaid_api.PlaidApi, session, user: User, public_token: str
 ) -> PlaidItem:
-    """Exchange a public_token for an access_token, look up institution name
-    + logo, persist a PlaidItem with the encrypted access token."""
     exchange_response = client.item_public_token_exchange(
         ItemPublicTokenExchangeRequest(public_token=public_token)
     )

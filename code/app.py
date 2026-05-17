@@ -1,11 +1,3 @@
-"""
-Local dashboard. Reads the current user from the database.
-
-Pre-Clerk: uses the placeholder user (id=1) created by `python code/cli.py seed-me`.
-Post-Clerk: will swap in middleware that resolves the authenticated user from
-the Clerk session token.
-"""
-
 import logging
 import time
 from datetime import date, timedelta
@@ -26,9 +18,7 @@ import providers
 import spending as spending_mod
 from db import SessionLocal, init_db
 
-# Run idempotent schema setup at import time so gunicorn workers find the
-# tables on the first request. `if __name__ == "__main__"` only fires for
-# `python app.py`, not under WSGI.
+# init_db at import time so gunicorn workers see tables on first request.
 init_db()
 from models import TransactionOverride, User
 
@@ -39,18 +29,13 @@ app.secret_key = config.FLASK_SECRET_KEY
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    # Cookies marked Secure are only sent over HTTPS. The dev server is HTTP,
-    # so gate on FLASK_ENV — production deployments behind HTTPS get the flag.
+    # Secure cookies require HTTPS; dev server is HTTP.
     SESSION_COOKIE_SECURE=config.FLASK_ENV != "development",
-    WTF_CSRF_TIME_LIMIT=None,  # tokens live for the session, not 1 hour
+    WTF_CSRF_TIME_LIMIT=None,
 )
 
-# CSRF protection on every state-changing route. The token is rendered into
-# a <meta> tag in the layout and read by fetch() calls as `X-CSRFToken`.
 csrf = CSRFProtect(app)
 
-# Template filter for the letter-tile fallback color. Used wherever an
-# institution name appears without a logo.
 app.jinja_env.filters["letter_color"] = providers.institution_letter_color
 
 
@@ -61,8 +46,6 @@ def inject_csrf_token():
 
 @app.context_processor
 def inject_clerk_config():
-    """Expose Clerk's public key + frontend API host to templates so the
-    layout can decide whether to load clerk-js and which CDN URL to use."""
     return {
         "clerk_publishable_key": config.CLERK_PUBLISHABLE_KEY,
         "clerk_frontend_api": config.CLERK_FRONTEND_API,
@@ -79,10 +62,6 @@ _SECURITY_HEADERS = {
 
 
 def current_user(session):
-    """Resolve the authenticated user from the request. When CLERK_JWT_PUBLIC_KEY
-    is configured this verifies the `__session` cookie and finds-or-creates
-    a User row by Clerk ID; otherwise it returns the placeholder user
-    (first row in the DB) — preserves the single-user dev flow."""
     return auth.get_current_user(request, session)
 
 
@@ -90,20 +69,6 @@ _SETUP_PATH = "/settings/plaid"
 
 
 def with_user(f):
-    """Open a DB session, resolve the current user, and pass both to the handler.
-
-    The decorated handler's signature becomes `(session, user, **route_kwargs)`.
-    `user` is None when no user has been provisioned — the handler must decide
-    what to render in that case. The user is also stashed on flask.g so the
-    layout context processor can render header chrome (Refresh/Add) only when
-    a user exists.
-
-    Two redirect rules:
-      - When Clerk is configured and the request has no verified session,
-        redirects to /sign-in.
-      - When the signed-in user has no Plaid credentials yet, redirects to
-        /settings/plaid so they can provision them before doing anything else.
-    """
     @wraps(f)
     def wrapped(*args, **kwargs):
         with SessionLocal() as session:
@@ -123,7 +88,6 @@ def with_user(f):
 
 @app.context_processor
 def inject_layout_globals():
-    """Make `g.user` and `last_sync_label` available to every template."""
     user = getattr(g, "user", None)
     return {
         "last_sync_label": spending_mod.relative_time(
@@ -133,9 +97,6 @@ def inject_layout_globals():
 
 
 def _pfc_dropdown_data() -> dict:
-    """Build the {primaries, taxonomy} payload the Spending page needs to
-    render the inline Category and Item dropdowns. Computed once per request,
-    cheap enough that no caching is necessary."""
     primaries = [
         {"code": code, "label": pfc.humanize_primary(code)}
         for code in pfc.ALL_PRIMARIES
@@ -151,8 +112,6 @@ def _pfc_dropdown_data() -> dict:
 
 
 def _month_options(n: int = 12) -> list[dict]:
-    """The last `n` months as [{value: 'YYYY-MM', label: 'May 2026'}, ...],
-    newest first. Used to populate the Spending page's month dropdown."""
     today = date.today()
     out = []
     y, m = today.year, today.month
@@ -170,8 +129,6 @@ def _month_options(n: int = 12) -> list[dict]:
 
 @app.after_request
 def add_response_headers(response):
-    """Apply security headers to every response, plus a 1-day Cache-Control
-    on static assets."""
     for header, value in _SECURITY_HEADERS.items():
         response.headers.setdefault(header, value)
     if request.path.startswith("/static/"):
@@ -183,11 +140,8 @@ def add_response_headers(response):
 @app.route("/settings/plaid", methods=["GET", "POST"])
 @with_user
 def plaid_setup(session, user):
-    """First-run flow for a freshly-signed-in user: paste your own Plaid
-    Trial credentials so the rest of the app has something to call."""
     if user is None:
-        # Hits when Clerk is off and there's no placeholder user yet —
-        # the developer hasn't run `cli.py seed-me`. Punt back home.
+        # Clerk off and no seed user yet — punt home.
         return redirect("/")
     error = None
     if request.method == "POST":
@@ -210,19 +164,13 @@ def plaid_setup(session, user):
 
 @app.route("/settings/plaid/faq")
 def plaid_faq():
-    """Walkthrough for users who don't yet have Plaid credentials. Public —
-    a user might want to read it before signing up."""
     return render_template("plaid_faq.html")
 
 
 @app.route("/sign-in", defaults={"page": "sign-in"})
 @app.route("/sign-up", defaults={"page": "sign-up"})
 def auth_page(page):
-    """Render the Clerk-hosted sign-in or sign-up widget. The actual UI is
-    mounted by clerk-js into the placeholder div — see static/auth.js."""
     if not auth.clerk_enabled():
-        # No point showing a sign-in page when Clerk isn't configured;
-        # bounce to the dashboard, which will render the placeholder flow.
         return redirect("/")
     return render_template(
         "auth_page.html",
@@ -247,9 +195,7 @@ def dashboard(session, user):
     credit_total = providers.sum_balances(data["credit"])
     net_total = cash_total + investment_total - credit_total
 
-    # Net worth chart: default range "30D" anchors the X axis to the last
-    # 30 days regardless of where the data sits. Empty axis on the left,
-    # data clusters on the right.
+    # Anchor X axis to last 30 days even when data is sparse.
     snapshots = networth_mod.get_snapshots(user, session)
     now_ts = int(time.time())
     networth_default_start = now_ts - 30 * 86400
@@ -263,30 +209,8 @@ def dashboard(session, user):
         range_end_ts=now_ts,
     )
 
-    # Cash-flow chart: paired bars per month, spend (red) on the left,
-    # income (green) on the right. Skip months with neither.
-    all_spend = spending_mod.monthly_totals(user, session, n_months=12)
-    all_income = income_mod.monthly_income_totals(user, session, n_months=12)
-    by_month: dict[str, dict] = {}
-    for m in all_spend:
-        by_month[m["month"]] = {
-            "month": m["month"], "label": m["label"], "ts": m["ts"],
-            "spend": m["total"], "income": 0.0,
-        }
-    for m in all_income:
-        if m["month"] in by_month:
-            by_month[m["month"]]["income"] = m["total"]
-        else:
-            by_month[m["month"]] = {
-                "month": m["month"], "label": m["label"], "ts": m["ts"],
-                "spend": 0.0, "income": m["total"],
-            }
-    monthly_combined = sorted(by_month.values(), key=lambda x: x["ts"])
-    monthly_with_data = [m for m in monthly_combined if m["spend"] > 0 or m["income"] > 0]
-    # `monthly_chart` is no longer used by the template (JS owns rendering of
-    # the grouped bars), but kept truthy so the chart card renders when there
-    # is any month with data.
-    monthly_chart = bool(monthly_with_data)
+    monthly_combined = spending_mod.monthly_cashflow(user, session, n_months=12)
+    has_monthly_data = any(m["spend"] > 0 or m["income"] > 0 for m in monthly_combined)
 
     return render_template(
         "dashboard.html",
@@ -304,8 +228,8 @@ def dashboard(session, user):
         no_user=False,
         networth_chart=networth_chart,
         networth_snapshot_count=len(snapshots),
-        monthly_chart=monthly_chart,
-        monthly_totals_raw=monthly_combined,
+        has_monthly_data=has_monthly_data,
+        monthly_totals_raw=monthly_combined if has_monthly_data else [],
     )
 
 
@@ -400,14 +324,6 @@ def link_exchange(session, user):
 @app.route("/transactions/<tx_id>/override", methods=["POST"])
 @with_user
 def transaction_override(session, user, tx_id):
-    """Create / update / clear a per-transaction override for the current user.
-
-    Body fields (all optional, partial updates accepted):
-      category          str | null      raw PFC code, e.g. "FOOD_AND_DRINK"
-      amount            float | null    overrides the displayed dollar amount
-      split_percentage  float | null    % of original charge the user owes
-      clear             bool            if true, deletes the override row entirely
-    """
     data = request.get_json(silent=True) or {}
     if user is None:
         return jsonify({"error": "No user"}), 400
@@ -508,18 +424,12 @@ def income_view(session, user):
 @app.route("/planning")
 @with_user
 def planning_view(session, user):
-    """Project net worth or a single account forward using user-set rates.
-    Account list + balances come from the live Plaid fetch; rates come from
-    the AccountRate table; the projection itself runs in the browser."""
     if user is None:
         return render_template(
             "planning.html", active_page="planning", no_user=True, linked=False,
             accounts=[], rates={},
         )
     data = providers.fetch_all(user)
-    # Flatten the bucketed account dicts into one list the template can
-    # iterate. Tag each account with its sign in the net-worth sum (credit
-    # subtracts) and a bucket name for grouping in the rate table.
     accounts: list[dict] = []
     for bucket, sign in (("cash", 1), ("investment", 1), ("credit", -1), ("other", 1)):
         for acct in data[bucket]:
@@ -552,7 +462,6 @@ def planning_view(session, user):
 @app.route("/planning/rate/<account_id>", methods=["POST"])
 @with_user
 def planning_rate_save(session, user, account_id):
-    """Upsert a per-account rate. Empty value clears the row."""
     if user is None:
         return jsonify({"error": "No user"}), 400
     data = request.get_json(silent=True) or {}
@@ -571,8 +480,6 @@ def planning_rate_save(session, user, account_id):
 @app.route("/planning/cashflow", methods=["POST"])
 @with_user
 def planning_cashflow_save(session, user):
-    """Save the user's monthly income / spend for the projection.
-    Either field may be null to clear it."""
     if user is None:
         return jsonify({"error": "No user"}), 400
     data = request.get_json(silent=True) or {}
@@ -627,8 +534,6 @@ def budget_view(session, user):
 @app.route("/budget/summary")
 @with_user
 def budget_summary(session, user):
-    """Per-month spending total for the Budget page's four cards. Total
-    budget itself doesn't depend on month, so it's not returned here."""
     if user is None:
         return jsonify({"error": "No user"}), 401
     month_arg = request.args.get("month")
@@ -645,8 +550,6 @@ def budget_summary(session, user):
 @app.route("/budget/<detailed>", methods=["POST"])
 @with_user
 def budget_save(session, user, detailed):
-    """Upsert or clear one sub-category's budget. Returns the updated primary
-    sum so the page can refresh the primary total without a full reload."""
     if user is None:
         return jsonify({"error": "No user"}), 400
     if not pfc.is_valid_detailed(detailed):
@@ -667,8 +570,7 @@ def budget_save(session, user, detailed):
 
     primary = pfc.primary_of(detailed)
     new_sum = budget_mod.primary_sum(user, primary, session)
-    # The Spending page caches its per-primary budget value; this mutation
-    # would otherwise be invisible for up to 60s.
+    # Spending page caches per-primary budget for 60s; bust it.
     spending_mod.invalidate_cache(user.id)
     return jsonify({"ok": True, "primary_sum": new_sum})
 
@@ -676,17 +578,14 @@ def budget_save(session, user, detailed):
 @app.route("/sync", methods=["POST"])
 @with_user
 def sync_route(session, user):
-    """Trigger a Plaid → DB transactions sync for the current user.
-    Also records a net-worth snapshot — one data point per Refresh.
-    Returns {ok, added, updated, errors}."""
     if user is None:
         return jsonify({"error": "No user"}), 400
     result = spending_mod.sync_transactions(user, session)
-    # "Refresh" is also expected to bust the cached account balances on Overview
     providers.invalidate_cache(user.id)
     networth_mod.capture(user, session)
     return jsonify({"ok": True, **result})
 
 
 if __name__ == "__main__":
-    app.run(debug=config.FLASK_ENV == "development", port=5001)
+    # 0.0.0.0 so phones on same Wi-Fi can reach the dev server.
+    app.run(host="0.0.0.0", debug=config.FLASK_ENV == "development", port=5001)

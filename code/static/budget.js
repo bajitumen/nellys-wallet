@@ -1,8 +1,3 @@
-// Auto-save each sub-category budget on blur (or Enter). The server returns
-// the new primary-group total so the header refreshes without a page reload.
-// Month picker, stacked-bar tooltip, and on-blur decimal formatting all live
-// in layout.js (used by Spending / Income / Budget).
-
 (function() {
   function formatUsd(n) {
     return '$' + n.toLocaleString('en-US', {
@@ -10,11 +5,7 @@
     });
   }
 
-  // Tween el's text from its current numeric content to `target` over ~350ms,
-  // matching the segment animation duration so the ticker and the bar arrive
-  // together. cubic-bezier(0.4, 0, 0.2, 1) is the same standard ease-out the
-  // bar uses. Each element gets its own RAF handle so concurrent tickers
-  // (Total Budget + Difference) don't cancel each other.
+  // 350ms matches the segment animation so ticker + bar arrive together.
   var TICKER_MS = 350;
   function easeOut(t) {
     return 1 - Math.pow(1 - t, 3);
@@ -41,9 +32,6 @@
     return isNaN(v) ? 0 : v;
   }
 
-  // Each save returns the new sum for one primary. Sum across all primary
-  // headers on the page to refresh the cards + segment widths — keeps the
-  // summary in sync with whatever the user just typed.
   function refreshSummary(primary, newPrimarySum) {
     var totalEl = document.getElementById('card-total-budget');
     var diffEl = document.getElementById('card-difference');
@@ -53,7 +41,7 @@
     document.querySelectorAll('.budget-group-total').forEach(function(el) {
       primaryTotals[el.dataset.primary] = readNumeric(el);
     });
-    primaryTotals[primary] = newPrimarySum;  // freshest read
+    primaryTotals[primary] = newPrimarySum;
     var grand = Object.values(primaryTotals).reduce(function(s, v) { return s + v; }, 0);
     var prevTotal = readNumeric(totalEl);
     animateTicker(totalEl, prevTotal, grand);
@@ -67,15 +55,12 @@
       var p = seg.dataset.primary;
       var v = primaryTotals[p] || 0;
       seg.style.flex = v + ' 0 0';
-      // data-tooltip carries the human-readable label up front; preserve it.
-      var label = (seg.dataset.tooltip || '').split('·')[0].trim();
-      seg.dataset.tooltip = label + ' · ' + formatUsd(v);
+      // data-tooltip is "<label>: <usd>"; preserve the leading label.
+      var label = (seg.dataset.tooltip || '').split(':')[0].trim();
+      seg.dataset.tooltip = label + ': ' + formatUsd(v);
     });
   }
 
-  // Helper that mirrors the Difference card's class state to its computed
-  // sign. Shared between the input-save handler and the month-change AJAX
-  // handler.
   function tickerDifference(diffEl, newDiff) {
     if (!diffEl) return;
     var prevDiff = readNumeric(diffEl);
@@ -88,9 +73,6 @@
     animateTicker(diffEl, prevDiff, newDiff);
   }
 
-  // Month-dropdown click → fetch the new month's spending total via
-  // /budget/summary and animate the Spent + Difference cards. Avoids a
-  // full page reload so the cards ticker in place.
   (function() {
     var menu = document.getElementById('month-menu');
     if (!menu) return;
@@ -134,8 +116,6 @@
     var lastValue = input.value;
 
     function save() {
-      // layout.js's capture-phase blur handler already normalized the value
-      // to fixed-2 by the time we get here.
       if (input.value === lastValue) return;
       lastValue = input.value;
       var payload = input.value === ''

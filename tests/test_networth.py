@@ -51,25 +51,23 @@ def test_capture_replaces_existing_same_day_snapshot(user_with_item, db_session)
     assert rows[0].net_worth == 250.0
 
 
-def test_get_snapshots_dedupes_legacy_same_day_rows(user_with_item, db_session):
-    """Legacy DBs may have multiple same-day rows. Reads keep only the latest.
-    Use fixed mid-day timestamps so the test isn't flaky around midnight UTC."""
+def test_get_snapshots_returns_rows_in_chronological_order(user_with_item, db_session):
+    """Same-day uniqueness is enforced by capture(); get_snapshots just
+    returns every persisted row oldest-first."""
     from models import NetWorthSnapshot
     import networth
     base = datetime(2026, 5, 1, 12, 0, 0)
     db_session.add_all([
+        NetWorthSnapshot(user_id=user_with_item.id, taken_at=base.replace(day=3),
+                         cash_total=0, investment_total=0, credit_total=0, net_worth=300.0),
         NetWorthSnapshot(user_id=user_with_item.id, taken_at=base,
                          cash_total=0, investment_total=0, credit_total=0, net_worth=100.0),
-        NetWorthSnapshot(user_id=user_with_item.id, taken_at=base.replace(hour=14),
-                         cash_total=0, investment_total=0, credit_total=0, net_worth=150.0),
-        NetWorthSnapshot(user_id=user_with_item.id, taken_at=base.replace(hour=18),
+        NetWorthSnapshot(user_id=user_with_item.id, taken_at=base.replace(day=2),
                          cash_total=0, investment_total=0, credit_total=0, net_worth=200.0),
     ])
     db_session.commit()
     snaps = networth.get_snapshots(user_with_item, db_session)
-    # All on the same day → only the latest survives.
-    assert len(snaps) == 1
-    assert snaps[0].net_worth == 200.0
+    assert [s.net_worth for s in snaps] == [100.0, 200.0, 300.0]
 
 
 def test_capture_skips_when_no_items(user, db_session):

@@ -1,18 +1,3 @@
-"""Plaid fetch layer, user-scoped, with a short in-memory cache.
-
-Each user provides their own Plaid Trial credentials and has their own
-linked PlaidItems. Callers pass a User object loaded from the DB.
-
-Balances come from `accounts_get` (Plaid-cached, ~sub-second) rather than
-`accounts_balance_get` (live institution call, multi-second per item).
-Trade-off: cached balances may lag the bank by up to a few hours.
-
-`fetch_all` results are additionally cached in-process for `_CACHE_TTL`
-seconds keyed by user.id; consecutive page loads don't re-hit Plaid.
-Call `invalidate_cache(user_id)` after mutating user.items (e.g. when a
-new PlaidItem is linked).
-"""
-
 import logging
 import threading
 import time
@@ -26,10 +11,11 @@ from models import PlaidItem, User
 
 log = logging.getLogger(__name__)
 
-_CACHE_TTL = 90.0  # seconds
+# accounts_get uses Plaid's cache (~sub-second) vs. accounts_balance_get's
+# multi-second live call. Trade-off: balances may lag the bank by hours.
+_CACHE_TTL = 90.0
 _cache: dict[int, tuple[float, dict]] = {}
 _cache_lock = threading.Lock()
-# Per-user lock so two concurrent cache misses don't both run the work.
 _keylocks: dict[int, threading.Lock] = {}
 
 
@@ -42,9 +28,7 @@ def _get_keylock(user_id: int) -> threading.Lock:
         return lock
 
 
-# Plaid returns account types/subtypes as lowercase strings ("checking",
-# "credit card", "ira"). Title-casing works for most, but financial acronyms
-# need explicit handling so "ira" doesn't render as "Ira".
+# US-only: Plaid Link is configured with CountryCode("US"); non-US subtypes never appear.
 _TYPE_OVERRIDES = {
     "ira": "IRA",
     "sep ira": "SEP IRA",
@@ -60,34 +44,15 @@ _TYPE_OVERRIDES = {
     "hsa": "HSA",
     "hra": "HRA",
     "cd": "CD",
-    "isa": "ISA",
-    "tfsa": "TFSA",
-    "rrsp": "RRSP",
-    "rrif": "RRIF",
-    "resp": "RESP",
-    "rdsp": "RDSP",
     "ebt": "EBT",
-    "gic": "GIC",
-    "lif": "LIF",
-    "lira": "LIRA",
-    "lrif": "LRIF",
-    "lrsp": "LRSP",
-    "prif": "PRIF",
-    "rlif": "RLIF",
-    "sarsep": "SARSEP",
-    "sipp": "SIPP",
     "ugma": "UGMA",
     "utma": "UTMA",
-    "qshr": "QSHR",
-    "cash isa": "Cash ISA",
     "cash management": "Cash Management",
     "money market": "Money Market",
 }
 
 
 def humanize_account_type(raw: str) -> str:
-    """Display-friendly capitalization for Plaid account types/subtypes.
-    Falls back to .title() for anything not in the override map."""
     if not raw:
         return ""
     key = raw.lower().strip()
@@ -108,7 +73,6 @@ def _classify(acct) -> str:
 
 
 def plaid_client_for(user: User) -> plaid_api.PlaidApi:
-    """Build a Plaid client using the given user's encrypted credentials."""
     creds = user.get_plaid_credentials()
     if not creds:
         raise ValueError(f"User {user.id} has no Plaid credentials configured.")
@@ -121,8 +85,6 @@ def plaid_client_for(user: User) -> plaid_api.PlaidApi:
 
 
 def _fetch_one(client: plaid_api.PlaidApi, item: PlaidItem) -> dict:
-    """Fetch accounts for one item. Returns a per-bucket result dict;
-    callers .extend() lists by key."""
     result: dict = {
         "cash": [], "credit": [], "investment": [], "other": [], "errors": [],
     }
@@ -168,18 +130,13 @@ def _read_cache(user_id: int) -> dict | None:
 
 
 def fetch_all(user: User, force_refresh: bool = False) -> dict:
-    """Fetch balances for all of `user`'s linked items in parallel.
-    Returns: {cash, credit, investment, other, errors}.
-    Cached in-process for _CACHE_TTL seconds per user.id. Concurrent cache
-    misses for the same user are serialized so the work runs once."""
     if not force_refresh:
         cached = _read_cache(user.id)
         if cached is not None:
             return cached
 
     with _get_keylock(user.id):
-        # Re-check after acquiring the per-user lock — another thread may
-        # have populated the cache while we were waiting.
+        # Re-check post-lock; another thread may have populated the cache.
         if not force_refresh:
             cached = _read_cache(user.id)
             if cached is not None:
@@ -212,22 +169,17 @@ def fetch_all(user: User, force_refresh: bool = False) -> dict:
 
 
 def invalidate_cache(user_id: int) -> None:
-    """Drop a user's cached fetch_all result. Call after user.items mutates."""
     with _cache_lock:
         _cache.pop(user_id, None)
 
 
 def clear_cache() -> None:
-    """Drop the entire cache. Useful for tests."""
     with _cache_lock:
         _cache.clear()
         _keylocks.clear()
 
 
 def source_avatars(user: User) -> dict[str, dict]:
-    """{institution_name: {logo, primary_color}} for the user's linked items.
-    Used by the Spending/Income source filter tabs to render either Plaid's
-    logo or a letter-tile in the institution's brand color as a fallback."""
     out: dict[str, dict] = {}
     for item in user.items:
         name = item.institution_name or "Unknown"
@@ -240,20 +192,7 @@ def source_avatars(user: User) -> dict[str, dict]:
     return out
 
 
-# Backwards-compat alias — keeps any older template using `source_logos` working
-# while the codebase migrates to the richer source_avatars structure.
-def source_logos(user: User) -> dict[str, str]:
-    return {
-        name: data["logo"]
-        for name, data in source_avatars(user).items()
-        if data.get("logo")
-    }
-
-
 def institution_letter_color(name: str, primary_color: str | None) -> str:
-    """Color for a letter-tile fallback when Plaid has no logo. Prefers the
-    institution's published brand color, falls back to a stable hash of the
-    name so each institution keeps a consistent color across pages."""
     if primary_color and primary_color.startswith("#"):
         return primary_color
     import hashlib
@@ -266,7 +205,4 @@ def institution_letter_color(name: str, primary_color: str | None) -> str:
 
 
 def sum_balances(accounts: list[dict]) -> float:
-    """Sum the `balance` field across a list of bucketed accounts, ignoring
-    entries whose balance is None. Shared by the dashboard and the net-worth
-    snapshot capture."""
     return sum(a["balance"] for a in accounts if a.get("balance") is not None)

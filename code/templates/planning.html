@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% from "_macros.html" import empty_state, inst_avatar %}
+{% from "_macros.html" import empty_state, inst_avatar, icon_caret_down %}
 {% block title %}Planning · Nelly's Wallet{% endblock %}
 {% block heading %}Planning{% endblock %}
 {% block content %}
@@ -24,7 +24,7 @@
                   data-value="__net__"
                   aria-haspopup="listbox" aria-expanded="false">
             <span class="inline-dropdown-label">Total net worth</span>
-            <i class="ph ph-caret-down"></i>
+            {{ icon_caret_down() }}
           </button>
         </div>
       </div>

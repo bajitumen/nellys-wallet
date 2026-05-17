@@ -1,9 +1,7 @@
-"""Database models. Every Plaid token is stored Fernet-encrypted."""
-
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 import crypto
@@ -15,9 +13,6 @@ def utcnow() -> datetime:
 
 
 class User(Base):
-    """A user of the app. `clerk_user_id` is the source of truth for identity.
-    We mirror minimal profile fields locally for convenience."""
-
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -25,16 +20,12 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(254), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
-    # Each user provides their own Plaid Trial credentials (encrypted).
     plaid_client_id_encrypted: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
     plaid_secret_encrypted: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
 
-    # Timestamp of last successful transactions sync (naive UTC). Surfaces as
-    # the "Last synced X ago" indicator on the Spending page.
+    # Naive UTC.
     last_transactions_sync: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    # Planning page: user-entered monthly contributions used by the projection.
-    # Net flow = income - spend, added to balances each projected month.
     monthly_income: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     monthly_spend: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
@@ -56,17 +47,13 @@ class User(Base):
 
 
 class PlaidItem(Base):
-    """One linked institution per row. Token is Fernet-encrypted at rest."""
-
     __tablename__ = "plaid_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     institution_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    # Base64-encoded PNG from Plaid's institutions_get_by_id. Small (~1-3KB).
+    # Base64 PNG from Plaid, ~1-3KB.
     logo: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Plaid's institution URL (used later for logo.dev fallback) + brand color
-    # (used now as the letter-tile background when no logo is available).
     institution_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     primary_color: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     plaid_item_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
@@ -83,13 +70,6 @@ class PlaidItem(Base):
 
 
 class TransactionOverride(Base):
-    """Per-transaction user adjustments layered over Plaid's data at read time.
-
-    Plaid owns the raw transaction; we never mutate it. This row carries the
-    bits the user can rewrite: category (e.g. 'this is FOOD_AND_DRINK not
-    LOAN_PAYMENTS') and amount (e.g. 'I only paid 1/4 of this dinner').
-    """
-
     __tablename__ = "transaction_overrides"
     __table_args__ = (
         UniqueConstraint("user_id", "plaid_transaction_id", name="uq_override_user_tx"),
@@ -99,24 +79,15 @@ class TransactionOverride(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     plaid_transaction_id: Mapped[str] = mapped_column(String(64), index=True)
 
-    # Raw PFC primary code ("FOOD_AND_DRINK"); humanized only at display time.
     category_override: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    # Raw PFC detailed code ("FOOD_AND_DRINK_COFFEE"). Drives the Item column.
     detailed_override: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     amount_override: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    # Metadata: % of the original charge the user is responsible for, e.g. 25.0.
-    # Optional — manual amount overrides without a split context leave this NULL.
     split_percentage: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    # Dismissed = remove the tx entirely from spending lists and totals.
-    # Reversible by un-dismissing or clearing the override row.
+    # Dismissed rows are excluded from totals; reversible.
     dismissed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class AccountRate(Base):
-    """User-set annual interest rate for one Plaid account (APY for cash,
-    expected return for investments, APR for credit cards). Used by the
-    Planning page to project balances forward."""
-
     __tablename__ = "account_rates"
     __table_args__ = (
         UniqueConstraint("user_id", "plaid_account_id", name="uq_rate_user_acct"),
@@ -129,10 +100,7 @@ class AccountRate(Base):
 
 
 class Budget(Base):
-    """User-set monthly spending target for a Plaid PFC detailed sub-category.
-    Primary-category totals are summed from these rows; there is no row
-    for a primary category itself."""
-
+    # One row per detailed PFC sub-category; primaries are summed, never stored.
     __tablename__ = "budgets"
     __table_args__ = (
         UniqueConstraint("user_id", "pfc_detailed", name="uq_budget_user_detailed"),
@@ -145,9 +113,6 @@ class Budget(Base):
 
 
 class NetWorthSnapshot(Base):
-    """Point-in-time copy of the user's totals. One row is appended each time
-    `/sync` runs successfully; the Overview page renders these as a line."""
-
     __tablename__ = "net_worth_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -160,13 +125,11 @@ class NetWorthSnapshot(Base):
 
 
 class Transaction(Base):
-    """Locally persisted Plaid transaction. Populated by `spending.sync_transactions`;
-    read by `spending.fetch_last_month` so that page loads don't hit Plaid.
-    Re-syncing upserts by `plaid_transaction_id`."""
-
     __tablename__ = "transactions"
     __table_args__ = (
         UniqueConstraint("user_id", "plaid_transaction_id", name="uq_tx_user_plaid"),
+        # Every read filters on (user_id, date); composite avoids row-scans.
+        Index("ix_tx_user_date", "user_id", "date"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -178,10 +141,7 @@ class Transaction(Base):
     amount: Mapped[float] = mapped_column(Float)
     name: Mapped[str] = mapped_column(String(256))
     merchant_name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    # Plaid Personal Finance Category, primary tier (e.g. "FOOD_AND_DRINK").
     pfc_primary: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    # Plaid PFC detailed tier (e.g. "FOOD_AND_DRINK_COFFEE"). Drives the Item
-    # column on the Spending page when no user override is set.
     pfc_detailed: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

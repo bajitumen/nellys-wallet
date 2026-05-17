@@ -1,9 +1,3 @@
-// Shared chrome: theme toggle, refresh button, add-account flow, plus the
-// csrfFetch wrapper every state-changing fetch on the page uses. Also
-// hosts a few page-agnostic widgets — number-input formatter, month
-// picker, stacked-bar tooltip — that used to be duplicated across the
-// per-page JS files.
-
 window.csrfFetch = function(url, options) {
   options = options || {};
   options.headers = Object.assign({}, options.headers, {
@@ -12,17 +6,7 @@ window.csrfFetch = function(url, options) {
   return fetch(url, options);
 };
 
-// ---------------------------------------------------------------------------
-// Numeric input formatter
-//
-// Any `<input class="numeric-input">` is normalized to fixed-2 on blur:
-//   "25"     → "25.00"
-//   "25.5"   → "25.50"
-//   "12.345" → "12.35"
-//   ""       stays empty (callers treat empty as "cleared")
-// Runs in the capture phase so page-specific blur handlers read the
-// already-formatted value.
-// ---------------------------------------------------------------------------
+// Capture-phase so per-page blur handlers see the already-formatted value.
 document.addEventListener('blur', function(e) {
   var el = e.target;
   if (!el.classList || !el.classList.contains('numeric-input')) return;
@@ -31,9 +15,6 @@ document.addEventListener('blur', function(e) {
   if (!isNaN(v)) el.value = v.toFixed(2);
 }, true);
 
-// ---------------------------------------------------------------------------
-// Month-picker dropdown (Spending / Income / Budget header card)
-// ---------------------------------------------------------------------------
 (function() {
   var trigger = document.getElementById('month-trigger');
   var menu = document.getElementById('month-menu');
@@ -52,10 +33,87 @@ document.addEventListener('blur', function(e) {
   });
 })();
 
-// ---------------------------------------------------------------------------
-// Stacked-bar hover tooltip — auto-attached to every `.stacked-bar` whose
-// segments carry `data-tooltip="..."`.
-// ---------------------------------------------------------------------------
+(function() {
+  function cellValue(cell) {
+    return cell.dataset.value !== undefined ? cell.dataset.value : cell.textContent.trim();
+  }
+  function compare(a, b, type) {
+    if (type === 'number') return (parseFloat(a) || 0) - (parseFloat(b) || 0);
+    if (type === 'date') return new Date(a) - new Date(b);
+    return a.localeCompare(b);
+  }
+  function nextDir(th) {
+    if (th.dataset.dir === 'asc') return 'desc';
+    if (th.dataset.dir === 'desc') return 'asc';
+    return th.dataset.sort === 'string' ? 'asc' : 'desc';
+  }
+  function sortBy(table, colIdx, type, dir) {
+    var tbody = table.querySelector('tbody');
+    var rows = Array.prototype.slice.call(tbody.children);
+    rows.sort(function(r1, r2) {
+      var c = compare(cellValue(r1.children[colIdx]), cellValue(r2.children[colIdx]), type);
+      return dir === 'asc' ? c : -c;
+    });
+    rows.forEach(function(r) { tbody.appendChild(r); });
+  }
+  document.querySelectorAll('table.sortable-table').forEach(function(table) {
+    var ths = Array.prototype.slice.call(table.querySelectorAll('thead th'));
+    ths.forEach(function(th, idx) {
+      if (!th.dataset.sort) return;
+      th.classList.add('sortable');
+      if (th.dataset.dir) th.classList.add('sort-' + th.dataset.dir);
+      th.addEventListener('click', function() {
+        var dir = nextDir(th);
+        ths.forEach(function(t) {
+          t.classList.remove('sort-asc', 'sort-desc');
+          if (t !== th) delete t.dataset.dir;
+        });
+        th.dataset.dir = dir;
+        th.classList.add('sort-' + dir);
+        sortBy(table, idx, th.dataset.sort, dir);
+      });
+    });
+  });
+})();
+
+window.closeInlineDropdowns = function() {
+  document.querySelectorAll('.inline-dropdown-menu').forEach(function(m) { m.remove(); });
+  document.querySelectorAll('.inline-dropdown-trigger[aria-expanded="true"]')
+    .forEach(function(t) { t.setAttribute('aria-expanded', 'false'); });
+};
+
+window.openInlineDropdown = function(trigger, options, currentValue, onSelect) {
+  window.closeInlineDropdowns();
+  var menu = document.createElement('div');
+  menu.className = 'inline-dropdown-menu';
+  options.forEach(function(opt) {
+    var item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'inline-dropdown-option';
+    item.textContent = opt.label;
+    if (opt.value === currentValue) item.classList.add('active');
+    item.addEventListener('click', function(e) {
+      e.stopPropagation();
+      onSelect(opt);
+      window.closeInlineDropdowns();
+    });
+    menu.appendChild(item);
+  });
+  trigger.parentElement.appendChild(menu);
+  trigger.setAttribute('aria-expanded', 'true');
+  var rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 8) {
+    menu.classList.add('inline-dropdown-menu-up');
+  }
+};
+
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.inline-dropdown-menu') &&
+      !e.target.closest('.inline-dropdown-trigger')) {
+    window.closeInlineDropdowns();
+  }
+});
+
 (function() {
   var bars = document.querySelectorAll('.stacked-bar');
   if (!bars.length) return;
@@ -66,9 +124,14 @@ document.addEventListener('blur', function(e) {
     if (!seg.dataset.tooltip) return;
     tooltip.textContent = seg.dataset.tooltip;
     var rect = seg.getBoundingClientRect();
-    tooltip.style.left = (rect.left + rect.width / 2) + 'px';
     tooltip.style.top = rect.top + 'px';
     tooltip.classList.add('visible');
+    // Measure after .visible so offsetWidth is real, then clamp into viewport.
+    var tipW = tooltip.offsetWidth;
+    var desired = rect.left + rect.width / 2;
+    var minX = tipW / 2 + 8;
+    var maxX = window.innerWidth - tipW / 2 - 8;
+    tooltip.style.left = Math.max(minX, Math.min(desired, maxX)) + 'px';
   }
   function hide() { tooltip.classList.remove('visible'); }
   bars.forEach(function(bar) {
@@ -79,6 +142,29 @@ document.addEventListener('blur', function(e) {
     bar.addEventListener('mouseleave', hide);
   });
   window.addEventListener('scroll', hide, { passive: true });
+})();
+
+(function() {
+  var toggle = document.getElementById('sidebar-toggle');
+  var sidebar = document.getElementById('sidebar');
+  var backdrop = document.getElementById('sidebar-backdrop');
+  if (!toggle || !sidebar || !backdrop) return;
+  function setOpen(open) {
+    sidebar.classList.toggle('open', open);
+    backdrop.classList.toggle('visible', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    document.body.classList.toggle('sidebar-open', open);
+  }
+  toggle.addEventListener('click', function() {
+    setOpen(!sidebar.classList.contains('open'));
+  });
+  backdrop.addEventListener('click', function() { setOpen(false); });
+  sidebar.querySelectorAll('nav a').forEach(function(a) {
+    a.addEventListener('click', function() { setOpen(false); });
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && sidebar.classList.contains('open')) setOpen(false);
+  });
 })();
 
 document.querySelector('.theme-toggle').addEventListener('click', function() {
@@ -93,7 +179,6 @@ document.querySelector('.theme-toggle').addEventListener('click', function() {
   }
 });
 
-// Refresh button → POST /sync, reload.
 (function() {
   var btn = document.getElementById('refresh-btn');
   if (!btn) return;
@@ -117,7 +202,6 @@ document.querySelector('.theme-toggle').addEventListener('click', function() {
   });
 })();
 
-// Add-account button → fetch link token, open Plaid Link, exchange, reload.
 (function() {
   var btn = document.getElementById('add-account-btn');
   if (!btn) return;

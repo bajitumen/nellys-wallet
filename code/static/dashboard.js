@@ -1,6 +1,3 @@
-// Overview-page interactions: hover tooltips on both charts, plus the
-// 30D / 3M / 6M / YTD / All range filter below each chart.
-
 var sharedTooltip = (function() {
   var el = document.createElement('div');
   el.className = 'bar-tooltip';
@@ -10,30 +7,25 @@ var sharedTooltip = (function() {
 
 function showSharedTooltip(text, screenX, screenY) {
   sharedTooltip.textContent = text;
-  sharedTooltip.style.left = screenX + 'px';
   sharedTooltip.style.top = screenY + 'px';
   sharedTooltip.classList.add('visible');
+  // Clamp so the tooltip never overflows the viewport.
+  var tipW = sharedTooltip.offsetWidth;
+  var minX = tipW / 2 + 8;
+  var maxX = window.innerWidth - tipW / 2 - 8;
+  sharedTooltip.style.left = Math.max(minX, Math.min(screenX, maxX)) + 'px';
 }
 function hideSharedTooltip() { sharedTooltip.classList.remove('visible'); }
 window.addEventListener('scroll', hideSharedTooltip, { passive: true });
 
 var SVG_NS = 'http://www.w3.org/2000/svg';
 
-// ---------------------------------------------------------------------------
-// Range helpers
-// ---------------------------------------------------------------------------
 
 function rangeBounds(range, dataMinTs, dataMaxTs) {
-  // Returns {startTs, endTs} in unix seconds. For "All", the bounds hug the
-  // data so a single point isn't lost in a huge empty axis; for finite
-  // ranges, the bounds are anchored relative to *now* — that's the
-  // "show the days even without data" behavior.
   var nowMs = Date.now();
   var nowTs = Math.floor(nowMs / 1000);
   if (range === 'All') {
-    // Anchor the axis to the actual data span — otherwise when the latest
-    // snapshot is from a few days ago, the right side of the chart is
-    // empty as we wait for "now" to roll in.
+    // Hug data span so a single point isn't lost in empty axis.
     if (dataMinTs == null) return { startTs: 0, endTs: nowTs };
     return { startTs: dataMinTs, endTs: dataMaxTs };
   }
@@ -53,9 +45,6 @@ function rangeBounds(range, dataMinTs, dataMaxTs) {
   return { startTs: 0, endTs: nowTs };
 }
 
-// ---------------------------------------------------------------------------
-// Net-worth line chart
-// ---------------------------------------------------------------------------
 
 function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
   if (points.length === 0) return null;
@@ -67,7 +56,6 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
   var firstRealTs = points[0].ts;
   var hasSyntheticPrefix = firstRealTs > rangeStart;
 
-  // Collect all path points: synthetic-zero prefix (when needed) plus real.
   var pathPoints = points.slice();
   if (hasSyntheticPrefix) {
     pathPoints = [
@@ -112,16 +100,13 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
       ' L ' + rendered[rendered.length - 1].x.toFixed(2) + ',' + baseY.toFixed(2) + ' Z';
   }
 
-  // Split the line into a synthetic-zero segment (drawn green) and a real-
-  // data segment (trend-colored). The split index is the first real point;
-  // the synthetic path includes it as the spike endpoint so the spike-up
-  // is drawn in green too.
+  // Include first real point in the synth slice so the spike-up is drawn green.
   var synthSlice = [], realSlice = [];
   for (var i = 0; i < rendered.length; i++) {
     if (rendered[i].synthetic) {
       synthSlice.push(rendered[i]);
     } else {
-      if (synthSlice.length) synthSlice.push(rendered[i]);  // first real = spike top
+      if (synthSlice.length) synthSlice.push(rendered[i]);
       realSlice.push(rendered[i]);
     }
   }
@@ -152,8 +137,7 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
   if (!svg) return;
 
   var areaPath = svg.querySelector('.networth-area');
-  // Replace the single line element with two — one for the synthetic flat-
-  // zero + spike (always green) and one for the real data (trend-colored).
+  // Two line elements: synth segment (always green) + real segment (trend-colored).
   var existingLine = svg.querySelector('.networth-line');
   if (existingLine) existingLine.remove();
   var lineSynth = document.createElementNS(SVG_NS, 'path');
@@ -172,17 +156,6 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
   lineReal.setAttribute('stroke-linejoin', 'round');
   lineReal.setAttribute('vector-effect', 'non-scaling-stroke');
   svg.appendChild(lineReal);
-
-  // Guide line stays inside the SVG — vertical lines aren't distorted by
-  // preserveAspectRatio="none". The dot is an HTML element on body so its
-  // aspect ratio doesn't get squashed.
-  var guide = document.createElementNS(SVG_NS, 'line');
-  guide.setAttribute('class', 'networth-guide');
-  guide.setAttribute('y1', 0);
-  guide.setAttribute('y2', data.height);
-  guide.setAttribute('vector-effect', 'non-scaling-stroke');
-  guide.style.display = 'none';
-  svg.appendChild(guide);
 
   var dot = document.createElement('div');
   dot.className = 'networth-dot';
@@ -237,66 +210,69 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
-  svg.addEventListener('mousemove', function(e) {
+  function handleHoverAt(clientX) {
     if (!renderedGeo) return;
     var rect = svg.getBoundingClientRect();
     if (rect.width === 0) return;
-    var svgX = (e.clientX - rect.left) / rect.width * data.width;
+    var svgX = (clientX - rect.left) / rect.width * data.width;
 
-    // Map svgX back to a unix timestamp so we know whether the cursor sits
-    // in the synthetic-zero zone (before the first real snapshot) or the
-    // real-data zone.
     var cursorTs = renderedGeo.rangeStart +
       (svgX - renderedGeo.padX) / renderedGeo.plotW *
       (renderedGeo.rangeEnd - renderedGeo.rangeStart);
 
     var px, py, label, value, isSynthetic;
     if (renderedGeo.hasSynthetic && cursorTs < renderedGeo.firstRealTs) {
-      // Synthetic zone: dot follows the cursor along the baseline.
       isSynthetic = true;
       px = svgX;
       py = renderedGeo.baseY;
       value = 0;
-      // Clamp the displayed date to the range start so the user can't
-      // read a date earlier than the chart actually shows.
       var dispTs = Math.max(cursorTs, renderedGeo.rangeStart);
       label = syntheticDateLabel(Math.floor(dispTs));
     } else {
-      // Real zone: snap to the nearest real point.
       var p = nearest(svgX);
       if (!p) return;
       isSynthetic = false;
       px = p.x; py = p.y; value = p.value; label = p.label;
     }
 
-    guide.setAttribute('x1', px);
-    guide.setAttribute('x2', px);
-    guide.style.display = '';
     var screenX = rect.left + (px / data.width) * rect.width;
     var screenY = rect.top + (py / data.height) * rect.height;
     dot.style.left = screenX + 'px';
     dot.style.top = screenY + 'px';
     dot.style.display = '';
-    // Synthetic baseline is always "good" — green dot regardless of trend.
     dot.style.borderColor = isSynthetic
       ? 'var(--positive)'
       : (renderedGeo.trend === 'up' ? 'var(--positive)' : 'var(--negative)');
     showSharedTooltip(
-      label + ' · $' + value.toLocaleString('en-US', {
+      label + ': $' + value.toLocaleString('en-US', {
         minimumFractionDigits: 2, maximumFractionDigits: 2,
       }),
       screenX, screenY
     );
-  });
-  svg.addEventListener('mouseleave', function() {
-    guide.style.display = 'none';
+  }
+
+  function hideHover() {
     dot.style.display = 'none';
     hideSharedTooltip();
-  });
+  }
 
-  // Re-render whenever the user picks a different range, and once on load
-  // so the initial JS state always matches the active button (the server
-  // may have rendered a different window).
+  svg.addEventListener('mousemove', function(e) { handleHoverAt(e.clientX); });
+  svg.addEventListener('mouseleave', hideHover);
+
+  svg.addEventListener('touchstart', function(e) {
+    if (e.touches.length > 0) handleHoverAt(e.touches[0].clientX);
+  }, { passive: true });
+  svg.addEventListener('touchmove', function(e) {
+    if (e.touches.length > 0) {
+      handleHoverAt(e.touches[0].clientX);
+      // preventDefault stops page-scroll while scrubbing.
+      e.preventDefault();
+    }
+  }, { passive: false });
+  svg.addEventListener('touchend', hideHover);
+  svg.addEventListener('touchcancel', hideHover);
+  window.addEventListener('scroll', hideHover, { passive: true });
+
   var filter = card.querySelector('.chart-range-filter');
   if (filter) {
     filter.addEventListener('click', function(e) {
@@ -315,9 +291,6 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
   }
 })();
 
-// ---------------------------------------------------------------------------
-// Monthly-spend bar chart
-// ---------------------------------------------------------------------------
 
 function roundedTopPath(x, y, w, h, r) {
   r = Math.max(0, Math.min(r, w / 2, h));
@@ -341,10 +314,6 @@ function roundedBottomPath(x, y, w, h, r) {
 }
 
 function buildDivergingGeometry(totals, width, height) {
-  // Each month renders as one column at a single X position: income above
-  // the zero baseline (green, top-rounded), spending below it (red,
-  // bottom-rounded). Y axis spans -maxSpend to +maxIncome, so the zero
-  // line floats vertically depending on which side is larger.
   if (!totals.length) return { bars: [], zeroY: 0 };
   var padX = 4, padY = 12;
   var plotW = width - 2 * padX;
@@ -370,8 +339,6 @@ function buildDivergingGeometry(totals, width, height) {
   var bars = [];
   totals.forEach(function(t, i) {
     var x = padX + i * (barW + barGap);
-    // Light "gross" bars first: full height of income above zero and spend
-    // below zero. These read as the envelope of cash flow each month.
     if (t.income > 0) {
       var topY = toY(t.income);
       var h = zeroY - topY;
@@ -392,8 +359,7 @@ function buildDivergingGeometry(totals, width, height) {
         amount: t.spend,
       });
     }
-    // Darker "net" overlay bar sitting inside the appropriate gross bar.
-    // Drawn after the gross bar so it paints on top.
+    // Net overlay paints on top of the gross bar.
     var net = t.income - t.spend;
     if (net > 0) {
       var nTopY = toY(net);
@@ -427,14 +393,12 @@ function buildDivergingGeometry(totals, width, height) {
 
   function render(range) {
     var b = rangeBounds(range, null, null);
-    // Keep months with EITHER spend or income — drop ones with neither.
     var filtered = data.totals.filter(function(t) {
       return t.ts >= b.startTs && (t.spend > 0 || t.income > 0);
     });
     var geo = buildDivergingGeometry(filtered, data.width, data.height);
     svg.querySelectorAll('.bar, .zero-line').forEach(function(el) { el.remove(); });
 
-    // Zero baseline behind the bars — drawn first so bars overlap it.
     if (filtered.length) {
       var zero = document.createElementNS(SVG_NS, 'line');
       zero.setAttribute('class', 'zero-line');
@@ -450,17 +414,16 @@ function buildDivergingGeometry(totals, width, height) {
       var path = document.createElementNS(SVG_NS, 'path');
       path.setAttribute('class', 'bar bar-' + bar.kind);
       path.setAttribute('d', bar.path);
-      var sideLabel;
-      if (bar.kind === 'income') sideLabel = 'Earned';
-      else if (bar.kind === 'spend') sideLabel = 'Spent';
-      else if (bar.kind === 'net-positive') sideLabel = 'Net +';
-      else sideLabel = 'Net −';
-      path.setAttribute(
-        'data-tooltip',
-        bar.label + ' · ' + sideLabel + '$' + bar.amount.toLocaleString('en-US', {
-          minimumFractionDigits: 2, maximumFractionDigits: 2,
-        })
-      );
+      var sign = '';
+      var suffix;
+      if (bar.kind === 'income') suffix = 'Earned';
+      else if (bar.kind === 'spend') suffix = 'Spent';
+      else if (bar.kind === 'net-positive') { suffix = 'Net'; sign = '+'; }
+      else { suffix = 'Net'; sign = '−'; }
+      var amount = sign + '$' + bar.amount.toLocaleString('en-US', {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      });
+      path.setAttribute('data-tooltip', bar.label + ': ' + amount + ' ' + suffix);
       svg.appendChild(path);
     });
   }

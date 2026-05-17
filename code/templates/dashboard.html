@@ -31,7 +31,7 @@
   </div>
 </div>
 
-{% if networth_chart or networth_snapshot_count == 1 or monthly_chart %}
+{% if networth_chart or networth_snapshot_count == 1 or has_monthly_data %}
 <div class="overview-charts">
   {% if networth_chart %}
   <div class="chart-card networth-chart {{ 'trend-up' if networth_chart.trend == 'up' else 'trend-down' }}">
@@ -58,7 +58,7 @@
   <div></div>
   {% endif %}
 
-  {% if monthly_chart %}
+  {% if has_monthly_data %}
   <div class="chart-card monthly-spend-chart">
     <div class="label">Cash Flow</div>
     <svg viewBox="0 0 500 180" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -80,9 +80,9 @@
     <tr>
       <th>Institution</th>
       <th>Account</th>
-      <th>Type</th>
-      <th>Mask</th>
-      {% if show_available %}<th class="num">Available</th>{% endif %}
+      <th class="col-hide-mobile">Type</th>
+      <th class="col-hide-mobile">Mask</th>
+      {% if show_available %}<th class="num col-hide-mobile">Available</th>{% endif %}
       <th class="num">Balance</th>
     </tr>
   </thead>
@@ -94,9 +94,9 @@
         {{ a.institution }}
       </td>
       <td>{{ a.name }}</td>
-      <td class="muted">{{ a.type }}</td>
-      <td class="muted">{{ "****" + a.mask if a.mask else "—" }}</td>
-      {% if show_available %}<td class="num">{% if a.available is not none %}${{ "{:,.2f}".format(a.available) }}{% else %}—{% endif %}</td>{% endif %}
+      <td class="muted col-hide-mobile">{{ a.type }}</td>
+      <td class="muted col-hide-mobile">{{ "****" + a.mask if a.mask else "—" }}</td>
+      {% if show_available %}<td class="num col-hide-mobile">{% if a.available is not none %}${{ "{:,.2f}".format(a.available) }}{% else %}—{% endif %}</td>{% endif %}
       <td class="num">{% if a.balance is not none %}${{ "{:,.2f}".format(a.balance) }}{% else %}—{% endif %}</td>
     </tr>
   {% endfor %}
@@ -142,7 +142,7 @@
   };
 </script>
 {% endif %}
-{% if monthly_chart %}
+{% if has_monthly_data %}
 <script>
   window.MONTHLY_CHART = {
     width: 500,

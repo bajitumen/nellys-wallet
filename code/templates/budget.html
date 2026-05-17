@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% from "_macros.html" import empty_state %}
+{% from "_macros.html" import empty_state, icon_caret_down, month_picker_card %}
 {% block title %}Budget · Nelly's Wallet{% endblock %}
 {% block heading %}Budget{% endblock %}
 {% block content %}
@@ -14,21 +14,7 @@
 {% set difference = total_budget - total_spent %}
 
 <div class="totals" style="grid-template-columns: repeat(4, 1fr);">
-  <div class="card month-card">
-    <div class="label">Month</div>
-    <div class="value">
-      <button class="month-trigger" id="month-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
-        <span class="month-label">{{ month_label }}</span>
-        <i class="ph ph-caret-down"></i>
-      </button>
-    </div>
-    <div class="month-menu" id="month-menu" role="listbox" hidden>
-      {% for opt in month_options %}
-      <a href="{{ url_for('budget_view', month=opt.value) }}"
-         class="{% if opt.value == current_month %}active{% endif %}">{{ opt.label }}</a>
-      {% endfor %}
-    </div>
-  </div>
+  {{ month_picker_card(month_label, month_options, current_month, route_name='budget_view') }}
   <div class="card">
     <div class="label">Total Budget</div>
     <div class="value" id="card-total-budget">${{ "{:,.2f}".format(total_budget) }}</div>
@@ -50,7 +36,7 @@
     <div class="stacked-bar-segment"
          data-primary="{{ g.primary }}"
          style="flex: {{ g.total }} 0 0; background: {{ g.color }};"
-         data-tooltip="{{ g.primary_label }} · ${{ '{:,.2f}'.format(g.total) }}"></div>
+         data-tooltip="{{ g.primary_label }}: ${{ '{:,.2f}'.format(g.total) }}"></div>
     {% endfor %}
   </div>
 </div>

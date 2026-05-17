@@ -114,10 +114,11 @@ def test_get_current_user_falls_back_to_placeholder_when_clerk_disabled(
     assert auth.get_current_user(req, db_session).id == user.id
 
 
-def test_find_or_create_claims_lone_placeholder(db_session):
-    """First sign-in claims the developer's pre-Clerk placeholder user
-    instead of creating a duplicate — preserves all linked Plaid items
-    and history."""
+def test_find_or_create_does_not_auto_claim_placeholder(db_session):
+    """Security: first Clerk sign-in must NOT silently claim the
+    developer's placeholder row. Otherwise the first stranger to sign
+    up after deploy would inherit the developer's Plaid credentials.
+    Migration to a real Clerk ID is now an explicit CLI step."""
     import auth
     from models import User
     placeholder = User(
@@ -129,29 +130,19 @@ def test_find_or_create_claims_lone_placeholder(db_session):
     placeholder_id = placeholder.id
 
     user = auth.find_or_create_user("user_real", "real@example.com", db_session)
-    # Same row, new clerk_user_id.
-    assert user.id == placeholder_id
-    assert user.clerk_user_id == "user_real"
-    # Existing email is preserved (non-empty), not overwritten.
-    assert user.email == "you@local"
-    assert db_session.query(User).count() == 1
-
-
-def test_find_or_create_fills_empty_email_on_claim(db_session):
-    """If the placeholder's email is blank, Clerk-supplied email fills it in."""
-    import auth
-    from models import User
-    placeholder = User(clerk_user_id="placeholder-pre-clerk-user", email="")
-    db_session.add(placeholder)
-    db_session.commit()
-
-    user = auth.find_or_create_user("user_real", "real@example.com", db_session)
+    # New row was created; placeholder is left untouched.
+    assert user.id != placeholder_id
     assert user.clerk_user_id == "user_real"
     assert user.email == "real@example.com"
+    placeholder_after = db_session.get(User, placeholder_id)
+    assert placeholder_after.clerk_user_id == "placeholder-pre-clerk-user"
+    assert placeholder_after.email == "you@local"
+    assert db_session.query(User).count() == 2
 
 
-def test_find_or_create_does_not_claim_when_other_users_exist(db_session):
-    """Once anyone else has signed up, the placeholder claim path is inert."""
+def test_find_or_create_inserts_new_row_when_placeholder_present(db_session):
+    """Sanity check that a Clerk sign-in alongside an existing placeholder
+    creates a separate row rather than touching the placeholder."""
     import auth
     from models import User
     db_session.add(User(clerk_user_id="placeholder-pre-clerk-user", email="dev@local"))
@@ -159,6 +150,5 @@ def test_find_or_create_does_not_claim_when_other_users_exist(db_session):
     db_session.commit()
 
     new_user = auth.find_or_create_user("user_brand_new", "newbie@x", db_session)
-    # No claim: brand new row was inserted.
     assert new_user.clerk_user_id == "user_brand_new"
     assert db_session.query(User).count() == 3

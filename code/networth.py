@@ -1,5 +1,3 @@
-"""Net-worth snapshots: capture on /sync, render as a server-side SVG line."""
-
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import asc
@@ -9,10 +7,7 @@ from models import NetWorthSnapshot, User
 
 
 def capture(user: User, session) -> NetWorthSnapshot | None:
-    """Snapshot the user's current cash / investment / credit totals.
-    Replaces any prior same-day snapshot — only the most recent value per
-    calendar day is kept (refresh many times, only the latest survives).
-    Skips when the user has no linked items."""
+    # One row per UTC day; refreshing replaces today's row.
     if not user.items:
         return None
     data = providers.fetch_all(user, force_refresh=True)
@@ -20,10 +15,7 @@ def capture(user: User, session) -> NetWorthSnapshot | None:
     investments = providers.sum_balances(data["investment"])
     credit = providers.sum_balances(data["credit"])
 
-    # Drop today's existing snapshots so this one is the single row for today.
-    # Use UTC consistently — `taken_at` is stored as naive UTC, so the day
-    # boundary must be in UTC too, otherwise around midnight UTC the
-    # local-date boundary misses the existing row and we end up with two.
+    # UTC day boundary because taken_at is stored as naive UTC.
     today = datetime.now(timezone.utc).date()
     start_of_day = datetime.combine(today, datetime.min.time())
     end_of_day = start_of_day + timedelta(days=1)
@@ -46,19 +38,12 @@ def capture(user: User, session) -> NetWorthSnapshot | None:
 
 
 def get_snapshots(user: User, session) -> list[NetWorthSnapshot]:
-    """One snapshot per calendar day, latest wins. New captures already
-    dedupe today; this guards against legacy rows where the same-day cleanup
-    hadn't been applied yet."""
-    rows = (
+    return (
         session.query(NetWorthSnapshot)
         .filter_by(user_id=user.id)
         .order_by(asc(NetWorthSnapshot.taken_at))
         .all()
     )
-    by_day: dict = {}
-    for r in rows:
-        by_day[r.taken_at.date()] = r  # later iterations overwrite earlier
-    return sorted(by_day.values(), key=lambda r: r.taken_at)
 
 
 def build_chart(
@@ -68,12 +53,6 @@ def build_chart(
     range_start_ts: int | None = None,
     range_end_ts: int | None = None,
 ) -> dict | None:
-    """SVG path data for the net-worth line + filled area.
-
-    When `range_start_ts`/`range_end_ts` are given, the X axis is anchored
-    to that window regardless of where the data sits — so a single point
-    near the right edge of a 30-day window stays at the right edge instead
-    of being centered. When omitted, the axis spans the data itself."""
     if not snapshots:
         return None
 
@@ -82,10 +61,7 @@ def build_chart(
     plot_w = width - 2 * pad_x
     plot_h = height - 2 * pad_y
 
-    # Snapshots are stored as naive datetimes in UTC (utcnow default).
-    # `.timestamp()` on a naive datetime interprets it as LOCAL time —
-    # which gives a unix ts that's off by the server's offset from UTC.
-    # Force UTC so the resulting unix ts matches the browser's clock.
+    # Naive datetime.timestamp() treats as local time; force UTC to match browser.
     def _utc_ts(dt):
         if dt.tzinfo is None:
             return dt.replace(tzinfo=timezone.utc).timestamp()
@@ -93,10 +69,7 @@ def build_chart(
     xs = [_utc_ts(s.taken_at) for s in snapshots]
     ys = [s.net_worth for s in snapshots]
 
-    # Backfill the pre-data portion of the range with a flat zero so the
-    # chart shows "no data → zero" until the first real snapshot, then
-    # spikes up. Two synthetic points create the L-shape: flat across the
-    # empty days, then vertical jump at the first real timestamp.
+    # Synthetic zero points create the flat-then-spike L-shape before first real data.
     if range_start_ts is not None and xs[0] > range_start_ts:
         path_xs = [float(range_start_ts), xs[0]] + xs
         path_ys = [0.0, 0.0] + ys
@@ -117,7 +90,7 @@ def build_chart(
 
     def to_y(v: float) -> float:
         if y_max == y_min:
-            return pad_y + plot_h / 2  # center a single value vertically
+            return pad_y + plot_h / 2
         return pad_y + (y_max - v) / y_span * plot_h
 
     rendered = [(to_x(t), to_y(v)) for t, v in zip(path_xs, path_ys)]
@@ -134,8 +107,7 @@ def build_chart(
         line_path = ""
         area_path = ""
 
-    # Hover snaps to real snapshots only — the synthetic zero points aren't
-    # actual data points the user can click through to.
+    # Only real snapshots are hoverable; synthetic zero points are excluded.
     point_data = [
         {
             "x": round(to_x(t), 2),

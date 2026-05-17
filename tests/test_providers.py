@@ -101,15 +101,6 @@ def test_fetch_one_includes_logo(user_with_item, patch_plaid_client, db_session)
     assert result["cash"][0]["logo"] == "BASE64_PNG_DATA"
 
 
-def test_source_logos_returns_per_institution_map(user_with_item, db_session):
-    """source_logos collects {institution_name: logo} across the user's items."""
-    from providers import source_logos
-    user_with_item.items[0].logo = "LOGO_A"
-    db_session.commit()
-    logos = source_logos(user_with_item)
-    assert logos == {"TestBank": "LOGO_A"}
-
-
 def test_institution_letter_color_uses_brand_when_available():
     """Plaid's primary_color is preferred over the hash-based fallback."""
     from providers import institution_letter_color

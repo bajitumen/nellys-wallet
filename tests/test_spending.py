@@ -477,6 +477,30 @@ def test_prev_month_change_percent(user_with_item, db_session):
     assert out["prev_month_change_pct"] == pytest.approx(50.0)
 
 
+def test_prev_month_change_respects_prev_month_overrides(user_with_item, db_session):
+    """Bug regression: overrides on prev-month transactions must be applied
+    when computing the prev-month total. Previously _spending_total reused
+    the current-month override map, so prev-month dismissals were silently
+    ignored — making the (-X%) badge wrong."""
+    from models import TransactionOverride
+    from spending import fetch_last_month
+    item = user_with_item.items[0]
+    # Feb: $200 raw, but $100 of it is dismissed → prev total should be $100.
+    _seed_tx(db_session, item, "feb1", 100.0, "FOOD_AND_DRINK", date_=date(2026, 2, 10))
+    _seed_tx(db_session, item, "feb2", 100.0, "FOOD_AND_DRINK", date_=date(2026, 2, 15))
+    db_session.add(TransactionOverride(
+        user_id=user_with_item.id,
+        plaid_transaction_id="feb2",
+        dismissed=True,
+    ))
+    # Mar: $200 raw, no overrides → current total $200.
+    _seed_tx(db_session, item, "mar1", 200.0, "FOOD_AND_DRINK", date_=date(2026, 3, 10))
+    db_session.commit()
+    out = fetch_last_month(user_with_item, month="2026-03", session=db_session)
+    # (200 - 100) / 100 = 100%, NOT (200 - 200) / 200 = 0%
+    assert out["prev_month_change_pct"] == pytest.approx(100.0)
+
+
 def test_prev_month_change_none_when_no_prior_data(user_with_item, db_session):
     """No transactions in the previous month → no comparison surfaced."""
     from spending import fetch_last_month
@@ -555,30 +579,6 @@ def test_monthly_totals_applies_overrides(user_with_item, db_session):
 def test_monthly_totals_empty_for_user_without_items(user, db_session):
     from spending import monthly_totals
     assert monthly_totals(user, db_session) == []
-
-
-def test_build_monthly_chart_returns_none_for_empty():
-    from spending import build_monthly_chart
-    assert build_monthly_chart([]) is None
-
-
-def test_build_monthly_chart_bars():
-    from spending import build_monthly_chart
-    totals = [
-        {"month": "2026-03", "label": "Mar 2026", "total": 100.0},
-        {"month": "2026-04", "label": "Apr 2026", "total": 300.0},
-        {"month": "2026-05", "label": "May 2026", "total": 200.0},
-    ]
-    chart = build_monthly_chart(totals, width=300, height=100)
-    assert len(chart["bars"]) == 3
-    # The April bar (300, the max) should be the tallest — y closest to top.
-    tallest = min(chart["bars"], key=lambda b: b["y"])
-    assert tallest["label"] == "Apr 2026"
-    # Every bar has a rendered SVG path with rounded-top geometry (a Q for
-    # each rounded corner).
-    for bar in chart["bars"]:
-        assert bar["path"].startswith("M ")
-        assert bar["path"].count(" Q ") == 2
 
 
 def test_relative_time_formats():

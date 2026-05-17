@@ -1,5 +1,3 @@
-"""SQLAlchemy engine and session factory."""
-
 import os
 import stat
 
@@ -10,9 +8,7 @@ import config
 
 
 def _restrict_sqlite_perms() -> None:
-    """SQLite files are world-readable by default on macOS/Linux. Encrypted
-    Plaid tokens stay encrypted regardless, but overrides, budgets, and
-    snapshots leak — chmod 600 closes that."""
+    # SQLite file defaults world-readable; budgets/snapshots/overrides leak without chmod.
     if not config.DATABASE_URL.startswith("sqlite:///"):
         return
     path = config.DATABASE_URL[len("sqlite:///") :]
@@ -39,8 +35,6 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def init_db():
-    """Create all tables. Idempotent — safe to run multiple times.
-    Also runs lightweight in-place schema upgrades for SQLite."""
     from sqlalchemy import text
     import models  # noqa: F401 — register models with Base.metadata
     Base.metadata.create_all(engine)
@@ -104,6 +98,13 @@ def init_db():
             conn.execute(text(
                 "ALTER TABLE plaid_items ADD COLUMN primary_color VARCHAR(16)"
             ))
+
+        # Composite index for (user_id, date) Transaction reads. create_all
+        # only adds the index on a fresh DB; this picks up existing DBs.
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_tx_user_date "
+            "ON transactions (user_id, date)"
+        ))
 
         conn.commit()
     _restrict_sqlite_perms()

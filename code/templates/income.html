@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% from "_macros.html" import empty_state, inst_avatar %}
+{% from "_macros.html" import empty_state, inst_avatar, icon_caret_down, month_picker_card %}
 {% block title %}Income · Nelly's Wallet{% endblock %}
 {% block heading %}Income{% endblock %}
 {% block content %}
@@ -25,24 +25,12 @@
 {% else %}
 
 <div class="totals" style="grid-template-columns: repeat(4, 1fr);">
-  <div class="card month-card">
-    <div class="label">Month</div>
-    <div class="value">
-      <button class="month-trigger" id="month-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
-        {{ month_label }}
-        <i class="ph ph-caret-down"></i>
-      </button>
-    </div>
-    <div class="month-menu" id="month-menu" role="listbox" hidden>
-      {% for opt in month_options %}
-      <a href="{{ url_for('income_view', month=opt.value, source=current_source) }}"
-         class="{% if opt.value == current_month %}active{% endif %}">{{ opt.label }}</a>
-      {% endfor %}
-    </div>
-  </div>
+  {{ month_picker_card(month_label, month_options, current_month,
+       route_name='income_view',
+       route_kwargs={'source': current_source}) }}
   <div class="card">
     <div class="label">Total Earned</div>
-    {# delta-up: income went up = green; delta-down: income went down = red. Opposite sign from spending. #}
+    {# Income polarity inverts spending: up=good, down=bad. #}
     <div class="value">${{ "{:,.2f}".format(total) }}{% if prev_month_change_pct is not none %}<span class="delta{% if prev_month_change_pct > 0 %} delta-good{% elif prev_month_change_pct < 0 %} delta-bad{% endif %}">({{ "{:+.0f}".format(prev_month_change_pct) }}%)</span>{% endif %}</div>
   </div>
   <div class="card">
@@ -62,7 +50,7 @@
     {% for p in payers %}{% if p.total %}
     <div class="stacked-bar-segment"
          style="flex: {{ p.total }} 0 0; background: {{ p.color }};"
-         data-tooltip="{{ p.name }} · ${{ '{:,.2f}'.format(p.total) }}"></div>
+         data-tooltip="{{ p.name }}: ${{ '{:,.2f}'.format(p.total) }}"></div>
     {% endif %}{% endfor %}
   </div>
 </div>
@@ -77,8 +65,8 @@
     <tr>
       <th class="cat-dot-col"></th>
       <th data-sort="string">Payer</th>
-      <th class="num" data-sort="number">Transactions</th>
-      <th class="num" data-sort="number">% of Total</th>
+      <th class="num col-hide-mobile" data-sort="number">Transactions</th>
+      <th class="num col-hide-mobile" data-sort="number">% of Total</th>
       <th class="num" data-sort="number" data-dir="desc">Earned</th>
     </tr>
   </thead>
@@ -87,8 +75,8 @@
     <tr>
       <td class="cat-dot-col"><span class="cat-dot" style="background: {{ p.color }};"></span></td>
       <td>{{ p.name }}</td>
-      <td class="num muted" data-value="{{ p.count }}">{{ p.count }}</td>
-      <td class="num muted" data-value="{{ p.total }}">{{ "{:.1f}%".format(p.total / total * 100) }}</td>
+      <td class="num muted col-hide-mobile" data-value="{{ p.count }}">{{ p.count }}</td>
+      <td class="num muted col-hide-mobile" data-value="{{ p.total }}">{{ "{:.1f}%".format(p.total / total * 100) }}</td>
       <td class="num" data-value="{{ p.total }}">${{ "{:,.2f}".format(p.total) }}</td>
     </tr>
   {% endfor %}
@@ -101,9 +89,9 @@
   <thead>
     <tr>
       <th data-sort="date" data-dir="desc">Date</th>
-      {% if not current_source %}<th data-sort="string">Source</th>{% endif %}
+      {% if not current_source %}<th class="col-hide-mobile" data-sort="string">Source</th>{% endif %}
       <th data-sort="string">Payer</th>
-      <th data-sort="string">Description</th>
+      <th class="col-hide-mobile" data-sort="string">Description</th>
       <th class="num" data-sort="number">Amount</th>
     </tr>
   </thead>
@@ -111,12 +99,12 @@
   {% for tx in transactions %}
     <tr>
       <td class="muted" data-value="{{ tx.date.isoformat() }}">{{ tx.date.strftime('%b %d') }}</td>
-      {% if not current_source %}<td class="muted">{{ tx.source }}</td>{% endif %}
+      {% if not current_source %}<td class="muted col-hide-mobile">{{ tx.source }}</td>{% endif %}
       <td>
         <span class="cat-dot" style="background: {{ tx.color }};"></span>
         {{ tx.payer }}
       </td>
-      <td class="muted">{{ tx.name }}</td>
+      <td class="muted col-hide-mobile">{{ tx.name }}</td>
       <td class="num" data-value="{{ tx.amount }}">${{ "{:,.2f}".format(tx.amount) }}</td>
     </tr>
   {% endfor %}
@@ -128,8 +116,4 @@
 
 {% endif %}
 
-{% endblock %}
-
-{% block scripts %}
-<script src="{{ url_for('static', filename='income.js') }}"></script>
 {% endblock %}

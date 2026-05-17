@@ -1,8 +1,4 @@
-// All Spending-page JS: inline Category/Item dropdowns, kebab menu (Split,
-// Reset), month picker, stacked-bar tooltip, sortable tables.
-//
-// Reads server-injected data from window.PFC_TAXONOMY and PFC_PRIMARIES;
-// see spending.html for the inline <script> that defines them.
+// Reads server-injected window.PFC_TAXONOMY and PFC_PRIMARIES; see spending.html.
 
 function spendingPostOverride(txId, payload) {
   return csrfFetch('/transactions/' + encodeURIComponent(txId) + '/override', {
@@ -12,58 +8,19 @@ function spendingPostOverride(txId, payload) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Inline Category + Item dropdowns
-// ---------------------------------------------------------------------------
 (function() {
   var TAXONOMY = window.PFC_TAXONOMY || {};
   var PRIMARIES = window.PFC_PRIMARIES || [];
-
-  function closeAllInlineMenus() {
-    document.querySelectorAll('.inline-dropdown-menu').forEach(function(m) { m.remove(); });
-    document.querySelectorAll('.inline-dropdown-trigger[aria-expanded="true"]')
-      .forEach(function(t) { t.setAttribute('aria-expanded', 'false'); });
-  }
-
-  function positionInlineMenu(menu) {
-    menu.classList.remove('inline-dropdown-menu-up');
-    var rect = menu.getBoundingClientRect();
-    if (rect.bottom > window.innerHeight - 8) {
-      menu.classList.add('inline-dropdown-menu-up');
-    }
-  }
-
-  function openMenu(trigger, options, currentValue, onSelect) {
-    closeAllInlineMenus();
-    var menu = document.createElement('div');
-    menu.className = 'inline-dropdown-menu';
-    options.forEach(function(opt) {
-      var item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'inline-dropdown-option';
-      item.textContent = opt.label;
-      if (opt.value === currentValue) item.classList.add('active');
-      item.addEventListener('click', function(e) {
-        e.stopPropagation();
-        onSelect(opt);
-        closeAllInlineMenus();
-      });
-      menu.appendChild(item);
-    });
-    trigger.parentElement.appendChild(menu);
-    trigger.setAttribute('aria-expanded', 'true');
-    positionInlineMenu(menu);
-  }
 
   document.addEventListener('click', function(e) {
     var catTrigger = e.target.closest('.cat-trigger');
     if (catTrigger) {
       e.stopPropagation();
       if (catTrigger.getAttribute('aria-expanded') === 'true') {
-        closeAllInlineMenus();
+        window.closeInlineDropdowns();
         return;
       }
-      openMenu(catTrigger, PRIMARIES, catTrigger.dataset.value, function(opt) {
+      window.openInlineDropdown(catTrigger, PRIMARIES, catTrigger.dataset.value, function(opt) {
         spendingPostOverride(catTrigger.dataset.txId, {
           category: opt.value, detailed: null,
         }).then(function(r) {
@@ -78,12 +35,12 @@ function spendingPostOverride(txId, payload) {
     if (itemTrigger) {
       e.stopPropagation();
       if (itemTrigger.getAttribute('aria-expanded') === 'true') {
-        closeAllInlineMenus();
+        window.closeInlineDropdowns();
         return;
       }
       var primary = itemTrigger.dataset.primary;
       var itemOptions = [{value: '', label: '—'}].concat(TAXONOMY[primary] || []);
-      openMenu(itemTrigger, itemOptions, itemTrigger.dataset.value, function(opt) {
+      window.openInlineDropdown(itemTrigger, itemOptions, itemTrigger.dataset.value, function(opt) {
         itemTrigger.querySelector('.inline-dropdown-label').textContent = opt.label;
         itemTrigger.dataset.value = opt.value;
         itemTrigger.closest('td').dataset.value = opt.value ? opt.label : '';
@@ -93,16 +50,10 @@ function spendingPostOverride(txId, payload) {
           if (!r.ok) alert('Failed to save item');
         });
       });
-      return;
     }
-
-    if (!e.target.closest('.inline-dropdown-menu')) closeAllInlineMenus();
   });
 })();
 
-// ---------------------------------------------------------------------------
-// Kebab menu: Split, Reset
-// ---------------------------------------------------------------------------
 (function() {
   function closeAllMenus(except) {
     document.querySelectorAll('.tx-menu').forEach(function(m) {
@@ -221,55 +172,6 @@ function spendingPostOverride(txId, payload) {
     spendingPostOverride(txId, payload).then(function(r) {
       if (r.ok) window.location.reload();
       else alert('Failed to save');
-    });
-  });
-})();
-
-// Month-picker dropdown and stacked-bar tooltip live in layout.js now.
-
-// ---------------------------------------------------------------------------
-// Sortable tables: each <th data-sort="number|date|string"> becomes a click
-// target; cells may carry a data-value attribute holding the raw value.
-// ---------------------------------------------------------------------------
-(function() {
-  function cellValue(cell) {
-    return cell.dataset.value !== undefined ? cell.dataset.value : cell.textContent.trim();
-  }
-  function compare(a, b, type) {
-    if (type === 'number') return (parseFloat(a) || 0) - (parseFloat(b) || 0);
-    if (type === 'date') return new Date(a) - new Date(b);
-    return a.localeCompare(b);
-  }
-  function nextDir(th) {
-    if (th.dataset.dir === 'asc') return 'desc';
-    if (th.dataset.dir === 'desc') return 'asc';
-    return th.dataset.sort === 'string' ? 'asc' : 'desc';
-  }
-  function sortBy(table, colIdx, type, dir) {
-    var tbody = table.querySelector('tbody');
-    var rows = Array.prototype.slice.call(tbody.children);
-    rows.sort(function(r1, r2) {
-      var c = compare(cellValue(r1.children[colIdx]), cellValue(r2.children[colIdx]), type);
-      return dir === 'asc' ? c : -c;
-    });
-    rows.forEach(function(r) { tbody.appendChild(r); });
-  }
-  document.querySelectorAll('table.sortable-table').forEach(function(table) {
-    var ths = Array.prototype.slice.call(table.querySelectorAll('thead th'));
-    ths.forEach(function(th, idx) {
-      if (!th.dataset.sort) return;
-      th.classList.add('sortable');
-      if (th.dataset.dir) th.classList.add('sort-' + th.dataset.dir);
-      th.addEventListener('click', function() {
-        var dir = nextDir(th);
-        ths.forEach(function(t) {
-          t.classList.remove('sort-asc', 'sort-desc');
-          if (t !== th) delete t.dataset.dir;
-        });
-        th.dataset.dir = dir;
-        th.classList.add('sort-' + dir);
-        sortBy(table, idx, th.dataset.sort, dir);
-      });
     });
   });
 })();
