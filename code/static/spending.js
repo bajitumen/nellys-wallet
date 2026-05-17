@@ -175,3 +175,120 @@ function spendingPostOverride(txId, payload) {
     });
   });
 })();
+
+(function() {
+  var filtersContainer = document.querySelector('.tx-filters');
+  if (!filtersContainer) return;
+
+  var activeFilters = new Set();
+  filtersContainer.querySelectorAll('.filter-chip[data-code]').forEach(function(chip) {
+    activeFilters.add(chip.dataset.code);
+  });
+
+  function applyRowVisibility() {
+    document.querySelectorAll('tr.tx-row').forEach(function(row) {
+      var show = activeFilters.size === 0 || activeFilters.has(row.dataset.categoryRaw);
+      row.style.display = show ? '' : 'none';
+    });
+  }
+
+  function updateUrl() {
+    var url = new URL(window.location.href);
+    url.searchParams.delete('category');
+    activeFilters.forEach(function(c) { url.searchParams.append('category', c); });
+    history.replaceState({}, '', url.pathname + (url.search || '') + '#transactions');
+  }
+
+  function renderChip(code) {
+    var menuLink = filtersContainer.querySelector('#filter-menu a[data-code="' + code + '"]');
+    var label = menuLink ? menuLink.textContent.trim() : code;
+    var chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'filter-chip';
+    chip.dataset.code = code;
+    chip.innerHTML = label + ' <span class="filter-chip-x">×</span>';
+    return chip;
+  }
+
+  function syncFilterUi() {
+    filtersContainer.querySelectorAll('.filter-chip').forEach(function(el) { el.remove(); });
+    var plusBtn = document.getElementById('filter-add');
+    activeFilters.forEach(function(code) {
+      filtersContainer.insertBefore(renderChip(code), plusBtn);
+    });
+    var menu = document.getElementById('filter-menu');
+    var anyAvailable = false;
+    menu.querySelectorAll('a[data-code]').forEach(function(link) {
+      var inUse = activeFilters.has(link.dataset.code);
+      link.hidden = inUse;
+      if (!inUse) anyAvailable = true;
+    });
+    plusBtn.style.display = anyAvailable ? '' : 'none';
+    menu.hidden = true;
+    plusBtn.setAttribute('aria-expanded', 'false');
+
+    document.querySelectorAll('tr.category-row').forEach(function(row) {
+      row.classList.toggle('active', activeFilters.has(row.dataset.categoryCode));
+    });
+    document.querySelectorAll('a.stacked-bar-segment').forEach(function(seg) {
+      seg.classList.toggle('active', activeFilters.has(seg.dataset.categoryCode));
+    });
+  }
+
+  function commit() {
+    applyRowVisibility();
+    updateUrl();
+    syncFilterUi();
+  }
+
+  function scrollToTransactions() {
+    var target = document.getElementById('transactions');
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function addFilter(code) { activeFilters.add(code); commit(); }
+  function removeFilter(code) { activeFilters.delete(code); commit(); }
+  function replaceFilter(code) {
+    activeFilters.clear();
+    activeFilters.add(code);
+    commit();
+    scrollToTransactions();
+  }
+
+  filtersContainer.addEventListener('click', function(e) {
+    var chip = e.target.closest('.filter-chip[data-code]');
+    if (chip) { e.preventDefault(); removeFilter(chip.dataset.code); return; }
+    var menuLink = e.target.closest('#filter-menu a[data-code]');
+    if (menuLink) { e.preventDefault(); addFilter(menuLink.dataset.code); return; }
+    var plusBtn = e.target.closest('#filter-add');
+    if (plusBtn) {
+      e.stopPropagation();
+      var menu = document.getElementById('filter-menu');
+      var open = !menu.hidden;
+      menu.hidden = open;
+      plusBtn.setAttribute('aria-expanded', String(!open));
+    }
+  });
+
+  document.addEventListener('click', function(e) {
+    var row = e.target.closest('tr.category-row');
+    if (row && row.dataset.categoryCode) {
+      if (e.target.closest('a, button, .inline-dropdown, .kebab, input')) return;
+      e.preventDefault();
+      replaceFilter(row.dataset.categoryCode);
+      return;
+    }
+    var seg = e.target.closest('a.stacked-bar-segment');
+    if (seg && seg.dataset.categoryCode) {
+      e.preventDefault();
+      replaceFilter(seg.dataset.categoryCode);
+      return;
+    }
+    var menu = document.getElementById('filter-menu');
+    var plus = document.getElementById('filter-add');
+    if (menu && !menu.hidden && !e.target.closest('#filter-menu') && !e.target.closest('#filter-add')) {
+      menu.hidden = true;
+      if (plus) plus.setAttribute('aria-expanded', 'false');
+    }
+  });
+})();

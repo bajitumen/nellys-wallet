@@ -34,6 +34,8 @@ def available_sources(user: User) -> list[str]:
 def resolve_month(month: str | None) -> tuple[str, date, date, str]:
     today = date.today()
     try:
+        if month is None:
+            raise ValueError
         y_str, m_str = month.split("-")
         y, m = int(y_str), int(m_str)
         if not (1 <= m <= 12):
@@ -318,6 +320,7 @@ def _fetch_last_month_uncached(
     out["categories"] = sorted(
         (
             {
+                "code": k,
                 "name": pfc.humanize_primary(k),
                 "total": totals.get(k, 0.0),
                 "count": counts.get(k, 0),

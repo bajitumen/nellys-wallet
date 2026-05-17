@@ -238,6 +238,9 @@ def dashboard(session, user):
 def spending_view(session, user):
     source = request.args.get("source") or None
     month = request.args.get("month") or None
+    categories_filter = [
+        c for c in request.args.getlist("category") if pfc.is_valid_primary(c)
+    ]
     month_options = _month_options(12)
 
     pfc_data = _pfc_dropdown_data()
@@ -246,6 +249,7 @@ def spending_view(session, user):
             "spending.html", active_page="spending", linked=False, no_user=True,
             total=0.0, count=0, categories=[], transactions=[], errors=[],
             sources=[], source_logos={}, current_source=None,
+            categories_filter=[], category_chips=[],
             month_options=month_options,
             current_month=month_options[0]["value"],
             month_label=month_options[0]["label"],
@@ -259,6 +263,10 @@ def spending_view(session, user):
     data = spending_mod.fetch_last_month(
         user, month=month, source=source, session=session,
     )
+    transactions = data["transactions"]
+    chips = [
+        {"code": c, "label": pfc.humanize_primary(c)} for c in categories_filter
+    ]
     return render_template(
         "spending.html",
         active_page="spending",
@@ -267,11 +275,13 @@ def spending_view(session, user):
         total=data["total"],
         count=data["count"],
         categories=data["categories"],
-        transactions=data["transactions"],
+        transactions=transactions,
         errors=data["errors"],
         sources=sources,
         source_logos=providers.source_avatars(user),
         current_source=source,
+        categories_filter=categories_filter,
+        category_chips=chips,
         month_options=month_options,
         current_month=data["month"],
         month_label=data["month_label"],
@@ -470,7 +480,7 @@ def planning_rate_save(session, user, account_id):
         planning_mod.clear_rate(user, account_id, session)
         return jsonify({"ok": True, "rate": None})
     try:
-        value = float(rate)
+        value = float(rate)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return jsonify({"error": "Invalid rate"}), 400
     planning_mod.upsert_rate(user, account_id, value, session)
@@ -491,7 +501,7 @@ def planning_cashflow_save(session, user):
         parsed = None
     else:
         try:
-            parsed = float(value)
+            parsed = float(value)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return jsonify({"error": "Invalid value"}), 400
         if parsed < 0:
@@ -561,7 +571,7 @@ def budget_save(session, user, detailed):
         budget_mod.clear(user, detailed, session)
     else:
         try:
-            value = float(amount)
+            value = float(amount)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return jsonify({"error": "Invalid amount"}), 400
         if value < 0:
@@ -569,6 +579,7 @@ def budget_save(session, user, detailed):
         budget_mod.upsert(user, detailed, value, session)
 
     primary = pfc.primary_of(detailed)
+    assert primary is not None  # is_valid_detailed verified above
     new_sum = budget_mod.primary_sum(user, primary, session)
     # Spending page caches per-primary budget for 60s; bust it.
     spending_mod.invalidate_cache(user.id)

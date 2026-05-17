@@ -173,6 +173,10 @@ def is_valid_detailed(code: str) -> bool:
     return code in _VALID_DETAILED
 
 
+def is_valid_primary(code: str) -> bool:
+    return code in PFC_TAXONOMY
+
+
 def primary_of(code: str) -> str | None:
     return _PRIMARY_BY_DETAILED.get(code)
 

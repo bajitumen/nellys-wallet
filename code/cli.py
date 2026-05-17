@@ -218,8 +218,8 @@ def cmd_sync():
             result = spending.sync_transactions(user, session, days=days)
             print(f"  added={result['added']}  updated={result['updated']}  "
                   f"errors={len(result['errors'])}")
-            for e in result["errors"]:
-                print(f"    - {e[:160]}")
+            for err in result["errors"]:
+                print(f"    - {err[:160]}")
 
 
 def cmd_reset_items():

@@ -1,6 +1,6 @@
 {% extends "_layout.html" %}
-{% from "_macros.html" import empty_state, inst_avatar, icon_caret_down, icon_dots_three, month_picker_card %}
-{% block title %}Spending · Nelly's Wallet{% endblock %}
+{% from "_macros.html" import empty_state, inst_avatar, icon_caret_down, icon_dots_three, icon_plus, month_picker_card %}
+{% block title %}Spending{% endblock %}
 {% block heading %}Spending{% endblock %}
 {% block content %}
 
@@ -47,9 +47,11 @@
   <div class="label">Breakdown</div>
   <div class="stacked-bar" role="img" aria-label="Spending by category">
     {% for c in categories %}{% if c.total %}
-    <div class="stacked-bar-segment"
-         style="flex: {{ c.total }} 0 0; background: {{ c.color }};"
-         data-tooltip="{{ c.name }}: ${{ '{:,.2f}'.format(c.total) }}"></div>
+    <a class="stacked-bar-segment{% if c.code in categories_filter %} active{% endif %}"
+       data-category-code="{{ c.code }}"
+       href="{{ url_for('spending_view', month=current_month, source=current_source, category=c.code, _anchor='transactions') }}"
+       style="flex: {{ c.total }} 0 0; background: {{ c.color }};"
+       data-tooltip="{{ c.name }}: ${{ '{:,.2f}'.format(c.total) }}"></a>
     {% endif %}{% endfor %}
   </div>
 </div>
@@ -73,7 +75,9 @@
   </thead>
   <tbody>
   {% for c in categories %}
-    <tr>
+    <tr class="category-row{% if c.code in categories_filter %} active{% endif %}"
+        data-category-code="{{ c.code }}"
+        data-category-url="{{ url_for('spending_view', month=current_month, source=current_source, category=c.code, _anchor='transactions') }}">
       <td class="cat-dot-col"><span class="cat-dot" style="background: {{ c.color }};"></span></td>
       <td>{{ c.name }}</td>
       <td class="num muted col-hide-mobile" data-value="{{ c.count }}">{{ c.count }}</td>
@@ -93,8 +97,38 @@
   </tbody>
 </table>
 
-{% if transactions %}
-<h2>Transactions</h2>
+{% if transactions or categories_filter %}
+<div class="tx-header" id="transactions">
+  <h2 class="tx-header-title">Transactions</h2>
+  <div class="tx-filters">
+    {% for chip in category_chips %}
+      {% set remaining = categories_filter | reject('equalto', chip.code) | list %}
+      <a class="filter-chip" data-code="{{ chip.code }}"
+         href="{{ url_for('spending_view', month=current_month, source=current_source, category=remaining, _anchor='transactions') }}">
+        {{ chip.label }} <span class="filter-chip-x">×</span>
+      </a>
+    {% endfor %}
+    {% set available_primaries = categories | rejectattr('code', 'in', categories_filter) | list %}
+    <button class="filter-add" id="filter-add" type="button" aria-label="Add filter"
+            aria-haspopup="listbox" aria-expanded="false"
+            {% if not available_primaries %}style="display: none"{% endif %}>
+      {{ icon_plus() }}
+    </button>
+    <div class="filter-menu" id="filter-menu" role="listbox" hidden>
+      {% for c in categories %}{% if c.total %}
+        {% set next_filters = categories_filter + [c.code] %}
+        <a data-code="{{ c.code }}"
+           {% if c.code in categories_filter %}hidden{% endif %}
+           href="{{ url_for('spending_view', month=current_month, source=current_source, category=next_filters, _anchor='transactions') }}">
+          <span class="cat-dot" style="background: {{ c.color }};"></span>{{ c.name }}
+        </a>
+      {% endif %}{% endfor %}
+    </div>
+  </div>
+</div>
+{% if not transactions %}
+  <p class="muted" style="font-size:0.9rem;">No matching transactions in {{ month_label }}.</p>
+{% else %}
 <table class="sortable-table">
   <thead>
     <tr>
@@ -109,7 +143,8 @@
   </thead>
   <tbody>
   {% for tx in transactions %}
-    <tr>
+    <tr class="tx-row" data-category-raw="{{ tx.category_raw }}"
+        {% if categories_filter and tx.category_raw not in categories_filter %}style="display: none"{% endif %}>
       <td class="muted" data-value="{{ tx.date.isoformat() }}">{{ tx.date.strftime('%b %d') }}</td>
       {% if not current_source %}<td class="muted col-hide-mobile">{{ tx.source }}</td>{% endif %}
       <td>{{ tx.name }}</td>
@@ -151,6 +186,7 @@
   {% endfor %}
   </tbody>
 </table>
+{% endif %}
 
 {% endif %}
 

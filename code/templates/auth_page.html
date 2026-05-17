@@ -1,5 +1,5 @@
 {% extends "auth_layout.html" %}
-{% block title %}{% if page == 'sign-up' %}Sign up{% else %}Sign in{% endif %} · Nelly's Wallet{% endblock %}
+{% block title %}{% if page == 'sign-up' %}Sign up{% else %}Sign in{% endif %}{% endblock %}
 {% block content %}
 <div id="clerk-{{ page }}" data-clerk-component="{{ page }}"></div>
 {% endblock %}

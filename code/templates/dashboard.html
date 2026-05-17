@@ -1,10 +1,10 @@
 {% extends "_layout.html" %}
 {% from "_macros.html" import empty_state, inst_avatar %}
-{% block title %}Overview · Nelly's Wallet{% endblock %}
+{% block title %}Overview{% endblock %}
 {% block heading %}Overview{% endblock %}
 {% block content %}
 
-<p class="subtitle">Live balances from Plaid</p>
+<p class="subtitle">Live balances from your connected accounts</p>
 
 {% if no_user %}
   {{ empty_state("No user provisioned yet.", "Run <code>python code/cli.py seed-me</code> to migrate <code>permissions.env</code> into the DB.") }}

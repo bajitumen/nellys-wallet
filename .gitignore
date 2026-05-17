@@ -26,6 +26,9 @@ __pycache__/
 .vscode/
 .idea/
 
+# Claude Code project instructions (local-only)
+CLAUDE.md
+
 # Local databases + everything else the app writes at runtime
 instance/
 *.db

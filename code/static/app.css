@@ -508,8 +508,100 @@
     overflow: hidden;
     background: var(--surface-alt);
   }
-  .stacked-bar-segment { height: 100%; min-width: 1px; }
+  .stacked-bar-segment { height: 100%; min-width: 1px; display: block; }
+  a.stacked-bar-segment { cursor: pointer; }
   .stacked-bar-segment:hover { filter: brightness(1.08); }
+  .stacked-bar-segment.active { outline: 2px solid var(--text); outline-offset: -2px; }
+  tr.category-row { cursor: pointer; }
+  tr.category-row:hover { background: var(--bg); }
+  tr.category-row.active { background: var(--bg); }
+  tr.category-row.active td:first-child { box-shadow: inset 2px 0 0 var(--text); }
+  .filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-left: 0.6rem;
+    padding: 0.2rem 0.55rem;
+    background: var(--surface-alt);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: normal;
+    text-decoration: none;
+    vertical-align: middle;
+  }
+  .filter-chip:hover { color: var(--text); background: var(--bg); }
+  .filter-chip-x { font-size: 1em; line-height: 1; }
+  .tx-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 2rem 0 0.75rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .tx-header-title {
+    margin: 0;
+    padding: 0;
+    border: none;
+    font-weight: 500;
+    font-size: 1.1rem;
+  }
+  .tx-filters {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    position: relative;
+  }
+  .tx-filters .filter-chip { margin-left: 0; }
+  .filter-add {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--text-muted);
+    cursor: pointer;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: inherit;
+    transition: background 0.1s, color 0.1s;
+  }
+  .filter-add:hover { background: var(--bg); color: var(--text); }
+  .filter-add .icon { width: 12px; height: 12px; }
+  .filter-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+    z-index: 20;
+    min-width: 220px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 0.35rem 0;
+  }
+  .filter-menu a {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.5rem 0.8rem;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+  .filter-menu a:hover { background: var(--bg); }
+  .filter-menu .cat-dot { margin: 0; }
   .bar-tooltip {
     position: fixed;
     background: var(--surface);
