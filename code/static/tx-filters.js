@@ -184,23 +184,30 @@ window.setupTxFilters = function(config) {
     if (plus) plus.setAttribute('aria-expanded', 'false');
   }
 
+  // stopPropagation on every branch: openMenu replaces #filter-menu's innerHTML,
+  // which detaches the clicked node from the DOM. The document-level handler
+  // below uses e.target.closest('#filter-menu') to detect outside-clicks, but
+  // closest() on a detached node returns null — so without stopPropagation it
+  // would treat the click as "outside" and immediately close the menu we just
+  // opened.
   filtersContainer.addEventListener('click', function(e) {
     var chip = e.target.closest('.filter-chip[data-column]');
-    if (chip) { e.preventDefault(); removeFilter(chip.dataset.column, chip.dataset.value); return; }
+    if (chip) { e.preventDefault(); e.stopPropagation(); removeFilter(chip.dataset.column, chip.dataset.value); return; }
 
     var colItem = e.target.closest('.filter-menu-col');
-    if (colItem) { e.preventDefault(); openMenu(buildValuePicker(colItem.dataset.column)); return; }
+    if (colItem) { e.preventDefault(); e.stopPropagation(); openMenu(buildValuePicker(colItem.dataset.column)); return; }
 
     var valItem = e.target.closest('.filter-menu-val');
     if (valItem) {
       e.preventDefault();
+      e.stopPropagation();
       addFilter(valItem.dataset.column, valItem.dataset.value);
       closeMenu();
       return;
     }
 
     var back = e.target.closest('.filter-menu-back');
-    if (back) { e.preventDefault(); openMenu(buildColumnPicker()); return; }
+    if (back) { e.preventDefault(); e.stopPropagation(); openMenu(buildColumnPicker()); return; }
 
     var plus = e.target.closest('#filter-add');
     if (plus) {
