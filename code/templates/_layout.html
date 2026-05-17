@@ -13,10 +13,6 @@
 </head>
 <body>
 <div class="layout">
-<button class="sidebar-toggle" id="sidebar-toggle" type="button"
-        aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">
-  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-</button>
 <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 <aside class="sidebar" id="sidebar">
   <a class="logo" href="/" aria-label="Nelly's Wallet home">
@@ -38,6 +34,10 @@
 </aside>
 <main>
 <div class="page-header">
+  <button class="sidebar-toggle" id="sidebar-toggle" type="button"
+          aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
   <h1>{% block heading %}{% endblock %}</h1>
   {% if g.user %}
   <div class="page-actions">
