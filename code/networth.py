@@ -124,7 +124,9 @@ def build_chart(
         "height": height,
         "line_path": line_path,
         "area_path": area_path,
-        "trend": "up" if ys[-1] >= ys[0] else "down",
+        # Red only when net worth itself is negative — not when it merely
+        # trended down over the range.
+        "trend": "down" if ys[-1] < 0 else "up",
         "first_value": ys[0],
         "last_value": ys[-1],
         "points": point_data,

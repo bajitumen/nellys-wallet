@@ -118,7 +118,8 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     lineSynthPath: buildLinePath(synthSlice),
     lineRealPath: buildLinePath(realSlice),
     points: hoverPoints,
-    trend: realValues[realValues.length - 1] >= realValues[0] ? 'up' : 'down',
+    // Red only when net worth itself is negative, not when it merely trended down.
+    trend: realValues[realValues.length - 1] < 0 ? 'down' : 'up',
     hasSynthetic: hasSyntheticPrefix,
     rangeStart: rangeStart,
     rangeEnd: rangeEnd,
@@ -170,6 +171,20 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     return { min: Math.min.apply(null, tsList), max: Math.max.apply(null, tsList) };
   }
 
+  function updateDelta(points) {
+    var el = document.getElementById('networth-delta');
+    if (!el) return;
+    el.classList.remove('delta-up', 'delta-down');
+    if (!points || points.length < 2) { el.textContent = ''; return; }
+    var delta = points[points.length - 1].value - points[0].value;
+    if (delta === 0) { el.textContent = ''; return; }
+    var sign = delta > 0 ? '+' : '−';
+    el.textContent = sign + '$' + Math.abs(delta).toLocaleString('en-US', {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+    el.classList.add(delta > 0 ? 'delta-up' : 'delta-down');
+  }
+
   function render(range) {
     var dm = dataMinMaxTs();
     var b = rangeBounds(range, dm.min, dm.max);
@@ -183,6 +198,7 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
       lineReal.setAttribute('d', '');
       renderedPoints = [];
       renderedGeo = null;
+      updateDelta(null);
       return;
     }
     areaPath.setAttribute('d', geo.areaPath);
@@ -192,6 +208,7 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     card.classList.add('trend-' + geo.trend);
     renderedPoints = geo.points;
     renderedGeo = geo;
+    updateDelta(filtered);
   }
 
   function nearest(svgX) {

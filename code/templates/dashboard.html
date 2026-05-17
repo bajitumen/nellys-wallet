@@ -35,7 +35,16 @@
 <div class="overview-charts">
   {% if networth_chart %}
   <div class="chart-card networth-chart {{ 'trend-up' if networth_chart.trend == 'up' else 'trend-down' }}">
-    <div class="label">Net Worth</div>
+    {% set _delta = networth_chart.last_value - networth_chart.first_value %}
+    <div class="networth-heading">
+      <div class="label">Net Worth</div>
+      <span class="networth-delta {% if _delta > 0 %}delta-up{% elif _delta < 0 %}delta-down{% endif %}"
+            id="networth-delta">
+        {%- if _delta != 0 and networth_chart.points | length >= 2 -%}
+          {{ '+' if _delta > 0 else '−' }}${{ "{:,.2f}".format(_delta|abs) }}
+        {%- endif -%}
+      </span>
+    </div>
     <svg viewBox="0 0 {{ networth_chart.width }} {{ networth_chart.height }}"
          preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
       <path d="{{ networth_chart.area_path }}" class="networth-area"/>

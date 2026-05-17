@@ -73,6 +73,18 @@
     animateTicker(diffEl, prevDiff, newDiff);
   }
 
+  document.addEventListener('click', function(e) {
+    var seg = e.target.closest('.budget-stacked-bar a.stacked-bar-segment');
+    if (!seg) return;
+    var hash = seg.getAttribute('href') || '';
+    if (!hash.startsWith('#')) return;
+    var target = document.getElementById(hash.slice(1));
+    if (!target) return;
+    e.preventDefault();
+    history.pushState({}, '', hash);
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
   (function() {
     var menu = document.getElementById('month-menu');
     if (!menu) return;
