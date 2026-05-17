@@ -511,7 +511,6 @@
   .stacked-bar-segment { height: 100%; min-width: 1px; display: block; }
   a.stacked-bar-segment { cursor: pointer; }
   .stacked-bar-segment:hover { filter: brightness(1.08); }
-  .stacked-bar-segment.active { outline: 2px solid var(--text); outline-offset: -2px; }
   tr.category-row { cursor: pointer; }
   tr.category-row:hover { background: var(--bg); }
   tr.category-row.active { background: var(--bg); }
@@ -960,6 +959,7 @@
     .card .value .delta { font-size: 0.45em; }
 
     .overview-charts { grid-template-columns: 1fr; }
+    .overview-charts .monthly-spend-chart { order: -1; }
     .chart-card { padding: 0.85rem 1rem; }
 
     .col-hide-mobile { display: none !important; }
