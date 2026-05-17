@@ -44,4 +44,18 @@
 </div>
 {%- endmacro %}
 
+{# Shared with Spending and Income. JS (tx-filters.js) populates the menu and chips. #}
+{% macro tx_filter_header() -%}
+<div class="tx-header" id="transactions">
+  <h2 class="tx-header-title">Transactions</h2>
+  <div class="tx-filters">
+    <button class="filter-add" id="filter-add" type="button" aria-label="Add filter"
+            aria-haspopup="listbox" aria-expanded="false">
+      {{ icon_plus() }}
+    </button>
+    <div class="filter-menu" id="filter-menu" role="listbox" hidden></div>
+  </div>
+</div>
+{%- endmacro %}
+
 {% macro icon_paw() -%}<svg class="icon icon-paw" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><ellipse cx="5.5" cy="10" rx="1.8" ry="2.4"/><ellipse cx="9.5" cy="6.5" rx="1.8" ry="2.4"/><ellipse cx="14.5" cy="6.5" rx="1.8" ry="2.4"/><ellipse cx="18.5" cy="10" rx="1.8" ry="2.4"/><path d="M12 12 c -3 0 -5 2.5 -5 5 c 0 1.7 1.3 2.5 2.6 2.5 c 1.2 0 1.6 -0.7 2.4 -0.7 s 1.2 0.7 2.4 0.7 c 1.3 0 2.6 -0.8 2.6 -2.5 c 0 -2.5 -2 -5 -5 -5 z"/></svg>{%- endmacro %}

@@ -272,7 +272,39 @@ def _fetch_last_month_uncached(
     tx_list: list[dict] = []
     prev_total = 0.0
     for tx in tx_rows:
-        applied = _apply_spend_override(tx, overrides_by_tx.get(tx.plaid_transaction_id))
+        override = overrides_by_tx.get(tx.plaid_transaction_id)
+
+        # Dismissed rows are rendered in the current month so the user can
+        # restore them, but stay out of totals/counts/prev-month comparison.
+        if override and override.dismissed:
+            if not (start <= tx.date <= end):
+                continue
+            category = override.category_override or tx.pfc_primary or "UNKNOWN"
+            amount = (
+                override.amount_override if override.amount_override is not None
+                else tx.amount
+            )
+            detailed = override.detailed_override
+            if detailed is None and tx.pfc_detailed and pfc.primary_of(tx.pfc_detailed) == category:
+                detailed = tx.pfc_detailed
+            tx_list.append({
+                "plaid_id": tx.plaid_transaction_id,
+                "date": tx.date,
+                "source": items_by_id[tx.item_id].institution_name or "Unknown",
+                "name": tx.merchant_name or tx.name or "(no description)",
+                "category": pfc.humanize_primary(category),
+                "category_raw": category,
+                "detailed_raw": detailed,
+                "detailed_label": (
+                    pfc.humanize_detailed(detailed, category) if detailed else None
+                ),
+                "amount": amount,
+                "split_percentage": override.split_percentage,
+                "dismissed": True,
+            })
+            continue
+
+        applied = _apply_spend_override(tx, override)
         if applied is None:
             continue
         category, amount, split_percentage, detailed = applied
@@ -301,10 +333,11 @@ def _fetch_last_month_uncached(
             ),
             "amount": amount,
             "split_percentage": split_percentage,
+            "dismissed": False,
         })
 
     out["total"] = sum(totals.values())
-    out["count"] = len(tx_list)
+    out["count"] = sum(counts.values())
 
     primary_budgets: dict[str, float] = defaultdict(float)
     for detailed, amount in budget_mod.get_budgets(user, session).items():

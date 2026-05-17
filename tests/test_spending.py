@@ -26,8 +26,9 @@ def _seed_tx(session, item, plaid_id, amount, pfc, name="Merchant", date_=None):
 # fetch_last_month (DB-backed)
 # ---------------------------------------------------------------------------
 
-def test_dismissed_transaction_excluded_from_totals_and_list(user_with_item, db_session):
-    """A dismissed tx disappears from the transactions list AND the totals."""
+def test_dismissed_transaction_excluded_from_totals_but_kept_in_list(user_with_item, db_session):
+    """A dismissed tx stays in the transactions list (flagged) so the UI can
+    render it with strikethrough + a Restore action, but is excluded from totals."""
     from models import TransactionOverride
     from spending import fetch_last_month
     item = user_with_item.items[0]
@@ -41,8 +42,11 @@ def test_dismissed_transaction_excluded_from_totals_and_list(user_with_item, db_
     db_session.commit()
     out = fetch_last_month(user_with_item, session=db_session)
     assert out["total"] == 30.0
-    assert len(out["transactions"]) == 1
-    assert out["transactions"][0]["plaid_id"] == "tx2"
+    assert out["count"] == 1
+    assert len(out["transactions"]) == 2
+    by_id = {t["plaid_id"]: t for t in out["transactions"]}
+    assert by_id["tx1"]["dismissed"] is True
+    assert by_id["tx2"]["dismissed"] is False
 
 
 def test_dismissed_excluded_from_monthly_totals(user_with_item, db_session):

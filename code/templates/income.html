@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% from "_macros.html" import empty_state, inst_avatar, icon_caret_down, month_picker_card %}
+{% from "_macros.html" import empty_state, inst_avatar, icon_caret_down, month_picker_card, tx_filter_header %}
 {% block title %}Income{% endblock %}
 {% block heading %}Income{% endblock %}
 {% block content %}
@@ -48,9 +48,12 @@
   <div class="label">Breakdown</div>
   <div class="stacked-bar" role="img" aria-label="Income by payer">
     {% for p in payers %}{% if p.total %}
-    <div class="stacked-bar-segment"
-         style="flex: {{ p.total }} 0 0; background: {{ p.color }};"
-         data-tooltip="{{ p.name }}: ${{ '{:,.2f}'.format(p.total) }}"></div>
+    <a class="stacked-bar-segment"
+       data-filter-column="payer"
+       data-filter-value="{{ p.name }}"
+       href="#transactions"
+       style="flex: {{ p.total }} 0 0; background: {{ p.color }};"
+       data-tooltip="{{ p.name }}: ${{ '{:,.2f}'.format(p.total) }}"></a>
     {% endif %}{% endfor %}
   </div>
 </div>
@@ -72,7 +75,7 @@
   </thead>
   <tbody>
   {% for p in payers %}
-    <tr>
+    <tr class="category-row" data-filter-column="payer" data-filter-value="{{ p.name }}">
       <td class="cat-dot-col"><span class="cat-dot" style="background: {{ p.color }};"></span></td>
       <td>{{ p.name }}</td>
       <td class="num muted col-hide-mobile" data-value="{{ p.count }}">{{ p.count }}</td>
@@ -84,7 +87,8 @@
 </table>
 
 {% if transactions %}
-<h2>Transactions</h2>
+{{ tx_filter_header() }}
+<p class="muted" id="filter-empty" style="font-size:0.9rem;" hidden>No transactions match the current filters.</p>
 <table class="sortable-table">
   <thead>
     <tr>
@@ -97,7 +101,11 @@
   </thead>
   <tbody>
   {% for tx in transactions %}
-    <tr>
+    <tr class="tx-row"
+        data-date="{{ tx.date.isoformat() }}"
+        data-source="{{ tx.source }}"
+        data-payer="{{ tx.payer }}"
+        data-description="{{ tx.name }}">
       <td class="muted" data-value="{{ tx.date.isoformat() }}">{{ tx.date.strftime('%b %d') }}</td>
       {% if not current_source %}<td class="muted col-hide-mobile">{{ tx.source }}</td>{% endif %}
       <td>
@@ -116,4 +124,9 @@
 
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='tx-filters.js') }}"></script>
+<script src="{{ url_for('static', filename='income.js') }}"></script>
 {% endblock %}

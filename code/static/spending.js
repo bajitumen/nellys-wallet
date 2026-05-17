@@ -61,13 +61,18 @@ function spendingPostOverride(txId, payload) {
     });
   }
 
-  function buildMenu() {
+  function buildMenu(isDismissed) {
     var menu = document.createElement('div');
     menu.className = 'tx-menu';
-    menu.innerHTML =
-      '<button class="tx-menu-item" data-action="split">Split</button>' +
-      '<button class="tx-menu-item" data-action="dismiss">Dismiss</button>' +
-      '<button class="tx-menu-item" data-action="reset">Reset to original</button>';
+    if (isDismissed) {
+      menu.innerHTML =
+        '<button class="tx-menu-item" data-action="restore">Restore</button>';
+    } else {
+      menu.innerHTML =
+        '<button class="tx-menu-item" data-action="split">Split</button>' +
+        '<button class="tx-menu-item" data-action="dismiss">Dismiss</button>' +
+        '<button class="tx-menu-item" data-action="reset">Reset to original</button>';
+    }
     return menu;
   }
 
@@ -102,7 +107,7 @@ function spendingPostOverride(txId, payload) {
       if (existing) {
         existing.remove();
       } else {
-        var menu = buildMenu();
+        var menu = buildMenu(kebab.dataset.dismissed === '1');
         kebab.parentElement.appendChild(menu);
         positionMenu(menu);
       }
@@ -133,6 +138,11 @@ function spendingPostOverride(txId, payload) {
       spendingPostOverride(txId, { clear: true }).then(function(r) {
         if (r.ok) window.location.reload();
         else alert('Failed to reset');
+      });
+    } else if (action === 'restore') {
+      spendingPostOverride(txId, { dismiss: false }).then(function(r) {
+        if (r.ok) window.location.reload();
+        else alert('Failed to restore');
       });
     }
   });
@@ -177,118 +187,37 @@ function spendingPostOverride(txId, payload) {
 })();
 
 (function() {
-  var filtersContainer = document.querySelector('.tx-filters');
-  if (!filtersContainer) return;
+  if (!window.setupTxFilters) return;
 
-  var activeFilters = new Set();
-  filtersContainer.querySelectorAll('.filter-chip[data-code]').forEach(function(chip) {
-    activeFilters.add(chip.dataset.code);
-  });
-
-  function applyRowVisibility() {
-    document.querySelectorAll('tr.tx-row').forEach(function(row) {
-      var show = activeFilters.size === 0 || activeFilters.has(row.dataset.categoryRaw);
-      row.style.display = show ? '' : 'none';
-    });
+  function cellText(row, idx) {
+    var c = row.children[idx];
+    return c ? c.textContent.trim() : '';
+  }
+  function dropdownLabel(row, triggerClass) {
+    var t = row.querySelector('.' + triggerClass + ' .inline-dropdown-label');
+    return t ? t.textContent.trim() : '';
   }
 
-  function updateUrl() {
-    var url = new URL(window.location.href);
-    url.searchParams.delete('category');
-    activeFilters.forEach(function(c) { url.searchParams.append('category', c); });
-    history.replaceState({}, '', url.pathname + (url.search || '') + '#transactions');
-  }
-
-  function renderChip(code) {
-    var menuLink = filtersContainer.querySelector('#filter-menu a[data-code="' + code + '"]');
-    var label = menuLink ? menuLink.textContent.trim() : code;
-    var chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'filter-chip';
-    chip.dataset.code = code;
-    chip.innerHTML = label + ' <span class="filter-chip-x">×</span>';
-    return chip;
-  }
-
-  function syncFilterUi() {
-    filtersContainer.querySelectorAll('.filter-chip').forEach(function(el) { el.remove(); });
-    var plusBtn = document.getElementById('filter-add');
-    activeFilters.forEach(function(code) {
-      filtersContainer.insertBefore(renderChip(code), plusBtn);
-    });
-    var menu = document.getElementById('filter-menu');
-    var anyAvailable = false;
-    menu.querySelectorAll('a[data-code]').forEach(function(link) {
-      var inUse = activeFilters.has(link.dataset.code);
-      link.hidden = inUse;
-      if (!inUse) anyAvailable = true;
-    });
-    plusBtn.style.display = anyAvailable ? '' : 'none';
-    menu.hidden = true;
-    plusBtn.setAttribute('aria-expanded', 'false');
-
-    document.querySelectorAll('tr.category-row').forEach(function(row) {
-      row.classList.toggle('active', activeFilters.has(row.dataset.categoryCode));
-    });
-    document.querySelectorAll('a.stacked-bar-segment').forEach(function(seg) {
-      seg.classList.toggle('active', activeFilters.has(seg.dataset.categoryCode));
-    });
-  }
-
-  function commit() {
-    applyRowVisibility();
-    updateUrl();
-    syncFilterUi();
-  }
-
-  function scrollToTransactions() {
-    var target = document.getElementById('transactions');
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  function addFilter(code) { activeFilters.add(code); commit(); }
-  function removeFilter(code) { activeFilters.delete(code); commit(); }
-  function replaceFilter(code) {
-    activeFilters.clear();
-    activeFilters.add(code);
-    commit();
-    scrollToTransactions();
-  }
-
-  filtersContainer.addEventListener('click', function(e) {
-    var chip = e.target.closest('.filter-chip[data-code]');
-    if (chip) { e.preventDefault(); removeFilter(chip.dataset.code); return; }
-    var menuLink = e.target.closest('#filter-menu a[data-code]');
-    if (menuLink) { e.preventDefault(); addFilter(menuLink.dataset.code); return; }
-    var plusBtn = e.target.closest('#filter-add');
-    if (plusBtn) {
-      e.stopPropagation();
-      var menu = document.getElementById('filter-menu');
-      var open = !menu.hidden;
-      menu.hidden = open;
-      plusBtn.setAttribute('aria-expanded', String(!open));
-    }
-  });
-
-  document.addEventListener('click', function(e) {
-    var row = e.target.closest('tr.category-row');
-    if (row && row.dataset.categoryCode) {
-      if (e.target.closest('a, button, .inline-dropdown, .kebab, input')) return;
-      e.preventDefault();
-      replaceFilter(row.dataset.categoryCode);
-      return;
-    }
-    var seg = e.target.closest('a.stacked-bar-segment');
-    if (seg && seg.dataset.categoryCode) {
-      e.preventDefault();
-      replaceFilter(seg.dataset.categoryCode);
-      return;
-    }
-    var menu = document.getElementById('filter-menu');
-    var plus = document.getElementById('filter-add');
-    if (menu && !menu.hidden && !e.target.closest('#filter-menu') && !e.target.closest('#filter-add')) {
-      menu.hidden = true;
-      if (plus) plus.setAttribute('aria-expanded', 'false');
-    }
+  window.setupTxFilters({
+    emptyMessageId: 'filter-empty',
+    columns: [
+      { key: 'date', label: 'Date', dataAttr: 'date', urlParam: 'f_date',
+        getLabel: function(row) { return cellText(row, 0); } },
+      { key: 'source', label: 'Source', dataAttr: 'source', urlParam: 'f_source' },
+      { key: 'description', label: 'Description', dataAttr: 'description', urlParam: 'f_description' },
+      // `category` URL param kept for back-compat with pie-slice deep links.
+      { key: 'category', label: 'Category', dataAttr: 'categoryRaw', urlParam: 'category',
+        getLabel: function(row) { return dropdownLabel(row, 'cat-trigger'); } },
+      { key: 'item', label: 'Item', dataAttr: 'detailedRaw', urlParam: 'f_item',
+        getLabel: function(row) {
+          var l = dropdownLabel(row, 'item-trigger');
+          return (l === '' || l === '—') ? '(none)' : l;
+        } },
+    ],
+    replaceTriggers: [
+      // Inline-dropdowns and the kebab inside a category row must keep working.
+      { selector: 'tr.category-row', ignoreInside: 'a, button, .inline-dropdown, .kebab, input' },
+      { selector: 'a.stacked-bar-segment' },
+    ],
   });
 })();

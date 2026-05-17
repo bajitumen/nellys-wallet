@@ -33,17 +33,19 @@
   <div class="label">Budget breakdown</div>
   <div class="stacked-bar budget-stacked-bar" role="img" aria-label="Budget by category">
     {% for g in groups %}
-    <div class="stacked-bar-segment"
-         data-primary="{{ g.primary }}"
-         style="flex: {{ g.total }} 0 0; background: {{ g.color }};"
-         data-tooltip="{{ g.primary_label }}: ${{ '{:,.2f}'.format(g.total) }}"></div>
+    <a class="stacked-bar-segment"
+       data-primary="{{ g.primary }}"
+       href="#budget-group-{{ g.primary }}"
+       aria-label="Jump to {{ g.primary_label }}"
+       style="flex: {{ g.total }} 0 0; background: {{ g.color }};"
+       data-tooltip="{{ g.primary_label }}: ${{ '{:,.2f}'.format(g.total) }}"></a>
     {% endfor %}
   </div>
 </div>
 
 <div class="budget-columns">
 {% for g in groups %}
-<div class="budget-group">
+<div class="budget-group" id="budget-group-{{ g.primary }}">
   <div class="budget-group-header">
     <span class="budget-group-name">
       <span class="cat-dot" style="background: {{ g.color }};"></span>
