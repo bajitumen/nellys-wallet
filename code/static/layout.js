@@ -49,12 +49,25 @@ document.addEventListener('blur', function(e) {
   }
   function sortBy(table, colIdx, type, dir) {
     var tbody = table.querySelector('tbody');
-    var rows = Array.prototype.slice.call(tbody.children);
-    rows.sort(function(r1, r2) {
+    var allRows = Array.prototype.slice.call(tbody.children);
+    // Rows with data-parent are children of another row (e.g. breakdown
+    // subcategory rows). They keep their pre-sort order and re-append after
+    // their parent so a column sort doesn't shuffle them away.
+    var parentRows = allRows.filter(function(r) { return !r.dataset.parent; });
+    var childrenByKey = {};
+    allRows.forEach(function(r) {
+      if (!r.dataset.parent) return;
+      (childrenByKey[r.dataset.parent] = childrenByKey[r.dataset.parent] || []).push(r);
+    });
+    parentRows.sort(function(r1, r2) {
       var c = compare(cellValue(r1.children[colIdx]), cellValue(r2.children[colIdx]), type);
       return dir === 'asc' ? c : -c;
     });
-    rows.forEach(function(r) { tbody.appendChild(r); });
+    parentRows.forEach(function(p) {
+      tbody.appendChild(p);
+      var key = p.dataset.filterValue;
+      (childrenByKey[key] || []).forEach(function(child) { tbody.appendChild(child); });
+    });
   }
   document.querySelectorAll('table.sortable-table').forEach(function(table) {
     var ths = Array.prototype.slice.call(table.querySelectorAll('thead th'));

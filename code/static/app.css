@@ -566,6 +566,36 @@
   tr.category-row:hover { background: var(--bg); }
   tr.category-row.active { background: var(--bg); }
   tr.category-row.active td:first-child { box-shadow: inset 2px 0 0 var(--text); }
+  .subcat-toggle {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin-right: 0.4rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    width: 1em;
+    height: 1em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    vertical-align: -0.1em;
+  }
+  .subcat-toggle .icon {
+    width: 0.85em;
+    height: 0.85em;
+    transition: transform 0.15s ease-out;
+    transform: rotate(-90deg);
+  }
+  .subcat-toggle[aria-expanded="true"] .icon {
+    transform: rotate(0deg);
+  }
+  .subcat-toggle:hover { color: var(--text); }
+  .subcat-toggle-empty { visibility: hidden; }
+  tr.subcategory-row { cursor: pointer; font-size: 0.92em; }
+  tr.subcategory-row > td { color: var(--text-muted); }
+  tr.subcategory-row:hover { background: var(--bg); }
+  tr.subcategory-row.active { background: var(--bg); }
+  tr.subcategory-row .subcat-label { padding-left: 1.7rem; }
   .filter-chip {
     display: inline-flex;
     align-items: center;

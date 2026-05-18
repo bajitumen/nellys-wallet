@@ -40,7 +40,7 @@
       <div class="label">Net Worth</div>
       <span class="networth-delta {% if _delta > 0 %}delta-up{% elif _delta < 0 %}delta-down{% endif %}"
             id="networth-delta">
-        {%- if _delta != 0 and networth_chart.points | length >= 2 -%}
+        {%- if _delta != 0 -%}
           {{ '+' if _delta > 0 else '−' }}${{ "{:,.2f}".format(_delta|abs) }}
         {%- endif -%}
       </span>

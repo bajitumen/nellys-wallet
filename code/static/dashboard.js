@@ -171,12 +171,16 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     return { min: Math.min.apply(null, tsList), max: Math.max.apply(null, tsList) };
   }
 
-  function updateDelta(points) {
+  function updateDelta(points, hasSynthetic) {
     var el = document.getElementById('networth-delta');
     if (!el) return;
     el.classList.remove('delta-up', 'delta-down');
-    if (!points || points.length < 2) { el.textContent = ''; return; }
-    var delta = points[points.length - 1].value - points[0].value;
+    if (!points || points.length === 0) { el.textContent = ''; return; }
+    // With a synthetic 0 prefix, compare against that baseline; otherwise need
+    // two real points to compute a meaningful delta.
+    if (!hasSynthetic && points.length < 2) { el.textContent = ''; return; }
+    var start = hasSynthetic ? 0 : points[0].value;
+    var delta = points[points.length - 1].value - start;
     if (delta === 0) { el.textContent = ''; return; }
     var sign = delta > 0 ? '+' : '−';
     el.textContent = sign + '$' + Math.abs(delta).toLocaleString('en-US', {
@@ -198,7 +202,7 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
       lineReal.setAttribute('d', '');
       renderedPoints = [];
       renderedGeo = null;
-      updateDelta(null);
+      updateDelta(null, false);
       return;
     }
     areaPath.setAttribute('d', geo.areaPath);
@@ -208,7 +212,7 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     card.classList.add('trend-' + geo.trend);
     renderedPoints = geo.points;
     renderedGeo = geo;
-    updateDelta(filtered);
+    updateDelta(filtered, geo.hasSynthetic);
   }
 
   function nearest(svgX) {

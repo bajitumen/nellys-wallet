@@ -269,6 +269,10 @@ def _fetch_last_month_uncached(
 
     totals: dict[str, float] = defaultdict(float)
     counts: dict[str, int] = defaultdict(int)
+    # Sub-aggregation: (primary, detailed) → totals/counts. Lets the breakdown
+    # table expand to show what's underneath each primary.
+    sub_totals: dict[tuple[str, str], float] = defaultdict(float)
+    sub_counts: dict[tuple[str, str], int] = defaultdict(int)
     tx_list: list[dict] = []
     prev_total = 0.0
     for tx in tx_rows:
@@ -320,6 +324,9 @@ def _fetch_last_month_uncached(
 
         totals[category] += amount
         counts[category] += 1
+        if detailed:
+            sub_totals[(category, detailed)] += amount
+            sub_counts[(category, detailed)] += 1
         tx_list.append({
             "plaid_id": tx.plaid_transaction_id,
             "date": tx.date,
@@ -350,6 +357,24 @@ def _fetch_last_month_uncached(
     if source is None:
         category_keys.update(pfc.PFC_TAXONOMY.keys())
 
+    budgets_by_detailed = budget_mod.get_budgets(user, session)
+
+    def _subitems_for(primary: str) -> list[dict]:
+        # Always enumerate the full taxonomy so users see every sub-bucket
+        # under a primary, even ones with $0 spent and no budget set.
+        items = [
+            {
+                "code": detailed,
+                "name": pfc.humanize_detailed(detailed, primary),
+                "total": sub_totals.get((primary, detailed), 0.0),
+                "count": sub_counts.get((primary, detailed), 0),
+                "budget": budgets_by_detailed.get(detailed, 0.0),
+            }
+            for detailed in pfc.PFC_TAXONOMY.get(primary, [])
+        ]
+        # Stable sort: spent buckets first, zeros at bottom in taxonomy order.
+        return sorted(items, key=lambda s: (-s["total"], s["name"]))
+
     out["categories"] = sorted(
         (
             {
@@ -359,6 +384,7 @@ def _fetch_last_month_uncached(
                 "count": counts.get(k, 0),
                 "color": pfc.CATEGORY_COLORS.get(k, pfc.DEFAULT_COLOR),
                 "budget": primary_budgets.get(k, 0.0),
+                "subitems": _subitems_for(k),
             }
             for k in category_keys
         ),

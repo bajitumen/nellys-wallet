@@ -119,6 +119,13 @@ def build_chart(
         for s, t, v in zip(snapshots, xs, ys)
     ]
 
+    # When the range starts before our first snapshot we draw a synthetic
+    # zero baseline. The delta should compare against that 0 — otherwise a
+    # small dip between real points reads as a loss even though the chart
+    # visibly climbed from 0 to today's value.
+    has_synthetic_prefix = (
+        range_start_ts is not None and xs[0] > range_start_ts
+    )
     return {
         "width": width,
         "height": height,
@@ -127,7 +134,7 @@ def build_chart(
         # Red only when net worth itself is negative — not when it merely
         # trended down over the range.
         "trend": "down" if ys[-1] < 0 else "up",
-        "first_value": ys[0],
+        "first_value": 0.0 if has_synthetic_prefix else ys[0],
         "last_value": ys[-1],
         "points": point_data,
     }

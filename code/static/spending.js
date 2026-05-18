@@ -217,7 +217,27 @@ function spendingPostOverride(txId, payload) {
     replaceTriggers: [
       // Inline-dropdowns and the kebab inside a category row must keep working.
       { selector: 'tr.category-row', ignoreInside: 'a, button, .inline-dropdown, .kebab, input' },
+      { selector: 'tr.subcategory-row' },
       { selector: 'a.stacked-bar-segment' },
     ],
+  });
+})();
+
+(function() {
+  // Chevron in the breakdown table expands the primary's subcategory rows.
+  // The category-row replaceTrigger config above already ignores button clicks,
+  // so the row's own filter handler doesn't fire when the chevron is hit.
+  document.addEventListener('click', function(e) {
+    var toggle = e.target.closest('.subcat-toggle');
+    if (!toggle || toggle.classList.contains('subcat-toggle-empty')) return;
+    e.stopPropagation();
+    var row = toggle.closest('tr.category-row');
+    if (!row) return;
+    var primary = row.dataset.filterValue;
+    var expanded = toggle.getAttribute('aria-expanded') === 'true';
+    toggle.setAttribute('aria-expanded', String(!expanded));
+    document.querySelectorAll(
+      'tr.subcategory-row[data-parent="' + primary + '"]'
+    ).forEach(function(sr) { sr.hidden = expanded; });
   });
 })();
