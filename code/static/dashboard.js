@@ -367,6 +367,7 @@ function buildDivergingGeometry(totals, width, height) {
         path: roundedTopPath(x, topY, barW, h, 6),
         kind: 'income',
         label: t.label,
+        month: t.month,
         amount: t.income,
       });
     }
@@ -377,6 +378,7 @@ function buildDivergingGeometry(totals, width, height) {
         path: roundedBottomPath(x, zeroY, barW, h2, 6),
         kind: 'spend',
         label: t.label,
+        month: t.month,
         amount: t.spend,
       });
     }
@@ -389,6 +391,7 @@ function buildDivergingGeometry(totals, width, height) {
         path: roundedTopPath(x, nTopY, barW, nH, 6),
         kind: 'net-positive',
         label: t.label,
+        month: t.month,
         amount: net,
       });
     } else if (net < 0) {
@@ -398,6 +401,7 @@ function buildDivergingGeometry(totals, width, height) {
         path: roundedBottomPath(x, zeroY, barW, nH2, 6),
         kind: 'net-negative',
         label: t.label,
+        month: t.month,
         amount: -net,
       });
     }
@@ -445,13 +449,29 @@ function buildDivergingGeometry(totals, width, height) {
         minimumFractionDigits: 2, maximumFractionDigits: 2,
       });
       path.setAttribute('data-tooltip', bar.label + ': ' + amount + ' ' + suffix);
+      if (bar.kind === 'income' || bar.kind === 'spend') {
+        path.dataset.kind = bar.kind;
+        path.dataset.month = bar.month;
+        path.style.cursor = 'pointer';
+      }
       svg.appendChild(path);
     });
   }
 
+  card.addEventListener('click', function(e) {
+    var bar = e.target.closest('.bar-income, .bar-spend');
+    if (!bar || !bar.dataset.month) return;
+    var page = bar.dataset.kind === 'income' ? '/income' : '/spending';
+    window.location.href = page + '?month=' + encodeURIComponent(bar.dataset.month);
+  });
+
   card.addEventListener('mouseover', function(e) {
     var bar = e.target.closest('.bar');
-    if (!bar) return;
+    if (!bar) {
+      // Moving within the card but off a bar — tooltip should drop.
+      hideSharedTooltip();
+      return;
+    }
     var rect = bar.getBoundingClientRect();
     showSharedTooltip(
       bar.dataset.tooltip,

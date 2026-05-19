@@ -6,6 +6,21 @@ window.csrfFetch = function(url, options) {
   return fetch(url, options);
 };
 
+// First page load of the UTC day: kick off a background sync so balances
+// and transactions reflect what banks reported overnight. Server flips the
+// meta tag based on user.last_transactions_sync.date() < today UTC.
+(function() {
+  if (!document.querySelector('meta[name="needs-daily-sync"]')) return;
+  var today = new Date().toISOString().slice(0, 10);
+  // Guard against double-firing across tabs / quick navigations the same day.
+  if (localStorage.getItem('autoSyncFiredOn') === today) return;
+  localStorage.setItem('autoSyncFiredOn', today);
+  csrfFetch('/sync', { method: 'POST' }).catch(function() {
+    // Failed — let a later page load retry.
+    localStorage.removeItem('autoSyncFiredOn');
+  });
+})();
+
 // Capture-phase so per-page blur handlers see the already-formatted value.
 document.addEventListener('blur', function(e) {
   var el = e.target;
@@ -69,23 +84,22 @@ document.addEventListener('blur', function(e) {
       (childrenByKey[key] || []).forEach(function(child) { tbody.appendChild(child); });
     });
   }
-  document.querySelectorAll('table.sortable-table').forEach(function(table) {
-    var ths = Array.prototype.slice.call(table.querySelectorAll('thead th'));
-    ths.forEach(function(th, idx) {
-      if (!th.dataset.sort) return;
-      th.classList.add('sortable');
-      if (th.dataset.dir) th.classList.add('sort-' + th.dataset.dir);
-      th.addEventListener('click', function() {
-        var dir = nextDir(th);
-        ths.forEach(function(t) {
-          t.classList.remove('sort-asc', 'sort-desc');
-          if (t !== th) delete t.dataset.dir;
-        });
-        th.dataset.dir = dir;
-        th.classList.add('sort-' + dir);
-        sortBy(table, idx, th.dataset.sort, dir);
-      });
+  // Document-level delegation so sorting survives partial DOM swaps (the
+  // Spending page replaces its <main> on transaction edits).
+  document.addEventListener('click', function(e) {
+    var th = e.target.closest('th[data-sort]');
+    if (!th) return;
+    var table = th.closest('table.sortable-table');
+    if (!table) return;
+    var ths = Array.prototype.slice.call(table.querySelectorAll('thead th[data-sort]'));
+    var idx = ths.indexOf(th);
+    if (idx < 0) return;
+    var dir = nextDir(th);
+    ths.forEach(function(t) {
+      if (t !== th) delete t.dataset.dir;
     });
+    th.dataset.dir = dir;
+    sortBy(table, idx, th.dataset.sort, dir);
   });
 })();
 
@@ -157,6 +171,25 @@ document.addEventListener('click', function(e) {
   window.addEventListener('scroll', hide, { passive: true });
 })();
 
+// Desktop sidebar collapse/expand toggle. Mobile uses the hamburger drawer
+// below (separate logic). Initial state restored in an inline script in
+// _layout.html before paint; here we just react to clicks and persist.
+(function() {
+  var btn = document.getElementById('sidebar-collapse-toggle');
+  var sidebar = document.getElementById('sidebar');
+  if (!btn || !sidebar) return;
+  // Sync aria with whatever state the inline bootstrap restored.
+  var initiallyCollapsed = sidebar.classList.contains('collapsed');
+  btn.setAttribute('aria-expanded', String(!initiallyCollapsed));
+  btn.setAttribute('aria-label', initiallyCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
+  btn.addEventListener('click', function() {
+    var collapsed = sidebar.classList.toggle('collapsed');
+    btn.setAttribute('aria-expanded', String(!collapsed));
+    btn.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
+  });
+})();
+
 (function() {
   var toggle = document.getElementById('sidebar-toggle');
   var sidebar = document.getElementById('sidebar');
@@ -224,7 +257,7 @@ document.querySelector('.theme-toggle').addEventListener('click', function() {
       .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
       .then(function(res) {
         if (!res.ok || !res.data.link_token) {
-          alert('Could not start Plaid Link: ' + (res.data.error || 'unknown error'));
+          alert('Could not start bank link: ' + (res.data.error || 'unknown error'));
           btn.disabled = false;
           return;
         }

@@ -60,7 +60,7 @@
 {% endif %}
 
 {% if not payers %}
-  {{ empty_state("No income in " ~ month_label ~ ".", "Try a different month from the dropdown above. Plaid sometimes takes a few days to classify recent deposits as income.") }}
+  {{ empty_state("No income in " ~ month_label ~ ".", "Try a different month from the dropdown above. Your linked accounts sometimes take a few days to classify recent deposits as income.") }}
 {% else %}
 
 <table class="sortable-table">

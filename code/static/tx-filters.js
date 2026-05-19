@@ -12,8 +12,11 @@
 // "Replace triggers" must carry data-filter-column + data-filter-value.
 
 window.setupTxFilters = function(config) {
-  var filtersContainer = document.querySelector(config.filtersSelector || '.tx-filters');
-  if (!filtersContainer) return null;
+  var filtersSelector = config.filtersSelector || '.tx-filters';
+  // Look up fresh on each render — the container can be replaced (e.g. when
+  // the Spending page swaps its <main> after a transaction edit).
+  function getFiltersContainer() { return document.querySelector(filtersSelector); }
+  if (!getFiltersContainer()) return null;
 
   var COLUMNS = config.columns;
   var rowSelector = config.rowSelector || 'tr.tx-row';
@@ -45,9 +48,10 @@ window.setupTxFilters = function(config) {
     return raw || '(none)';
   }
 
-  function rowMatches(row) {
+  function rowMatches(row, excludeKey) {
     for (var i = 0; i < COLUMNS.length; i++) {
       var col = COLUMNS[i];
+      if (col.key === excludeKey) continue;
       var set = state[col.key];
       if (set.size === 0) continue;
       if (!set.has(rowValue(row, col))) return false;
@@ -82,9 +86,13 @@ window.setupTxFilters = function(config) {
     history.replaceState({}, '', url.pathname + (url.search || ''));
   }
 
-  function uniqueValues(col) {
+  // excludeKey: when offered to the user as filter choices for column X, the
+  // list should reflect what's reachable given the *other* columns' filters
+  // (so picking values that yield zero rows is impossible).
+  function uniqueValues(col, excludeKey) {
     var seen = new Map();
     document.querySelectorAll(rowSelector).forEach(function(row) {
+      if (excludeKey !== undefined && !rowMatches(row, excludeKey)) return;
       var v = rowValue(row, col);
       if (!seen.has(v)) seen.set(v, rowLabel(row, col));
     });
@@ -103,7 +111,9 @@ window.setupTxFilters = function(config) {
   }
 
   function renderChips() {
-    filtersContainer.querySelectorAll('.filter-chip').forEach(function(el) { el.remove(); });
+    var fc = getFiltersContainer();
+    if (!fc) return;
+    fc.querySelectorAll('.filter-chip').forEach(function(el) { el.remove(); });
     var plusBtn = document.getElementById('filter-add');
     COLUMNS.forEach(function(col) {
       state[col.key].forEach(function(value) {
@@ -114,7 +124,7 @@ window.setupTxFilters = function(config) {
         chip.dataset.value = value;
         chip.innerHTML = col.label + ': ' + escapeHtml(labelForValue(col.key, value)) +
                          ' <span class="filter-chip-x">×</span>';
-        filtersContainer.insertBefore(chip, plusBtn);
+        fc.insertBefore(chip, plusBtn);
       });
     });
   }
@@ -148,7 +158,7 @@ window.setupTxFilters = function(config) {
 
   function buildColumnPicker() {
     var items = COLUMNS.map(function(col) {
-      var unique = uniqueValues(col);
+      var unique = uniqueValues(col, col.key);
       var remaining = unique.filter(function(u) { return !state[col.key].has(u.value); });
       if (unique.length <= 1 || remaining.length === 0) return '';
       return '<a class="filter-menu-col" data-column="' + col.key + '">' +
@@ -160,7 +170,7 @@ window.setupTxFilters = function(config) {
 
   function buildValuePicker(colKey) {
     var col = COLUMNS.find(function(c) { return c.key === colKey; });
-    var values = uniqueValues(col).filter(function(v) { return !state[colKey].has(v.value); });
+    var values = uniqueValues(col, colKey).filter(function(v) { return !state[colKey].has(v.value); });
     return values.map(function(v) {
       return '<a class="filter-menu-val" data-column="' + colKey +
              '" data-value="' + escapeHtml(v.value) + '">' + escapeHtml(v.label) + '</a>';
@@ -186,38 +196,39 @@ window.setupTxFilters = function(config) {
     if (plus) plus.setAttribute('aria-expanded', 'false');
   }
 
-  // stopPropagation on every branch: openMenu replaces #filter-menu's innerHTML,
-  // which detaches the clicked node from the DOM. The document-level handler
-  // below uses e.target.closest('#filter-menu') to detect outside-clicks, but
-  // closest() on a detached node returns null — so without stopPropagation it
-  // would treat the click as "outside" and immediately close the menu we just
-  // opened.
-  filtersContainer.addEventListener('click', function(e) {
-    var chip = e.target.closest('.filter-chip[data-column]');
-    if (chip) { e.preventDefault(); e.stopPropagation(); removeFilter(chip.dataset.column, chip.dataset.value); return; }
-
-    var colItem = e.target.closest('.filter-menu-col');
-    if (colItem) { e.preventDefault(); e.stopPropagation(); openMenu(buildValuePicker(colItem.dataset.column)); return; }
-
-    var valItem = e.target.closest('.filter-menu-val');
-    if (valItem) {
-      e.preventDefault();
-      e.stopPropagation();
-      addFilter(valItem.dataset.column, valItem.dataset.value);
-      closeMenu();
-      return;
-    }
-
-    var plus = e.target.closest('#filter-add');
-    if (plus) {
-      e.stopPropagation();
-      var menu = document.getElementById('filter-menu');
-      if (menu.hidden) openMenu(buildColumnPicker());
-      else closeMenu();
-    }
-  });
-
+  // All click handling at document level so it survives DOM swaps (Spending
+  // refetches and replaces <main> after a transaction edit). stopPropagation
+  // on menu-changing branches: openMenu replaces #filter-menu's innerHTML,
+  // which detaches the clicked node, and a stale e.target.closest('#filter-menu')
+  // on a detached element returns null — without stopPropagation the
+  // outside-click branch would then close the menu we just opened.
   document.addEventListener('click', function(e) {
+    if (e.target.closest(filtersSelector)) {
+      var chip = e.target.closest('.filter-chip[data-column]');
+      if (chip) { e.preventDefault(); e.stopPropagation(); removeFilter(chip.dataset.column, chip.dataset.value); return; }
+
+      var colItem = e.target.closest('.filter-menu-col');
+      if (colItem) { e.preventDefault(); e.stopPropagation(); openMenu(buildValuePicker(colItem.dataset.column)); return; }
+
+      var valItem = e.target.closest('.filter-menu-val');
+      if (valItem) {
+        e.preventDefault();
+        e.stopPropagation();
+        addFilter(valItem.dataset.column, valItem.dataset.value);
+        closeMenu();
+        return;
+      }
+
+      var plus = e.target.closest('#filter-add');
+      if (plus) {
+        e.stopPropagation();
+        var menu = document.getElementById('filter-menu');
+        if (menu.hidden) openMenu(buildColumnPicker());
+        else closeMenu();
+        return;
+      }
+    }
+
     for (var i = 0; i < replaceTriggers.length; i++) {
       var trig = replaceTriggers[i];
       var el = e.target.closest(trig.selector);
@@ -235,5 +246,11 @@ window.setupTxFilters = function(config) {
 
   commit();
 
-  return { addFilter: addFilter, removeFilter: removeFilter, replaceFilter: replaceFilter };
+  return {
+    addFilter: addFilter,
+    removeFilter: removeFilter,
+    replaceFilter: replaceFilter,
+    // Re-apply filter state to fresh DOM (called after a <main> swap).
+    refresh: commit,
+  };
 };

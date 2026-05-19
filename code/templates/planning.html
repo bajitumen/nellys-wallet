@@ -11,7 +11,7 @@
 {% elif not linked %}
   {{ empty_state("No accounts linked yet.", "Click the + button above to connect an account.") }}
 {% elif not accounts %}
-  {{ empty_state("No accounts with balances.", "Click Refresh to pull current balances from Plaid.") }}
+  {{ empty_state("No accounts with balances.", "Click Refresh to pull current balances from your linked accounts.") }}
 {% else %}
 
 <div class="planning-top-row">

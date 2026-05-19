@@ -1,6 +1,6 @@
 import logging
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 
 from flask import Flask, g, jsonify, redirect, render_template, request
@@ -89,10 +89,16 @@ def with_user(f):
 @app.context_processor
 def inject_layout_globals():
     user = getattr(g, "user", None)
+    last_sync = user.last_transactions_sync if user is not None else None
+    today_utc = datetime.now(timezone.utc).date()
+    needs_daily_sync = bool(
+        user is not None
+        and user.items
+        and (last_sync is None or last_sync.date() < today_utc)
+    )
     return {
-        "last_sync_label": spending_mod.relative_time(
-            user.last_transactions_sync if user is not None else None
-        ),
+        "last_sync_label": spending_mod.relative_time(last_sync),
+        "needs_daily_sync": needs_daily_sync,
     }
 
 

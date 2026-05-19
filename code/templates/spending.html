@@ -59,7 +59,7 @@
 {% endif %}
 
 {% if not categories or (not total and current_source) %}
-  {{ empty_state("No spending in " ~ month_label ~ ".", "Try a different month from the dropdown above, or Plaid may still be preparing recent transactions.") }}
+  {{ empty_state("No spending in " ~ month_label ~ ".", "Try a different month from the dropdown above, or your linked accounts may still be preparing recent transactions.") }}
 {% else %}
 
 <table class="sortable-table">
@@ -96,9 +96,9 @@
       {% if not current_source %}<td class="num muted col-hide-mobile" data-value="{{ c.budget }}">{% if c.budget %}${{ "{:,.2f}".format(c.budget) }}{% else %}—{% endif %}</td>{% endif %}
       <td class="num" data-value="{{ c.total }}">${{ "{:,.2f}".format(c.total) }}</td>
       {% if not current_source %}
-      <td class="num" data-value="{{ (c.budget - c.total) if c.budget else 0 }}">
-        {% if c.budget %}
-          {% set diff = c.budget - c.total %}
+      <td class="num" data-value="{{ ((c.budget or 0) - c.total) }}">
+        {% if c.budget or c.total %}
+          {% set diff = (c.budget or 0) - c.total %}
           <span class="diff {% if diff > 0 %}diff-good{% elif diff < 0 %}diff-bad{% endif %}">{% if diff >= 0 %}+${{ "{:,.2f}".format(diff) }}{% else %}-${{ "{:,.2f}".format(-diff) }}{% endif %}</span>
         {% else %}—{% endif %}
       </td>
@@ -114,9 +114,9 @@
       {% if not current_source %}<td class="num muted col-hide-mobile" data-value="{{ s.budget }}">{% if s.budget %}${{ "{:,.2f}".format(s.budget) }}{% else %}—{% endif %}</td>{% endif %}
       <td class="num" data-value="{{ s.total }}">${{ "{:,.2f}".format(s.total) }}</td>
       {% if not current_source %}
-      <td class="num" data-value="{{ (s.budget - s.total) if s.budget else 0 }}">
-        {% if s.budget %}
-          {% set diff = s.budget - s.total %}
+      <td class="num" data-value="{{ ((s.budget or 0) - s.total) }}">
+        {% if s.budget or s.total %}
+          {% set diff = (s.budget or 0) - s.total %}
           <span class="diff {% if diff > 0 %}diff-good{% elif diff < 0 %}diff-bad{% endif %}">{% if diff >= 0 %}+${{ "{:,.2f}".format(diff) }}{% else %}-${{ "{:,.2f}".format(-diff) }}{% endif %}</span>
         {% else %}—{% endif %}
       </td>

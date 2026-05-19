@@ -27,6 +27,18 @@
     --negative: #f87171;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Minimalist scrollbars everywhere. Track invisible, thumb subtle and
+     half-transparent, slightly darker on hover. Firefox uses scrollbar-* props;
+     WebKit/Blink (Chrome, Safari, Edge) use ::-webkit-scrollbar pseudos. */
+  * { scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, 0.35) transparent; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(127, 127, 127, 0.35);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(127, 127, 127, 0.6); }
+  ::-webkit-scrollbar-corner { background: transparent; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     background: var(--bg);
@@ -38,17 +50,43 @@
     flex-shrink: 0;
     background: var(--surface);
     border-right: 1px solid var(--line);
-    padding: 2rem 0 0;
+    padding: 0.5rem 0 0;
     position: sticky;
     top: 0;
     height: 100vh;
     align-self: flex-start;
     display: flex;
     flex-direction: column;
+    transition: width 0.2s ease-out;
+    /* Sit above positioned content in main so the collapsed-state tooltips
+       (which live inside the sidebar's stacking context) aren't obscured. */
+    z-index: 30;
   }
+  .sidebar-collapse-toggle {
+    align-self: flex-end;
+    margin: 0 0.5rem 0 0;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.35rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+  }
+  .sidebar-collapse-toggle:hover { background: var(--bg); color: var(--text); }
+  .sidebar-collapse-toggle svg {
+    width: 14px;
+    height: 14px;
+    transition: transform 0.2s ease-out;
+    transform: rotate(180deg);
+  }
+  .sidebar.collapsed .sidebar-collapse-toggle { align-self: center; margin: 0; }
+  .sidebar.collapsed .sidebar-collapse-toggle svg { transform: rotate(0deg); }
   .logo {
     display: block;
-    padding: 0 1.5rem 1.75rem;
+    padding: 0.5rem 1.5rem 1.5rem;
     color: var(--text);
     font-size: 2.25rem;
     line-height: 1;
@@ -56,18 +94,72 @@
   }
   .logo:hover { color: var(--text); }
   .sidebar nav a {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
     padding: 0.55rem 1.5rem;
     color: var(--text);
     text-decoration: none;
     font-size: 0.92rem;
     border-left: 2px solid transparent;
+    position: relative;
   }
   .sidebar nav a:hover { background: var(--bg); }
   .sidebar nav a.active {
     border-left-color: var(--text);
     background: var(--bg);
     font-weight: 500;
+  }
+  .nav-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+  }
+  .sidebar nav a.active .nav-icon { color: var(--text); }
+  /* Desktop-only collapsed mode. Mobile uses the hamburger drawer below and
+     should ignore .collapsed. */
+  @media (min-width: 721px) {
+    .sidebar.collapsed { width: 64px; }
+    .sidebar.collapsed .logo {
+      padding: 0.5rem 0 1rem;
+      text-align: center;
+      font-size: 1.85rem;
+    }
+    .sidebar.collapsed nav a {
+      justify-content: center;
+      padding: 0.6rem 0;
+      border-left: 2px solid transparent;
+    }
+    .sidebar.collapsed .nav-label { display: none; }
+    .sidebar.collapsed nav a::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      left: calc(100% + 0.5rem);
+      top: 50%;
+      transform: translateY(-50%);
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--line);
+      padding: 0.35rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.82rem;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.1s ease-out;
+      z-index: 60;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    }
+    .sidebar.collapsed nav a:hover::after { opacity: 1; }
+    .sidebar.collapsed .theme-toggle {
+      justify-content: center;
+      padding: 0.85rem 0;
+    }
+    /* !important to beat the dark-theme display:inline override defined later
+       in the file at equal specificity. */
+    .sidebar.collapsed .theme-toggle .label-dark,
+    .sidebar.collapsed .theme-toggle .label-light { display: none !important; }
   }
   .header-user-button {
     display: inline-flex;
@@ -111,8 +203,11 @@
        then push main past its share, leaving .totals oversized at narrow
        viewports and defeating the responsive breakpoint. */
     min-width: 0;
+    /* Right padding smoothly scales with viewport so cards, charts, and
+       tables all shed their right gutter together as the window shrinks
+       (instead of jumping at a single breakpoint). */
     padding: 2rem 2.5rem;
-    max-width: 1100px;
+    padding-right: clamp(2.5rem, 8vw, 9rem);
   }
   h1 { font-weight: 500; font-size: 1.6rem; margin-bottom: 0.25rem; }
   .page-header {
@@ -150,7 +245,14 @@
     vertical-align: -0.15em;
     flex-shrink: 0;
   }
-  .logo svg.icon-paw { width: 1em; height: 1em; }
+  .logo-img {
+    width: 1em;
+    height: 1em;
+    display: inline-block;
+    vertical-align: middle;
+    transition: transform 0.6s ease-in-out;
+  }
+  .logo:hover .logo-img { transform: rotate(360deg); }
   @keyframes spin { to { transform: rotate(360deg); } }
   .subtitle { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 2rem; }
   .source-filter {
@@ -231,12 +333,12 @@
     border-bottom: 1px solid var(--line-soft);
   }
   th { font-weight: 500; color: var(--text-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
-  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
-  th.sortable:hover { color: var(--text); }
+  th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
+  th[data-sort]:hover { color: var(--text); }
   /* Phosphor arrows-vertical / arrow-up / arrow-down as masks. Unicode arrows
      (↕ ↑ ↓) fall through to the emoji font on iOS/Android — masked SVG renders
      consistently and inherits currentColor. */
-  th.sortable::after {
+  th[data-sort]::after {
     content: "";
     display: inline-block;
     margin-left: 0.3rem;
@@ -254,12 +356,12 @@
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='black' stroke-width='16' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='80' y1='32' x2='80' y2='224'/%3E%3Cpolyline points='40 72 80 32 120 72'/%3E%3Cline x1='176' y1='224' x2='176' y2='32'/%3E%3Cpolyline points='216 184 176 224 136 184'/%3E%3C/svg%3E");
     -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='black' stroke-width='16' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='80' y1='32' x2='80' y2='224'/%3E%3Cpolyline points='40 72 80 32 120 72'/%3E%3Cline x1='176' y1='224' x2='176' y2='32'/%3E%3Cpolyline points='216 184 176 224 136 184'/%3E%3C/svg%3E");
   }
-  th.sortable.sort-asc::after {
+  th[data-sort][data-dir="asc"]::after {
     opacity: 1;
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='black' stroke-width='16' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='128' y1='216' x2='128' y2='40'/%3E%3Cpolyline points='56 112 128 40 200 112'/%3E%3C/svg%3E");
     -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='black' stroke-width='16' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='128' y1='216' x2='128' y2='40'/%3E%3Cpolyline points='56 112 128 40 200 112'/%3E%3C/svg%3E");
   }
-  th.sortable.sort-desc::after {
+  th[data-sort][data-dir="desc"]::after {
     opacity: 1;
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='black' stroke-width='16' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='128' y1='40' x2='128' y2='216'/%3E%3Cpolyline points='56 144 128 216 200 144'/%3E%3C/svg%3E");
     -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='black' stroke-width='16' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='128' y1='40' x2='128' y2='216'/%3E%3Cpolyline points='56 144 128 216 200 144'/%3E%3C/svg%3E");

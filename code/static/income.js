@@ -13,7 +13,6 @@
         getLabel: function(row) { return cellText(row, 0); } },
       { key: 'source', label: 'Source', dataAttr: 'source', urlParam: 'f_source' },
       { key: 'payer', label: 'Payer', dataAttr: 'payer', urlParam: 'f_payer' },
-      { key: 'description', label: 'Description', dataAttr: 'description', urlParam: 'f_description' },
     ],
     replaceTriggers: [
       { selector: 'tr.category-row' },

@@ -8,6 +8,40 @@ function spendingPostOverride(txId, payload) {
   });
 }
 
+// Refetches the current page and swaps <main>'s content. Document-level
+// handlers (kebab, inline-dropdown, tx-filters, chevron, sortable-table) all
+// survive because they're not bound to elements that get replaced. After the
+// swap the tx-filters controller's refresh() re-applies chip + visibility
+// state to the new DOM.
+function refreshSpendingMain() {
+  return fetch(window.location.href, { credentials: 'same-origin' })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
+    .then(function(html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var fresh = doc.querySelector('main');
+      var current = document.querySelector('main');
+      if (!fresh || !current) return;
+      current.innerHTML = fresh.innerHTML;
+      if (window._txFilters && window._txFilters.refresh) {
+        window._txFilters.refresh();
+      }
+    });
+}
+
+function applyOverride(txId, payload, failMsg) {
+  return spendingPostOverride(txId, payload)
+    .then(function(r) {
+      if (r.ok) return refreshSpendingMain();
+      throw new Error(failMsg || 'Save failed');
+    })
+    .catch(function(err) {
+      alert((failMsg || 'Save failed') + ': ' + err.message);
+    });
+}
+
 (function() {
   var TAXONOMY = window.PFC_TAXONOMY || {};
   var PRIMARIES = window.PFC_PRIMARIES || [];
@@ -21,12 +55,9 @@ function spendingPostOverride(txId, payload) {
         return;
       }
       window.openInlineDropdown(catTrigger, PRIMARIES, catTrigger.dataset.value, function(opt) {
-        spendingPostOverride(catTrigger.dataset.txId, {
+        applyOverride(catTrigger.dataset.txId, {
           category: opt.value, detailed: null,
-        }).then(function(r) {
-          if (r.ok) window.location.reload();
-          else alert('Failed to save category');
-        });
+        }, 'Failed to save category');
       });
       return;
     }
@@ -44,11 +75,9 @@ function spendingPostOverride(txId, payload) {
         itemTrigger.querySelector('.inline-dropdown-label').textContent = opt.label;
         itemTrigger.dataset.value = opt.value;
         itemTrigger.closest('td').dataset.value = opt.value ? opt.label : '';
-        spendingPostOverride(itemTrigger.dataset.txId, {
+        applyOverride(itemTrigger.dataset.txId, {
           detailed: opt.value || null,
-        }).then(function(r) {
-          if (!r.ok) alert('Failed to save item');
-        });
+        }, 'Failed to save item');
       });
     }
   });
@@ -130,20 +159,11 @@ function spendingPostOverride(txId, payload) {
       menu.innerHTML = buildSplitForm(amount);
       positionMenu(menu);
     } else if (action === 'dismiss') {
-      spendingPostOverride(txId, { dismiss: true }).then(function(r) {
-        if (r.ok) window.location.reload();
-        else alert('Failed to dismiss');
-      });
+      applyOverride(txId, { dismiss: true }, 'Failed to dismiss');
     } else if (action === 'reset') {
-      spendingPostOverride(txId, { clear: true }).then(function(r) {
-        if (r.ok) window.location.reload();
-        else alert('Failed to reset');
-      });
+      applyOverride(txId, { clear: true }, 'Failed to reset');
     } else if (action === 'restore') {
-      spendingPostOverride(txId, { dismiss: false }).then(function(r) {
-        if (r.ok) window.location.reload();
-        else alert('Failed to restore');
-      });
+      applyOverride(txId, { dismiss: false }, 'Failed to restore');
     }
   });
 
@@ -179,10 +199,7 @@ function spendingPostOverride(txId, payload) {
       payload.split_percentage = null;
     }
 
-    spendingPostOverride(txId, payload).then(function(r) {
-      if (r.ok) window.location.reload();
-      else alert('Failed to save');
-    });
+    applyOverride(txId, payload, 'Failed to save');
   });
 })();
 
@@ -198,17 +215,16 @@ function spendingPostOverride(txId, payload) {
     return t ? t.textContent.trim() : '';
   }
 
-  window.setupTxFilters({
+  window._txFilters = window.setupTxFilters({
     emptyMessageId: 'filter-empty',
     columns: [
       { key: 'date', label: 'Date', dataAttr: 'date', urlParam: 'f_date',
         getLabel: function(row) { return cellText(row, 0); } },
       { key: 'source', label: 'Source', dataAttr: 'source', urlParam: 'f_source' },
-      { key: 'description', label: 'Description', dataAttr: 'description', urlParam: 'f_description' },
       // `category` URL param kept for back-compat with pie-slice deep links.
       { key: 'category', label: 'Category', dataAttr: 'categoryRaw', urlParam: 'category',
         getLabel: function(row) { return dropdownLabel(row, 'cat-trigger'); } },
-      { key: 'item', label: 'Item', dataAttr: 'detailedRaw', urlParam: 'f_item',
+      { key: 'item', label: 'Item', dataAttr: 'item', urlParam: 'f_item',
         getLabel: function(row) {
           var l = dropdownLabel(row, 'item-trigger');
           return (l === '' || l === '—') ? '(none)' : l;

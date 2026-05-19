@@ -1,10 +1,12 @@
 {% from "_chrome.html" import theme_bootstrap, clerk_loader with context %}
+{% from "_macros.html" import icon_house_fill, icon_bag_fill, icon_arrow_up_circle_fill, icon_pie_fill, icon_target_fill, icon_caret_right %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="csrf-token" content="{{ csrf_token() }}">
+{% if needs_daily_sync %}<meta name="needs-daily-sync" content="1">{% endif %}
 <title>{% block title %}Nelly's Wallet{% endblock %}</title>
 <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
 <link rel="dns-prefetch" href="https://cdn.plaid.com">
@@ -14,16 +16,29 @@
 <body>
 <div class="layout">
 <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
-<aside class="sidebar" id="sidebar">
+<aside class="sidebar collapsed" id="sidebar">
+  <script>
+    // Restore the user's last sidebar state before paint so there's no flash.
+    // Default (no prior value) stays collapsed.
+    (function() {
+      if (localStorage.getItem('sidebarCollapsed') === '0') {
+        document.currentScript.parentElement.classList.remove('collapsed');
+      }
+    })();
+  </script>
+  <button type="button" class="sidebar-collapse-toggle" id="sidebar-collapse-toggle"
+          aria-label="Expand sidebar" aria-expanded="false">
+    {{ icon_caret_right() }}
+  </button>
   <a class="logo" href="/" aria-label="Nelly's Wallet home">
-    <svg class="icon icon-paw" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><ellipse cx="5.5" cy="10" rx="1.8" ry="2.4"/><ellipse cx="9.5" cy="6.5" rx="1.8" ry="2.4"/><ellipse cx="14.5" cy="6.5" rx="1.8" ry="2.4"/><ellipse cx="18.5" cy="10" rx="1.8" ry="2.4"/><path d="M12 12 c -3 0 -5 2.5 -5 5 c 0 1.7 1.3 2.5 2.6 2.5 c 1.2 0 1.6 -0.7 2.4 -0.7 s 1.2 0.7 2.4 0.7 c 1.3 0 2.6 -0.8 2.6 -2.5 c 0 -2.5 -2 -5 -5 -5 z"/></svg>
+    <img class="logo-img" src="{{ url_for('static', filename='favicon.svg') }}" alt="">
   </a>
   <nav>
-    <a href="/" class="{% if active_page == 'overview' %}active{% endif %}">Overview</a>
-    <a href="/spending" class="{% if active_page == 'spending' %}active{% endif %}">Spending</a>
-    <a href="/income" class="{% if active_page == 'income' %}active{% endif %}">Income</a>
-    <a href="/budget" class="{% if active_page == 'budget' %}active{% endif %}">Budget</a>
-    <a href="/planning" class="{% if active_page == 'planning' %}active{% endif %}">Planning</a>
+    <a href="/" data-tooltip="Overview" class="{% if active_page == 'overview' %}active{% endif %}">{{ icon_house_fill() }}<span class="nav-label">Overview</span></a>
+    <a href="/spending" data-tooltip="Spending" class="{% if active_page == 'spending' %}active{% endif %}">{{ icon_bag_fill() }}<span class="nav-label">Spending</span></a>
+    <a href="/income" data-tooltip="Income" class="{% if active_page == 'income' %}active{% endif %}">{{ icon_arrow_up_circle_fill() }}<span class="nav-label">Income</span></a>
+    <a href="/budget" data-tooltip="Budget" class="{% if active_page == 'budget' %}active{% endif %}">{{ icon_pie_fill() }}<span class="nav-label">Budget</span></a>
+    <a href="/planning" data-tooltip="Planning" class="{% if active_page == 'planning' %}active{% endif %}">{{ icon_target_fill() }}<span class="nav-label">Planning</span></a>
   </nav>
   <button class="theme-toggle" type="button" aria-label="Toggle dark mode">
     <svg class="icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
