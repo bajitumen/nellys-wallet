@@ -6,22 +6,17 @@ window.csrfFetch = function(url, options) {
   return fetch(url, options);
 };
 
-// First page load of the UTC day: kick off a background sync so balances
-// and transactions reflect what banks reported overnight. Server flips the
-// meta tag based on user.last_transactions_sync.date() < today UTC.
 (function() {
   if (!document.querySelector('meta[name="needs-daily-sync"]')) return;
   var today = new Date().toISOString().slice(0, 10);
-  // Guard against double-firing across tabs / quick navigations the same day.
   if (localStorage.getItem('autoSyncFiredOn') === today) return;
   localStorage.setItem('autoSyncFiredOn', today);
   csrfFetch('/sync', { method: 'POST' }).catch(function() {
-    // Failed — let a later page load retry.
     localStorage.removeItem('autoSyncFiredOn');
   });
 })();
 
-// Capture-phase so per-page blur handlers see the already-formatted value.
+// Capture phase so per-page blur handlers see the already-formatted value.
 document.addEventListener('blur', function(e) {
   var el = e.target;
   if (!el.classList || !el.classList.contains('numeric-input')) return;
@@ -65,9 +60,6 @@ document.addEventListener('blur', function(e) {
   function sortBy(table, colIdx, type, dir) {
     var tbody = table.querySelector('tbody');
     var allRows = Array.prototype.slice.call(tbody.children);
-    // Rows with data-parent are children of another row (e.g. breakdown
-    // subcategory rows). They keep their pre-sort order and re-append after
-    // their parent so a column sort doesn't shuffle them away.
     var parentRows = allRows.filter(function(r) { return !r.dataset.parent; });
     var childrenByKey = {};
     allRows.forEach(function(r) {
@@ -84,8 +76,6 @@ document.addEventListener('blur', function(e) {
       (childrenByKey[key] || []).forEach(function(child) { tbody.appendChild(child); });
     });
   }
-  // Document-level delegation so sorting survives partial DOM swaps (the
-  // Spending page replaces its <main> on transaction edits).
   document.addEventListener('click', function(e) {
     var th = e.target.closest('th[data-sort]');
     if (!th) return;
@@ -171,14 +161,10 @@ document.addEventListener('click', function(e) {
   window.addEventListener('scroll', hide, { passive: true });
 })();
 
-// Desktop sidebar collapse/expand toggle. Mobile uses the hamburger drawer
-// below (separate logic). Initial state restored in an inline script in
-// _layout.html before paint; here we just react to clicks and persist.
 (function() {
   var btn = document.getElementById('sidebar-collapse-toggle');
   var sidebar = document.getElementById('sidebar');
   if (!btn || !sidebar) return;
-  // Sync aria with whatever state the inline bootstrap restored.
   var initiallyCollapsed = sidebar.classList.contains('collapsed');
   btn.setAttribute('aria-expanded', String(!initiallyCollapsed));
   btn.setAttribute('aria-label', initiallyCollapsed ? 'Expand sidebar' : 'Collapse sidebar');

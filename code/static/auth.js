@@ -1,6 +1,3 @@
-// clerk-js loads async; this file may run before or after — handle both paths
-// and guard against double-init.
-
 let clerkInited = false;
 
 async function mountClerkWidgets() {

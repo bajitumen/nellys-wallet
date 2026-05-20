@@ -54,10 +54,19 @@
     <span class="budget-group-total" data-primary="{{ g.primary }}">${{ "{:,.2f}".format(g.total) }}</span>
   </div>
   <table class="budget-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th class="budget-sub-actual-head">Spent</th>
+        <th class="budget-sub-amount-head">Budget</th>
+      </tr>
+    </thead>
     <tbody>
     {% for s in g.subitems %}
     <tr>
       <td class="budget-sub-label">{{ s.label }}</td>
+      <td class="budget-sub-actual{% if s.actual %}{% if s.amount and s.actual <= s.amount %} spend-good{% else %} spend-bad{% endif %}{% endif %}"
+          data-code="{{ s.code }}">{% if s.actual %}${{ "{:,.2f}".format(s.actual) }}{% endif %}</td>
       <td class="budget-sub-amount">
         <span class="budget-input-wrap">
           <span class="prefix">$</span>

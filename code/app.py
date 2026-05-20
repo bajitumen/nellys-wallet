@@ -463,6 +463,16 @@ def planning_view(session, user):
                 "sign": sign,
             })
     rates = planning_mod.get_rates(user, session)
+
+    cashflow = spending_mod.monthly_cashflow(user, session, n_months=6)
+    non_empty = [m for m in cashflow if m["spend"] > 0 or m["income"] > 0]
+    if non_empty:
+        avg_monthly_income = sum(m["income"] for m in non_empty) / len(non_empty)
+        avg_monthly_spend = sum(m["spend"] for m in non_empty) / len(non_empty)
+    else:
+        avg_monthly_income = 0.0
+        avg_monthly_spend = 0.0
+
     return render_template(
         "planning.html",
         active_page="planning",
@@ -472,6 +482,8 @@ def planning_view(session, user):
         rates=rates,
         monthly_income=user.monthly_income,
         monthly_spend=user.monthly_spend,
+        avg_monthly_income=avg_monthly_income,
+        avg_monthly_spend=avg_monthly_spend,
     )
 
 
@@ -533,11 +545,15 @@ def budget_view(session, user):
             total_spent=0.0,
         )
     budgets = budget_mod.get_budgets(user, session)
-    groups = budget_mod.build_groups(budgets)
     month_arg = request.args.get("month")
     spend = spending_mod.fetch_last_month(
         user, month=month_arg, source=None, session=session,
     )
+    spent_by_detailed: dict[str, float] = {}
+    for c in spend.get("categories", []):
+        for s in c.get("subitems", []):
+            spent_by_detailed[s["code"]] = s["total"]
+    groups = budget_mod.build_groups(budgets, spent_by_detailed)
     return render_template(
         "budget.html", active_page="budget", no_user=False, groups=groups,
         month_options=month_options,
@@ -556,10 +572,15 @@ def budget_summary(session, user):
     spend = spending_mod.fetch_last_month(
         user, month=month_arg, source=None, session=session,
     )
+    spent_by_detailed: dict[str, float] = {}
+    for c in spend.get("categories", []):
+        for s in c.get("subitems", []):
+            spent_by_detailed[s["code"]] = s["total"]
     return jsonify({
         "month": spend["month"],
         "month_label": spend["month_label"],
         "total_spent": spend["total"],
+        "spent_by_detailed": spent_by_detailed,
     })
 
 

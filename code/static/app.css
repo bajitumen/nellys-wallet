@@ -27,9 +27,6 @@
     --negative: #f87171;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  /* Minimalist scrollbars everywhere. Track invisible, thumb subtle and
-     half-transparent, slightly darker on hover. Firefox uses scrollbar-* props;
-     WebKit/Blink (Chrome, Safari, Edge) use ::-webkit-scrollbar pseudos. */
   * { scrollbar-width: thin; scrollbar-color: rgba(127, 127, 127, 0.35) transparent; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -58,8 +55,6 @@
     display: flex;
     flex-direction: column;
     transition: width 0.2s ease-out;
-    /* Sit above positioned content in main so the collapsed-state tooltips
-       (which live inside the sidebar's stacking context) aren't obscured. */
     z-index: 30;
   }
   .sidebar-collapse-toggle {
@@ -67,23 +62,22 @@
     margin: 0 0.5rem 0 0;
     background: transparent;
     border: none;
-    color: var(--text-muted);
+    color: var(--line-dashed);
     cursor: pointer;
     padding: 0.35rem;
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 4px;
+    transition: color 0.12s ease-out;
   }
-  .sidebar-collapse-toggle:hover { background: var(--bg); color: var(--text); }
-  .sidebar-collapse-toggle svg {
-    width: 14px;
-    height: 14px;
-    transition: transform 0.2s ease-out;
-    transform: rotate(180deg);
-  }
+  .sidebar-collapse-toggle:hover { background: var(--bg); color: var(--text-muted); }
+  .sidebar-collapse-toggle svg { width: 20px; height: 20px; }
+  .sidebar-collapse-icon-expand { display: none; line-height: 0; }
+  .sidebar-collapse-icon-collapse { display: inline-flex; line-height: 0; }
+  .sidebar.collapsed .sidebar-collapse-icon-expand { display: inline-flex; }
+  .sidebar.collapsed .sidebar-collapse-icon-collapse { display: none; }
   .sidebar.collapsed .sidebar-collapse-toggle { align-self: center; margin: 0; }
-  .sidebar.collapsed .sidebar-collapse-toggle svg { transform: rotate(0deg); }
   .logo {
     display: block;
     padding: 0.5rem 1.5rem 1.5rem;
@@ -103,6 +97,7 @@
     font-size: 0.92rem;
     border-left: 2px solid transparent;
     position: relative;
+    white-space: nowrap;
   }
   .sidebar nav a:hover { background: var(--bg); }
   .sidebar nav a.active {
@@ -117,8 +112,6 @@
     color: var(--text-muted);
   }
   .sidebar nav a.active .nav-icon { color: var(--text); }
-  /* Desktop-only collapsed mode. Mobile uses the hamburger drawer below and
-     should ignore .collapsed. */
   @media (min-width: 721px) {
     .sidebar.collapsed { width: 64px; }
     .sidebar.collapsed .logo {
@@ -156,8 +149,7 @@
       justify-content: center;
       padding: 0.85rem 0;
     }
-    /* !important to beat the dark-theme display:inline override defined later
-       in the file at equal specificity. */
+    /* !important: beats the dark-theme display:inline at equal specificity. */
     .sidebar.collapsed .theme-toggle .label-dark,
     .sidebar.collapsed .theme-toggle .label-light { display: none !important; }
   }
@@ -190,6 +182,8 @@
   }
   .theme-toggle:hover { background: var(--bg); color: var(--text); }
   .theme-toggle .icon { width: 14px; height: 14px; flex-shrink: 0; }
+  .theme-toggle .label-dark,
+  .theme-toggle .label-light { white-space: nowrap; }
   .theme-toggle .icon-sun { display: none; }
   .theme-toggle .label-light { display: none; }
   :root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
@@ -198,14 +192,7 @@
   :root[data-theme="dark"] .theme-toggle .label-light { display: inline; }
   main {
     flex: 1;
-    /* Without min-width:0 a flex item won't shrink below its min-content;
-       wide children (Spending's breakdown table, source-filter strip) would
-       then push main past its share, leaving .totals oversized at narrow
-       viewports and defeating the responsive breakpoint. */
     min-width: 0;
-    /* Right padding smoothly scales with viewport so cards, charts, and
-       tables all shed their right gutter together as the window shrinks
-       (instead of jumping at a single breakpoint). */
     padding: 2rem 2.5rem;
     padding-right: clamp(2.5rem, 8vw, 9rem);
   }
@@ -252,7 +239,7 @@
     vertical-align: middle;
     transition: transform 0.6s ease-in-out;
   }
-  .logo:hover .logo-img { transform: rotate(360deg); }
+  .logo-img:hover { transform: rotate(360deg); }
   @keyframes spin { to { transform: rotate(360deg); } }
   .subtitle { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 2rem; }
   .source-filter {
@@ -261,8 +248,6 @@
     margin-bottom: 1.75rem;
     font-size: 0.92rem;
     border-bottom: 1px solid var(--line);
-    /* Scroll horizontally if institutions exceed main width, so main can
-       still shrink to its flex share at narrow viewports. */
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
@@ -335,9 +320,7 @@
   th { font-weight: 500; color: var(--text-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
   th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
   th[data-sort]:hover { color: var(--text); }
-  /* Phosphor arrows-vertical / arrow-up / arrow-down as masks. Unicode arrows
-     (↕ ↑ ↓) fall through to the emoji font on iOS/Android — masked SVG renders
-     consistently and inherits currentColor. */
+  /* SVG masks instead of unicode ↕↑↓ (which fall through to emoji on iOS/Android). */
   th[data-sort]::after {
     content: "";
     display: inline-block;
@@ -900,14 +883,42 @@
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
   }
-  .budget-table { width: 100%; }
+  .budget-table { width: 100%; table-layout: fixed; }
   .budget-table td { border-bottom: 1px solid var(--line-soft); }
-  .budget-sub-label { padding: 0.55rem 0.5rem; color: var(--text-mid); }
+  .budget-sub-label {
+    padding: 0.55rem 0.5rem;
+    color: var(--text-mid);
+    overflow-wrap: anywhere;
+  }
+  .budget-sub-actual {
+    width: 82px;
+    padding: 0.55rem 0.5rem;
+    text-align: right;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .budget-sub-actual.spend-good { color: var(--positive); }
+  .budget-sub-actual.spend-bad { color: var(--negative); }
+  .budget-sub-actual-head,
+  .budget-sub-amount-head {
+    text-align: right;
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0 0.5rem 0.3rem;
+  }
   .budget-sub-amount {
-    width: 180px;
+    width: 130px;
     padding: 0.35rem 0.5rem;
     text-align: right;
   }
+  .budget-input { width: 70px; }
   .input-wrap,
   .budget-input-wrap,
   .planning-rate-input-wrap,
@@ -1093,9 +1104,6 @@
   }
   .sidebar-backdrop.visible { opacity: 1; }
 
-  /* Cards + overview charts collapse before the sidebar does — at ~960px the
-     220px sidebar + 4 cards run out of breathing room well before the 720px
-     hamburger breakpoint. */
   @media (max-width: 960px) {
     .totals,
     .totals[style] {
@@ -1103,13 +1111,11 @@
     }
     .overview-charts { grid-template-columns: 1fr; }
     .overview-charts .monthly-spend-chart { order: -1; }
-    /* Same breakpoint also drops the optional table columns; the wider
-       breakdown / transactions tables wouldn't fit a 2-up layout otherwise. */
     .col-hide-mobile { display: none !important; }
   }
 
   @media (max-width: 720px) {
-    /* iOS auto-zooms inputs <16px; force 16px on mobile only. */
+    /* 16px so iOS Safari doesn't auto-zoom on focus. */
     input[type="number"],
     input[type="text"],
     input[type="email"],
@@ -1123,6 +1129,8 @@
     .budget-input,
     .planning-rate-input { font-size: 16px; }
 
+    .sidebar-collapse-toggle { display: none; }
+
     .layout { display: block; }
     .sidebar-toggle { display: inline-flex; }
     .sidebar-backdrop { display: block; pointer-events: none; }
@@ -1132,7 +1140,7 @@
       top: 0;
       left: 0;
       bottom: 0;
-      /* 100dvh accounts for iOS URL bar; 100vh is the fallback. */
+      /* 100dvh: collapses with iOS URL bar; 100vh as fallback. */
       height: 100vh;
       height: 100dvh;
       width: 260px;
@@ -1158,7 +1166,6 @@
     h1 { font-size: 1.4rem; }
     .subtitle { margin-bottom: 1.25rem; }
 
-    /* Hamburger + action buttons share row 1; heading drops to row 2. */
     .page-header {
       display: grid;
       grid-template-columns: auto 1fr auto;

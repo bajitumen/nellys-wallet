@@ -1,5 +1,3 @@
-// Reads server-injected window.PFC_TAXONOMY and PFC_PRIMARIES; see spending.html.
-
 function spendingPostOverride(txId, payload) {
   return csrfFetch('/transactions/' + encodeURIComponent(txId) + '/override', {
     method: 'POST',
@@ -8,11 +6,6 @@ function spendingPostOverride(txId, payload) {
   });
 }
 
-// Refetches the current page and swaps <main>'s content. Document-level
-// handlers (kebab, inline-dropdown, tx-filters, chevron, sortable-table) all
-// survive because they're not bound to elements that get replaced. After the
-// swap the tx-filters controller's refresh() re-applies chip + visibility
-// state to the new DOM.
 function refreshSpendingMain() {
   return fetch(window.location.href, { credentials: 'same-origin' })
     .then(function(r) {
@@ -43,8 +36,11 @@ function applyOverride(txId, payload, failMsg) {
 }
 
 (function() {
+  function asValueOptions(items) {
+    return (items || []).map(function(i) { return { value: i.code, label: i.label }; });
+  }
   var TAXONOMY = window.PFC_TAXONOMY || {};
-  var PRIMARIES = window.PFC_PRIMARIES || [];
+  var PRIMARIES = asValueOptions(window.PFC_PRIMARIES);
 
   document.addEventListener('click', function(e) {
     var catTrigger = e.target.closest('.cat-trigger');
@@ -70,7 +66,7 @@ function applyOverride(txId, payload, failMsg) {
         return;
       }
       var primary = itemTrigger.dataset.primary;
-      var itemOptions = [{value: '', label: '—'}].concat(TAXONOMY[primary] || []);
+      var itemOptions = [{value: '', label: '—'}].concat(asValueOptions(TAXONOMY[primary]));
       window.openInlineDropdown(itemTrigger, itemOptions, itemTrigger.dataset.value, function(opt) {
         itemTrigger.querySelector('.inline-dropdown-label').textContent = opt.label;
         itemTrigger.dataset.value = opt.value;
@@ -221,7 +217,6 @@ function applyOverride(txId, payload, failMsg) {
       { key: 'date', label: 'Date', dataAttr: 'date', urlParam: 'f_date',
         getLabel: function(row) { return cellText(row, 0); } },
       { key: 'source', label: 'Source', dataAttr: 'source', urlParam: 'f_source' },
-      // `category` URL param kept for back-compat with pie-slice deep links.
       { key: 'category', label: 'Category', dataAttr: 'categoryRaw', urlParam: 'category',
         getLabel: function(row) { return dropdownLabel(row, 'cat-trigger'); } },
       { key: 'item', label: 'Item', dataAttr: 'item', urlParam: 'f_item',
@@ -231,7 +226,6 @@ function applyOverride(txId, payload, failMsg) {
         } },
     ],
     replaceTriggers: [
-      // Inline-dropdowns and the kebab inside a category row must keep working.
       { selector: 'tr.category-row', ignoreInside: 'a, button, .inline-dropdown, .kebab, input' },
       { selector: 'tr.subcategory-row' },
       { selector: 'a.stacked-bar-segment' },
@@ -240,9 +234,6 @@ function applyOverride(txId, payload, failMsg) {
 })();
 
 (function() {
-  // Chevron in the breakdown table expands the primary's subcategory rows.
-  // The category-row replaceTrigger config above already ignores button clicks,
-  // so the row's own filter handler doesn't fire when the chevron is hit.
   document.addEventListener('click', function(e) {
     var toggle = e.target.closest('.subcat-toggle');
     if (!toggle || toggle.classList.contains('subcat-toggle-empty')) return;

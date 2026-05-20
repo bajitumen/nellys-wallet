@@ -269,8 +269,6 @@ def _fetch_last_month_uncached(
 
     totals: dict[str, float] = defaultdict(float)
     counts: dict[str, int] = defaultdict(int)
-    # Sub-aggregation: (primary, detailed) → totals/counts. Lets the breakdown
-    # table expand to show what's underneath each primary.
     sub_totals: dict[tuple[str, str], float] = defaultdict(float)
     sub_counts: dict[tuple[str, str], int] = defaultdict(int)
     tx_list: list[dict] = []
@@ -278,8 +276,7 @@ def _fetch_last_month_uncached(
     for tx in tx_rows:
         override = overrides_by_tx.get(tx.plaid_transaction_id)
 
-        # Dismissed rows are rendered in the current month so the user can
-        # restore them, but stay out of totals/counts/prev-month comparison.
+        # Dismissed: shown for restoring, excluded from aggregates.
         if override and override.dismissed:
             if not (start <= tx.date <= end):
                 continue
@@ -317,8 +314,7 @@ def _fetch_last_month_uncached(
             continue
         if not (start <= tx.date <= end):
             continue
-        # Only inherit Plaid's detailed when its primary matches the displayed
-        # category — otherwise a recategorized row shows a misleading detail.
+        # Inherit Plaid's detailed only if primary still matches the override.
         if detailed is None and tx.pfc_detailed and pfc.primary_of(tx.pfc_detailed) == category:
             detailed = tx.pfc_detailed
 
@@ -360,8 +356,6 @@ def _fetch_last_month_uncached(
     budgets_by_detailed = budget_mod.get_budgets(user, session)
 
     def _subitems_for(primary: str) -> list[dict]:
-        # Always enumerate the full taxonomy so users see every sub-bucket
-        # under a primary, even ones with $0 spent and no budget set.
         items = [
             {
                 "code": detailed,
@@ -372,7 +366,6 @@ def _fetch_last_month_uncached(
             }
             for detailed in pfc.PFC_TAXONOMY.get(primary, [])
         ]
-        # Stable sort: spent buckets first, zeros at bottom in taxonomy order.
         return sorted(items, key=lambda s: (-s["total"], s["name"]))
 
     out["categories"] = sorted(

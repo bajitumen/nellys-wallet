@@ -9,7 +9,6 @@ function showSharedTooltip(text, screenX, screenY) {
   sharedTooltip.textContent = text;
   sharedTooltip.style.top = screenY + 'px';
   sharedTooltip.classList.add('visible');
-  // Clamp so the tooltip never overflows the viewport.
   var tipW = sharedTooltip.offsetWidth;
   var minX = tipW / 2 + 8;
   var maxX = window.innerWidth - tipW / 2 - 8;
@@ -25,7 +24,6 @@ function rangeBounds(range, dataMinTs, dataMaxTs) {
   var nowMs = Date.now();
   var nowTs = Math.floor(nowMs / 1000);
   if (range === 'All') {
-    // Hug data span so a single point isn't lost in empty axis.
     if (dataMinTs == null) return { startTs: 0, endTs: nowTs };
     return { startTs: dataMinTs, endTs: dataMaxTs };
   }
@@ -100,7 +98,6 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
       ' L ' + rendered[rendered.length - 1].x.toFixed(2) + ',' + baseY.toFixed(2) + ' Z';
   }
 
-  // Include first real point in the synth slice so the spike-up is drawn green.
   var synthSlice = [], realSlice = [];
   for (var i = 0; i < rendered.length; i++) {
     if (rendered[i].synthetic) {
@@ -118,7 +115,6 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     lineSynthPath: buildLinePath(synthSlice),
     lineRealPath: buildLinePath(realSlice),
     points: hoverPoints,
-    // Red only when net worth itself is negative, not when it merely trended down.
     trend: realValues[realValues.length - 1] < 0 ? 'down' : 'up',
     hasSynthetic: hasSyntheticPrefix,
     rangeStart: rangeStart,
@@ -138,7 +134,6 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
   if (!svg) return;
 
   var areaPath = svg.querySelector('.networth-area');
-  // Two line elements: synth segment (always green) + real segment (trend-colored).
   var existingLine = svg.querySelector('.networth-line');
   if (existingLine) existingLine.remove();
   var lineSynth = document.createElementNS(SVG_NS, 'path');
@@ -176,8 +171,6 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     if (!el) return;
     el.classList.remove('delta-up', 'delta-down');
     if (!points || points.length === 0) { el.textContent = ''; return; }
-    // With a synthetic 0 prefix, compare against that baseline; otherwise need
-    // two real points to compute a meaningful delta.
     if (!hasSynthetic && points.length < 2) { el.textContent = ''; return; }
     var start = hasSynthetic ? 0 : points[0].value;
     var delta = points[points.length - 1].value - start;
@@ -286,7 +279,6 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
   svg.addEventListener('touchmove', function(e) {
     if (e.touches.length > 0) {
       handleHoverAt(e.touches[0].clientX);
-      // preventDefault stops page-scroll while scrubbing.
       e.preventDefault();
     }
   }, { passive: false });
@@ -382,7 +374,6 @@ function buildDivergingGeometry(totals, width, height) {
         amount: t.spend,
       });
     }
-    // Net overlay paints on top of the gross bar.
     var net = t.income - t.spend;
     if (net > 0) {
       var nTopY = toY(net);
@@ -449,26 +440,25 @@ function buildDivergingGeometry(totals, width, height) {
         minimumFractionDigits: 2, maximumFractionDigits: 2,
       });
       path.setAttribute('data-tooltip', bar.label + ': ' + amount + ' ' + suffix);
-      if (bar.kind === 'income' || bar.kind === 'spend') {
-        path.dataset.kind = bar.kind;
-        path.dataset.month = bar.month;
-        path.style.cursor = 'pointer';
-      }
+      path.dataset.kind = bar.kind;
+      path.dataset.month = bar.month;
+      path.style.cursor = 'pointer';
       svg.appendChild(path);
     });
   }
 
   card.addEventListener('click', function(e) {
-    var bar = e.target.closest('.bar-income, .bar-spend');
+    if (window.matchMedia('(max-width: 720px)').matches) return;
+    var bar = e.target.closest('.bar');
     if (!bar || !bar.dataset.month) return;
-    var page = bar.dataset.kind === 'income' ? '/income' : '/spending';
+    var k = bar.dataset.kind;
+    var page = (k === 'income' || k === 'net-positive') ? '/income' : '/spending';
     window.location.href = page + '?month=' + encodeURIComponent(bar.dataset.month);
   });
 
   card.addEventListener('mouseover', function(e) {
     var bar = e.target.closest('.bar');
     if (!bar) {
-      // Moving within the card but off a bar — tooltip should drop.
       hideSharedTooltip();
       return;
     }

@@ -32,6 +32,20 @@
     return isNaN(v) ? 0 : v;
   }
 
+  function updateActualCells(spentByDetailed) {
+    document.querySelectorAll('.budget-sub-actual[data-code]').forEach(function(cell) {
+      var code = cell.dataset.code;
+      var amount = spentByDetailed[code] || 0;
+      cell.textContent = amount > 0 ? formatUsd(amount) : '';
+      cell.classList.remove('spend-good', 'spend-bad');
+      if (amount > 0) {
+        var input = document.querySelector('.budget-input[data-code="' + code + '"]');
+        var budget = input ? (parseFloat(input.value) || 0) : 0;
+        cell.classList.add(budget > 0 && amount <= budget ? 'spend-good' : 'spend-bad');
+      }
+    });
+  }
+
   function refreshSummary(primary, newPrimarySum) {
     var totalEl = document.getElementById('card-total-budget');
     var diffEl = document.getElementById('card-difference');
@@ -120,6 +134,7 @@
           if (totalBudgetEl && diffEl) {
             tickerDifference(diffEl, readNumeric(totalBudgetEl) - data.total_spent);
           }
+          updateActualCells(data.spent_by_detailed || {});
         });
     });
   })();
@@ -149,6 +164,15 @@
           );
           if (totalEl) totalEl.textContent = formatUsd(res.data.primary_sum);
           refreshSummary(input.dataset.primary, res.data.primary_sum);
+          var actualCell = document.querySelector('.budget-sub-actual[data-code="' + input.dataset.code + '"]');
+          if (actualCell) {
+            var amount = readNumeric(actualCell);
+            var newBudget = parseFloat(input.value) || 0;
+            actualCell.classList.remove('spend-good', 'spend-bad');
+            if (amount > 0) {
+              actualCell.classList.add(newBudget > 0 && amount <= newBudget ? 'spend-good' : 'spend-bad');
+            }
+          }
         });
     }
 

@@ -1,5 +1,5 @@
 {% from "_chrome.html" import theme_bootstrap, clerk_loader with context %}
-{% from "_macros.html" import icon_house_fill, icon_bag_fill, icon_arrow_up_circle_fill, icon_pie_fill, icon_target_fill, icon_caret_right %}
+{% from "_macros.html" import icon_house, icon_bag, icon_coin, icon_pie, icon_target, icon_caret_double_left, icon_caret_double_right %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -18,8 +18,6 @@
 <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 <aside class="sidebar collapsed" id="sidebar">
   <script>
-    // Restore the user's last sidebar state before paint so there's no flash.
-    // Default (no prior value) stays collapsed.
     (function() {
       if (localStorage.getItem('sidebarCollapsed') === '0') {
         document.currentScript.parentElement.classList.remove('collapsed');
@@ -28,17 +26,18 @@
   </script>
   <button type="button" class="sidebar-collapse-toggle" id="sidebar-collapse-toggle"
           aria-label="Expand sidebar" aria-expanded="false">
-    {{ icon_caret_right() }}
+    <span class="sidebar-collapse-icon-expand">{{ icon_caret_double_right() }}</span>
+    <span class="sidebar-collapse-icon-collapse">{{ icon_caret_double_left() }}</span>
   </button>
   <a class="logo" href="/" aria-label="Nelly's Wallet home">
     <img class="logo-img" src="{{ url_for('static', filename='favicon.svg') }}" alt="">
   </a>
   <nav>
-    <a href="/" data-tooltip="Overview" class="{% if active_page == 'overview' %}active{% endif %}">{{ icon_house_fill() }}<span class="nav-label">Overview</span></a>
-    <a href="/spending" data-tooltip="Spending" class="{% if active_page == 'spending' %}active{% endif %}">{{ icon_bag_fill() }}<span class="nav-label">Spending</span></a>
-    <a href="/income" data-tooltip="Income" class="{% if active_page == 'income' %}active{% endif %}">{{ icon_arrow_up_circle_fill() }}<span class="nav-label">Income</span></a>
-    <a href="/budget" data-tooltip="Budget" class="{% if active_page == 'budget' %}active{% endif %}">{{ icon_pie_fill() }}<span class="nav-label">Budget</span></a>
-    <a href="/planning" data-tooltip="Planning" class="{% if active_page == 'planning' %}active{% endif %}">{{ icon_target_fill() }}<span class="nav-label">Planning</span></a>
+    <a href="/" data-tooltip="Overview" class="{% if active_page == 'overview' %}active{% endif %}">{{ icon_house() }}<span class="nav-label">Overview</span></a>
+    <a href="/spending" data-tooltip="Spending" class="{% if active_page == 'spending' %}active{% endif %}">{{ icon_bag() }}<span class="nav-label">Spending</span></a>
+    <a href="/income" data-tooltip="Income" class="{% if active_page == 'income' %}active{% endif %}">{{ icon_coin() }}<span class="nav-label">Income</span></a>
+    <a href="/budget" data-tooltip="Budget" class="{% if active_page == 'budget' %}active{% endif %}">{{ icon_pie() }}<span class="nav-label">Budget</span></a>
+    <a href="/planning" data-tooltip="Planning" class="{% if active_page == 'planning' %}active{% endif %}">{{ icon_target() }}<span class="nav-label">Planning</span></a>
   </nav>
   <button class="theme-toggle" type="button" aria-label="Toggle dark mode">
     <svg class="icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>

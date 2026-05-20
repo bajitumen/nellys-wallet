@@ -41,24 +41,33 @@ def primary_sum(user: User, primary: str, session) -> float:
     return float(result or 0.0)
 
 
-def build_groups(budgets: dict[str, float]) -> list[dict]:
+def build_groups(
+    budgets: dict[str, float],
+    spent_by_detailed: dict[str, float] | None = None,
+) -> list[dict]:
+    spent_by_detailed = spent_by_detailed or {}
     groups = []
     for primary, codes in pfc.PFC_TAXONOMY.items():
         subitems = []
         total = 0.0
+        total_spent = 0.0
         for code in codes:
             amount = budgets.get(code, 0.0)
+            actual = float(spent_by_detailed.get(code, 0.0))
             total += amount
+            total_spent += actual
             subitems.append({
                 "code": code,
                 "label": pfc.humanize_detailed(code, primary),
                 "amount": amount,
+                "actual": actual,
             })
         groups.append({
             "primary": primary,
             "primary_label": pfc.humanize_primary(primary),
             "color": pfc.CATEGORY_COLORS.get(primary, pfc.DEFAULT_COLOR),
             "total": total,
+            "actual_total": total_spent,
             "subitems": subitems,
         })
     return groups

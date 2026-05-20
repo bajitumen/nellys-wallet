@@ -47,7 +47,7 @@
       <span class="planning-cashflow-input-wrap">
         <span class="prefix-left">$</span>
         <input type="number" id="planning-monthly-income" class="numeric-input" step="1" min="0"
-               placeholder="0"
+               placeholder="{{ '%.0f'|format(avg_monthly_income) if avg_monthly_income else '0' }}"
                value="{% if monthly_income is not none %}{{ '%.0f'|format(monthly_income) }}{% endif %}">
       </span>
     </label>
@@ -56,7 +56,7 @@
       <span class="planning-cashflow-input-wrap">
         <span class="prefix-left">$</span>
         <input type="number" id="planning-monthly-spend" class="numeric-input" step="1" min="0"
-               placeholder="0"
+               placeholder="{{ '%.0f'|format(avg_monthly_spend) if avg_monthly_spend else '0' }}"
                value="{% if monthly_spend is not none %}{{ '%.0f'|format(monthly_spend) }}{% endif %}">
       </span>
     </label>

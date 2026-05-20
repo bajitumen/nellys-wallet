@@ -1,20 +1,5 @@
-// Shared multi-column transaction filter UI for Spending and Income.
-//
-// setupTxFilters(config) wires up:
-//   - the `+` filter button → column picker → value picker
-//   - filter chips (column-prefixed labels, removable)
-//   - row visibility based on AND-across-columns / OR-within-column
-//   - URL persistence per column
-//   - "replace filter" click triggers (bar segments, breakdown rows)
-//   - .active toggling on any [data-filter-column][data-filter-value] element
-//
-// Each tx-row must carry the dataset attrs named in config.columns[*].dataAttr.
-// "Replace triggers" must carry data-filter-column + data-filter-value.
-
 window.setupTxFilters = function(config) {
   var filtersSelector = config.filtersSelector || '.tx-filters';
-  // Look up fresh on each render — the container can be replaced (e.g. when
-  // the Spending page swaps its <main> after a transaction edit).
   function getFiltersContainer() { return document.querySelector(filtersSelector); }
   if (!getFiltersContainer()) return null;
 
@@ -81,14 +66,9 @@ window.setupTxFilters = function(config) {
       url.searchParams.delete(c.urlParam);
       state[c.key].forEach(function(v) { url.searchParams.append(c.urlParam, v); });
     });
-    // No #transactions hash — replaceFilter handles user-initiated scroll. A
-    // hash here would cause future reloads to auto-scroll past the breakdown.
     history.replaceState({}, '', url.pathname + (url.search || ''));
   }
 
-  // excludeKey: when offered to the user as filter choices for column X, the
-  // list should reflect what's reachable given the *other* columns' filters
-  // (so picking values that yield zero rows is impossible).
   function uniqueValues(col, excludeKey) {
     var seen = new Map();
     document.querySelectorAll(rowSelector).forEach(function(row) {
@@ -182,7 +162,6 @@ window.setupTxFilters = function(config) {
     menu.innerHTML = html;
     menu.hidden = false;
     menu.classList.remove('filter-menu-up');
-    // Flip upward if it would overflow the viewport bottom.
     var rect = menu.getBoundingClientRect();
     if (rect.bottom > window.innerHeight - 8) menu.classList.add('filter-menu-up');
     var plus = document.getElementById('filter-add');
@@ -196,12 +175,9 @@ window.setupTxFilters = function(config) {
     if (plus) plus.setAttribute('aria-expanded', 'false');
   }
 
-  // All click handling at document level so it survives DOM swaps (Spending
-  // refetches and replaces <main> after a transaction edit). stopPropagation
-  // on menu-changing branches: openMenu replaces #filter-menu's innerHTML,
-  // which detaches the clicked node, and a stale e.target.closest('#filter-menu')
-  // on a detached element returns null — without stopPropagation the
-  // outside-click branch would then close the menu we just opened.
+  // stopPropagation in menu-changing branches: openMenu replaces innerHTML,
+  // detaching the clicked node — without it, the outside-click branch below
+  // would close the menu we just opened.
   document.addEventListener('click', function(e) {
     if (e.target.closest(filtersSelector)) {
       var chip = e.target.closest('.filter-chip[data-column]');
@@ -250,7 +226,6 @@ window.setupTxFilters = function(config) {
     addFilter: addFilter,
     removeFilter: removeFilter,
     replaceFilter: replaceFilter,
-    // Re-apply filter state to fresh DOM (called after a <main> swap).
     refresh: commit,
   };
 };
