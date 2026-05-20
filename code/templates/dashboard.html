@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% from "_macros.html" import empty_state, inst_avatar %}
+{% from "_macros.html" import empty_state, inst_avatar, icon_caret_down %}
 {% block title %}Overview{% endblock %}
 {% block heading %}Overview{% endblock %}
 {% block content %}
@@ -37,7 +37,13 @@
   <div class="chart-card networth-chart {{ 'trend-up' if networth_chart.trend == 'up' else 'trend-down' }}">
     {% set _delta = networth_chart.last_value - networth_chart.first_value %}
     <div class="networth-heading">
-      <div class="label">Net Worth</div>
+      <div class="inline-dropdown">
+        <button class="inline-dropdown-trigger networth-series-trigger" type="button"
+                data-value="net" aria-haspopup="listbox" aria-expanded="false">
+          <span class="inline-dropdown-label">Net Worth</span>
+          {{ icon_caret_down() }}
+        </button>
+      </div>
       <span class="networth-delta {% if _delta > 0 %}delta-up{% elif _delta < 0 %}delta-down{% endif %}"
             id="networth-delta">
         {%- if _delta != 0 -%}
@@ -45,7 +51,7 @@
         {%- endif -%}
       </span>
     </div>
-    <svg viewBox="0 0 {{ networth_chart.width }} {{ networth_chart.height }}"
+    <svg class="networth-svg" viewBox="0 0 {{ networth_chart.width }} {{ networth_chart.height }}"
          preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
       <path d="{{ networth_chart.area_path }}" class="networth-area"/>
       <path d="{{ networth_chart.line_path }}" class="networth-line"
@@ -149,6 +155,8 @@
     height: {{ networth_chart.height }},
     points: {{ networth_chart.points | tojson }},
   };
+  window.NETWORTH_SERIES = {{ networth_series_data | tojson }};
+  window.NETWORTH_SERIES_OPTIONS = {{ networth_series_options | tojson }};
 </script>
 {% endif %}
 {% if has_monthly_data %}

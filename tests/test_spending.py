@@ -260,24 +260,14 @@ def test_invalid_month_falls_back_to_current(user_with_item, db_session):
     assert out["month"] == f"{today.year:04d}-{today.month:02d}"
 
 
-def test_cache_hit_avoids_db_scan(user_with_item, db_session):
-    """Second call within TTL returns the cached object identity."""
+def test_repeat_call_recomputes(user_with_item, db_session):
+    """Caching disabled for multi-worker safety — each call recomputes."""
     from spending import fetch_last_month
     _seed_tx(db_session, user_with_item.items[0], "tx1", 50.0, "FOOD_AND_DRINK")
     first = fetch_last_month(user_with_item, session=db_session)
     second = fetch_last_month(user_with_item, session=db_session)
-    assert first is second  # same cached dict
-
-
-def test_invalidate_cache_forces_refetch(user_with_item, db_session):
-    """invalidate_cache drops the entry; next call rebuilds."""
-    from spending import fetch_last_month, invalidate_cache
-    _seed_tx(db_session, user_with_item.items[0], "tx1", 50.0, "FOOD_AND_DRINK")
-    first = fetch_last_month(user_with_item, session=db_session)
-    invalidate_cache(user_with_item.id)
-    second = fetch_last_month(user_with_item, session=db_session)
-    assert first is not second  # rebuilt
-    assert first["total"] == second["total"]  # same value
+    assert first is not second
+    assert first["total"] == second["total"]
 
 
 # ---------------------------------------------------------------------------

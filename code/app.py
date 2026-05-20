@@ -215,6 +215,30 @@ def dashboard(session, user):
         range_end_ts=now_ts,
     )
 
+    account_snaps = networth_mod.get_account_snapshots(user, session)
+    series_data = networth_mod.build_series_data(snapshots, account_snaps)
+
+    networth_series_options = [{"key": "net", "label": "Net Worth"}]
+    inst_accounts: dict[str, list] = {}
+    for bucket in ("cash", "investment", "other"):
+        for acct in data[bucket]:
+            inst = acct.get("institution") or "Unknown"
+            inst_accounts.setdefault(inst, []).append(acct)
+    seen_insts: set[str] = set()
+    for it in user.items:
+        inst = it.institution_name or "Unknown"
+        if inst in seen_insts or inst not in inst_accounts:
+            continue
+        seen_insts.add(inst)
+        networth_series_options.append({"key": "inst:" + inst, "label": inst})
+        for acct in inst_accounts[inst]:
+            networth_series_options.append({
+                "key": "acct:" + acct["plaid_account_id"],
+                "label": inst + " — " + acct["name"],
+                "menu_label": acct["name"],
+                "indent": True,
+            })
+
     monthly_combined = spending_mod.monthly_cashflow(user, session, n_months=12)
     has_monthly_data = any(m["spend"] > 0 or m["income"] > 0 for m in monthly_combined)
 
@@ -234,6 +258,8 @@ def dashboard(session, user):
         no_user=False,
         networth_chart=networth_chart,
         networth_snapshot_count=len(snapshots),
+        networth_series_options=networth_series_options,
+        networth_series_data=series_data,
         has_monthly_data=has_monthly_data,
         monthly_totals_raw=monthly_combined if has_monthly_data else [],
     )

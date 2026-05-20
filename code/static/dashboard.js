@@ -130,7 +130,7 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
   var data = window.NETWORTH_CHART;
   if (!data || !data.points || data.points.length < 1) return;
   var card = document.querySelector('.networth-chart');
-  var svg = card && card.querySelector('svg');
+  var svg = card && card.querySelector('svg.networth-svg');
   if (!svg) return;
 
   var areaPath = svg.querySelector('.networth-area');
@@ -246,7 +246,8 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
       var p = nearest(svgX);
       if (!p) return;
       isSynthetic = false;
-      px = p.x; py = p.y; value = p.value; label = p.label;
+      px = p.x; py = p.y; value = p.value;
+      label = p.label || syntheticDateLabel(p.ts);
     }
 
     var screenX = rect.left + (px / data.width) * rect.width;
@@ -254,9 +255,8 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     dot.style.left = screenX + 'px';
     dot.style.top = screenY + 'px';
     dot.style.display = '';
-    dot.style.borderColor = isSynthetic
-      ? 'var(--positive)'
-      : (renderedGeo.trend === 'up' ? 'var(--positive)' : 'var(--negative)');
+    dot.style.borderColor = renderedGeo.trend === 'up'
+      ? 'var(--positive)' : 'var(--negative)';
     showSharedTooltip(
       label + ': $' + value.toLocaleString('en-US', {
         minimumFractionDigits: 2, maximumFractionDigits: 2,
@@ -286,6 +286,11 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
   svg.addEventListener('touchcancel', hideHover);
   window.addEventListener('scroll', hideHover, { passive: true });
 
+  var SERIES = window.NETWORTH_SERIES || {};
+  var OPTIONS = window.NETWORTH_SERIES_OPTIONS || [];
+  if (SERIES["net"] && SERIES["net"].length) data.points = SERIES["net"];
+
+  var currentRange = '30D';
   var filter = card.querySelector('.chart-range-filter');
   if (filter) {
     filter.addEventListener('click', function(e) {
@@ -295,12 +300,32 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
         b.classList.remove('active');
       });
       btn.classList.add('active');
-      render(btn.dataset.range);
+      currentRange = btn.dataset.range;
+      render(currentRange);
     });
     var initial = filter.querySelector('.chart-range-btn.active');
-    render(initial ? initial.dataset.range : '30D');
-  } else {
-    render('30D');
+    currentRange = initial ? initial.dataset.range : '30D';
+  }
+  render(currentRange);
+
+  var trigger = card.querySelector('.networth-series-trigger');
+  if (trigger && OPTIONS.length > 1) {
+    trigger.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (trigger.getAttribute('aria-expanded') === 'true') {
+        window.closeInlineDropdowns();
+        return;
+      }
+      var dropdownOpts = OPTIONS.map(function(o) {
+        return { value: o.key, label: o.label, menuLabel: o.menu_label, indent: o.indent };
+      });
+      window.openInlineDropdown(trigger, dropdownOpts, trigger.dataset.value, function(opt) {
+        trigger.querySelector('.inline-dropdown-label').textContent = opt.label;
+        trigger.dataset.value = opt.value;
+        data.points = SERIES[opt.value] || [];
+        render(currentRange);
+      });
+    });
   }
 })();
 

@@ -1,9 +1,10 @@
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import asc
 
 import providers
-from models import NetWorthSnapshot, User
+from models import AccountBalanceSnapshot, NetWorthSnapshot, User
 
 
 def capture(user: User, session) -> NetWorthSnapshot | None:
@@ -24,6 +25,11 @@ def capture(user: User, session) -> NetWorthSnapshot | None:
         NetWorthSnapshot.taken_at >= start_of_day,
         NetWorthSnapshot.taken_at < end_of_day,
     ).delete(synchronize_session=False)
+    session.query(AccountBalanceSnapshot).filter(
+        AccountBalanceSnapshot.user_id == user.id,
+        AccountBalanceSnapshot.taken_at >= start_of_day,
+        AccountBalanceSnapshot.taken_at < end_of_day,
+    ).delete(synchronize_session=False)
 
     snapshot = NetWorthSnapshot(
         user_id=user.id,
@@ -33,6 +39,21 @@ def capture(user: User, session) -> NetWorthSnapshot | None:
         net_worth=cash + investments - credit,
     )
     session.add(snapshot)
+
+    for bucket in ("cash", "credit", "investment", "other"):
+        for acct in data[bucket]:
+            if acct.get("balance") is None or "item_id" not in acct:
+                continue
+            session.add(AccountBalanceSnapshot(
+                user_id=user.id,
+                item_id=acct["item_id"],
+                plaid_account_id=acct["plaid_account_id"],
+                account_name=acct.get("name"),
+                institution_name=acct.get("institution"),
+                bucket=bucket,
+                balance=float(acct["balance"]),
+            ))
+
     session.commit()
     return snapshot
 
@@ -44,6 +65,55 @@ def get_snapshots(user: User, session) -> list[NetWorthSnapshot]:
         .order_by(asc(NetWorthSnapshot.taken_at))
         .all()
     )
+
+
+def get_account_snapshots(user: User, session) -> list[AccountBalanceSnapshot]:
+    return (
+        session.query(AccountBalanceSnapshot)
+        .filter_by(user_id=user.id)
+        .order_by(asc(AccountBalanceSnapshot.taken_at))
+        .all()
+    )
+
+
+def _utc_ts_for_day(d) -> int:
+    return int(datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+
+
+def build_series_data(snapshots, account_snaps) -> dict:
+    """Return {series_key: [{ts, value}]} for net worth, per-institution, per-account."""
+    out: dict = {}
+
+    out["net"] = [
+        {
+            "ts": int(s.taken_at.replace(tzinfo=timezone.utc).timestamp()),
+            "value": s.net_worth,
+        }
+        for s in snapshots
+    ]
+
+    by_inst: dict = defaultdict(lambda: defaultdict(float))
+    by_acct: dict = defaultdict(lambda: {})
+    for s in account_snaps:
+        if s.bucket == "credit":
+            continue
+        d = s.taken_at.date()
+        inst = s.institution_name or "Unknown"
+        by_inst[inst][d] += s.balance
+        by_acct[s.plaid_account_id][d] = s.balance
+
+    for inst, day_map in by_inst.items():
+        out["inst:" + inst] = [
+            {"ts": _utc_ts_for_day(d), "value": v}
+            for d, v in sorted(day_map.items())
+        ]
+    for acct_id, day_map in by_acct.items():
+        out["acct:" + acct_id] = [
+            {"ts": _utc_ts_for_day(d), "value": v}
+            for d, v in sorted(day_map.items())
+        ]
+
+    return out
 
 
 def build_chart(

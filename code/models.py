@@ -124,6 +124,24 @@ class NetWorthSnapshot(Base):
     net_worth: Mapped[float] = mapped_column(Float)
 
 
+class AccountBalanceSnapshot(Base):
+    __tablename__ = "account_balance_snapshots"
+    __table_args__ = (
+        Index("ix_acct_snap_user_acct_taken", "user_id", "plaid_account_id", "taken_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("plaid_items.id"), index=True)
+    plaid_account_id: Mapped[str] = mapped_column(String(64), index=True)
+    account_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    institution_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    # cash / credit / investment / other — drives sign at aggregation time.
+    bucket: Mapped[str] = mapped_column(String(16))
+    taken_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    balance: Mapped[float] = mapped_column(Float)
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (

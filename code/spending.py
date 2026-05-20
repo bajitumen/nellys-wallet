@@ -16,7 +16,7 @@ from providers import plaid_client_for
 
 log = logging.getLogger(__name__)
 
-_cache = KeyedCache(ttl_seconds=60.0)
+_cache = KeyedCache(ttl_seconds=0.0)
 
 
 def invalidate_cache(user_id: int) -> None:

@@ -115,6 +115,7 @@ def _fetch_one(client: plaid_api.PlaidApi, item: PlaidItem) -> dict:
             "available": (float(acct.balances.available)
                           if acct.balances.available is not None else None),
             "plaid_account_id": acct.account_id,
+            "item_id": item.id,
         })
     return result
 

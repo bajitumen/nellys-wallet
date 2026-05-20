@@ -107,7 +107,8 @@ window.openInlineDropdown = function(trigger, options, currentValue, onSelect) {
     var item = document.createElement('button');
     item.type = 'button';
     item.className = 'inline-dropdown-option';
-    item.textContent = opt.label;
+    if (opt.indent) item.classList.add('inline-dropdown-option-indent');
+    item.textContent = opt.menuLabel || opt.label;
     if (opt.value === currentValue) item.classList.add('active');
     item.addEventListener('click', function(e) {
       e.stopPropagation();
