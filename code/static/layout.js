@@ -81,12 +81,12 @@ document.addEventListener('blur', function(e) {
     if (!th) return;
     var table = th.closest('table.sortable-table');
     if (!table) return;
-    var ths = Array.prototype.slice.call(table.querySelectorAll('thead th[data-sort]'));
-    var idx = ths.indexOf(th);
+    var allThs = Array.prototype.slice.call(table.querySelectorAll('thead th'));
+    var idx = allThs.indexOf(th);
     if (idx < 0) return;
     var dir = nextDir(th);
-    ths.forEach(function(t) {
-      if (t !== th) delete t.dataset.dir;
+    allThs.forEach(function(t) {
+      if (t !== th && t.dataset.sort) delete t.dataset.dir;
     });
     th.dataset.dir = dir;
     sortBy(table, idx, th.dataset.sort, dir);

@@ -903,16 +903,6 @@
   }
   .budget-sub-actual.spend-good { color: var(--positive); }
   .budget-sub-actual.spend-bad { color: var(--negative); }
-  .budget-sub-actual-head,
-  .budget-sub-amount-head {
-    text-align: right;
-    color: var(--text-muted);
-    font-weight: 500;
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 0 0.5rem 0.3rem;
-  }
   .budget-sub-amount {
     width: 130px;
     padding: 0.35rem 0.5rem;

@@ -54,13 +54,6 @@
     <span class="budget-group-total" data-primary="{{ g.primary }}">${{ "{:,.2f}".format(g.total) }}</span>
   </div>
   <table class="budget-table">
-    <thead>
-      <tr>
-        <th></th>
-        <th class="budget-sub-actual-head">Spent</th>
-        <th class="budget-sub-amount-head">Budget</th>
-      </tr>
-    </thead>
     <tbody>
     {% for s in g.subitems %}
     <tr>
