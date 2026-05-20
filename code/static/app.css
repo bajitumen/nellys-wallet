@@ -548,7 +548,7 @@
   }
   .inline-dropdown-option:hover { background: var(--bg); }
   .inline-dropdown-option.active { background: var(--bg); font-weight: 500; }
-  .inline-dropdown-option-indent {
+  .inline-dropdown-option.inline-dropdown-option-indent {
     padding-left: 2rem;
     color: var(--text-muted);
     font-size: 0.9em;
@@ -1224,7 +1224,14 @@
 
     .planning-acct-type { display: block; margin-left: 0; font-size: 0.78rem; }
 
-    .inline-dropdown-option { padding: 0.7rem 0.8rem; font-size: 0.95rem; }
+    .inline-dropdown-menu { max-width: calc(100vw - 32px); min-width: 0; }
+    .inline-dropdown-option {
+      padding: 0.7rem 0.8rem;
+      font-size: 0.95rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .month-menu a { padding: 0.7rem 0.9rem; font-size: 0.95rem; }
     .month-trigger { padding: 0.3rem 0.5rem; }
 
