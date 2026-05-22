@@ -96,7 +96,8 @@ class AccountRate(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     plaid_account_id: Mapped[str] = mapped_column(String(64), index=True)
-    rate: Mapped[float] = mapped_column(Float)  # annual %, e.g. 4.5 = 4.5%
+    rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    monthly_contribution: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class Budget(Base):

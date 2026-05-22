@@ -829,7 +829,7 @@
     transition: opacity 0.08s ease-out;
   }
   .bar-tooltip.visible { opacity: 1; }
-  .cat-dot-col { width: 18px; padding-right: 0; }
+  .cat-dot-col { width: 48px; padding-right: 0; white-space: nowrap; }
   .cat-dot {
     display: inline-block;
     width: 10px;
@@ -912,6 +912,21 @@
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
   }
+  .budget-group-amounts {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .budget-group-spent {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    opacity: 0.65;
+  }
+  .budget-group-divider {
+    color: var(--text-faint);
+    opacity: 0.5;
+  }
   .budget-table { width: 100%; table-layout: fixed; }
   .budget-table td { border-bottom: 1px solid var(--line-soft); }
   .budget-sub-label {
@@ -929,6 +944,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    opacity: 0.65;
   }
   .budget-sub-actual.spend-good { color: var(--positive); }
   .budget-sub-actual.spend-bad { color: var(--negative); }
@@ -941,6 +957,7 @@
   .input-wrap,
   .budget-input-wrap,
   .planning-rate-input-wrap,
+  .planning-contrib-input-wrap,
   .planning-cashflow-input-wrap {
     display: inline-flex;
     align-items: center;
@@ -954,6 +971,7 @@
   .input-wrap:focus-within,
   .budget-input-wrap:focus-within,
   .planning-rate-input-wrap:focus-within,
+  .planning-contrib-input-wrap:focus-within,
   .planning-cashflow-input-wrap:focus-within {
     border-color: var(--text-mid);
   }
@@ -961,13 +979,15 @@
   .input-wrap .prefix-left,
   .budget-input-wrap .prefix,
   .planning-rate-input-wrap .prefix,
+  .planning-contrib-input-wrap .prefix-left,
   .planning-cashflow-input-wrap .prefix-left {
     color: var(--text-faint);
     font-size: 0.92rem;
   }
   .numeric-input,
   .budget-input,
-  .planning-rate-input {
+  .planning-rate-input,
+  .planning-contrib-input {
     width: 90px;
     border: none;
     background: transparent;
@@ -1036,8 +1056,10 @@
   .planning-rates-table { width: 100%; margin-top: 0.5rem; }
   .planning-acct-name { font-weight: 500; }
   .planning-acct-type { margin-left: 0.4rem; font-size: 0.82rem; }
-  .planning-rate-input-wrap { min-width: 100px; }
-  .planning-rate-input { width: 75px; }
+  .planning-rate-input-wrap,
+  .planning-contrib-input-wrap { min-width: 100px; }
+  .planning-rate-input,
+  .planning-contrib-input { width: 75px; }
   .planning-top-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 240px;
@@ -1146,7 +1168,8 @@
     }
     .numeric-input,
     .budget-input,
-    .planning-rate-input { font-size: 16px; }
+    .planning-rate-input,
+    .planning-contrib-input { font-size: 16px; }
 
     .sidebar-collapse-toggle { display: none; }
 

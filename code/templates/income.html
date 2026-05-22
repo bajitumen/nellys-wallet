@@ -31,15 +31,15 @@
   <div class="card">
     <div class="label">Total Earned</div>
     {# Income polarity inverts spending: up=good, down=bad. #}
-    <div class="value">${{ "{:,.2f}".format(total) }}{% if prev_month_change_pct is not none %}<span class="delta{% if prev_month_change_pct > 0 %} delta-good{% elif prev_month_change_pct < 0 %} delta-bad{% endif %}">({{ "{:+.0f}".format(prev_month_change_pct) }}%)</span>{% endif %}</div>
+    <div class="value"><span class="anim-value" data-anim-key="income-total">${{ "{:,.2f}".format(total) }}</span>{% if prev_month_change_pct is not none %}<span class="delta{% if prev_month_change_pct > 0 %} delta-good{% elif prev_month_change_pct < 0 %} delta-bad{% endif %}">({{ "{:+.0f}".format(prev_month_change_pct) }}%)</span>{% endif %}</div>
   </div>
   <div class="card">
     <div class="label">Transactions</div>
-    <div class="value">{{ count }}</div>
+    <div class="value"><span class="anim-value" data-anim-key="income-count">{{ count }}</span></div>
   </div>
   <div class="card">
     <div class="label">Daily Avg</div>
-    <div class="value">${{ "{:,.2f}".format(daily_avg) }}</div>
+    <div class="value"><span class="anim-value" data-anim-key="income-daily">${{ "{:,.2f}".format(daily_avg) }}</span></div>
   </div>
 </div>
 

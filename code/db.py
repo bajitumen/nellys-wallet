@@ -99,6 +99,14 @@ def init_db():
                 "ALTER TABLE plaid_items ADD COLUMN primary_color VARCHAR(16)"
             ))
 
+        rate_cols = {
+            row[1] for row in conn.execute(text("PRAGMA table_info(account_rates)"))
+        }
+        if rate_cols and "monthly_contribution" not in rate_cols:
+            conn.execute(text(
+                "ALTER TABLE account_rates ADD COLUMN monthly_contribution FLOAT"
+            ))
+
         # Composite index for (user_id, date) Transaction reads. create_all
         # only adds the index on a fresh DB; this picks up existing DBs.
         conn.execute(text(

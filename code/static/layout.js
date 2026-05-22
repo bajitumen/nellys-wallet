@@ -133,31 +133,32 @@ document.addEventListener('click', function(e) {
 });
 
 (function() {
-  var bars = document.querySelectorAll('.stacked-bar');
-  if (!bars.length) return;
-  var tooltip = document.createElement('div');
-  tooltip.className = 'bar-tooltip';
-  document.body.appendChild(tooltip);
+  var tooltip = null;
+  function ensure() {
+    if (tooltip) return tooltip;
+    tooltip = document.createElement('div');
+    tooltip.className = 'bar-tooltip';
+    document.body.appendChild(tooltip);
+    return tooltip;
+  }
   function show(seg) {
     if (!seg.dataset.tooltip) return;
-    tooltip.textContent = seg.dataset.tooltip;
+    var t = ensure();
+    t.textContent = seg.dataset.tooltip;
     var rect = seg.getBoundingClientRect();
-    tooltip.style.top = rect.top + 'px';
-    tooltip.classList.add('visible');
-    // Measure after .visible so offsetWidth is real, then clamp into viewport.
-    var tipW = tooltip.offsetWidth;
+    t.style.top = rect.top + 'px';
+    t.classList.add('visible');
+    var tipW = t.offsetWidth;
     var desired = rect.left + rect.width / 2;
     var minX = tipW / 2 + 8;
     var maxX = window.innerWidth - tipW / 2 - 8;
-    tooltip.style.left = Math.max(minX, Math.min(desired, maxX)) + 'px';
+    t.style.left = Math.max(minX, Math.min(desired, maxX)) + 'px';
   }
-  function hide() { tooltip.classList.remove('visible'); }
-  bars.forEach(function(bar) {
-    bar.addEventListener('mouseover', function(e) {
-      var seg = e.target.closest('.stacked-bar-segment');
-      if (seg && seg.offsetWidth > 0) show(seg);
-    });
-    bar.addEventListener('mouseleave', hide);
+  function hide() { if (tooltip) tooltip.classList.remove('visible'); }
+  document.addEventListener('mouseover', function(e) {
+    var seg = e.target.closest('.stacked-bar .stacked-bar-segment');
+    if (seg && seg.offsetWidth > 0) show(seg);
+    else if (!e.target.closest('.stacked-bar')) hide();
   });
   window.addEventListener('scroll', hide, { passive: true });
 })();

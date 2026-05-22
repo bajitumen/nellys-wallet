@@ -7,22 +7,10 @@ function spendingPostOverride(txId, payload) {
 }
 
 function refreshSpendingMain() {
-  return fetch(window.location.href, { credentials: 'same-origin' })
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.text();
-    })
-    .then(function(html) {
-      var doc = new DOMParser().parseFromString(html, 'text/html');
-      var fresh = doc.querySelector('main');
-      var current = document.querySelector('main');
-      if (!fresh || !current) return;
-      current.innerHTML = fresh.innerHTML;
-      if (window._txFilters && window._txFilters.refresh) {
-        window._txFilters.refresh();
-      }
-    });
+  return window.NWAnimate.refreshMain();
 }
+
+if (window.NWAnimate) window.NWAnimate.wireMonthMenu();
 
 function applyOverride(txId, payload, failMsg) {
   return spendingPostOverride(txId, payload)

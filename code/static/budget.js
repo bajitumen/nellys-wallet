@@ -33,16 +33,22 @@
   }
 
   function updateActualCells(spentByDetailed) {
+    var primarySpent = {};
     document.querySelectorAll('.budget-sub-actual[data-code]').forEach(function(cell) {
       var code = cell.dataset.code;
       var amount = spentByDetailed[code] || 0;
       cell.textContent = amount > 0 ? formatUsd(amount) : '';
       cell.classList.remove('spend-good', 'spend-bad');
+      var input = document.querySelector('.budget-input[data-code="' + code + '"]');
+      if (input) primarySpent[input.dataset.primary] = (primarySpent[input.dataset.primary] || 0) + amount;
       if (amount > 0) {
-        var input = document.querySelector('.budget-input[data-code="' + code + '"]');
         var budget = input ? (parseFloat(input.value) || 0) : 0;
         cell.classList.add(budget > 0 && amount <= budget ? 'spend-good' : 'spend-bad');
       }
+    });
+    Object.keys(primarySpent).forEach(function(primary) {
+      var el = document.querySelector('.budget-group-spent[data-primary="' + primary + '"]');
+      if (el) el.textContent = formatUsd(primarySpent[primary]);
     });
   }
 

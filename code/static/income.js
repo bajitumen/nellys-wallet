@@ -1,3 +1,5 @@
+if (window.NWAnimate) window.NWAnimate.wireMonthMenu();
+
 (function() {
   if (!window.setupTxFilters) return;
 

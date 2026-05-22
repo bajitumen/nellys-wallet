@@ -489,6 +489,7 @@ def planning_view(session, user):
                 "sign": sign,
             })
     rates = planning_mod.get_rates(user, session)
+    contributions = planning_mod.get_contributions(user, session)
 
     cashflow = spending_mod.monthly_cashflow(user, session, n_months=6)
     non_empty = [m for m in cashflow if m["spend"] > 0 or m["income"] > 0]
@@ -506,6 +507,7 @@ def planning_view(session, user):
         linked=bool(user.items),
         accounts=accounts,
         rates=rates,
+        contributions=contributions,
         monthly_income=user.monthly_income,
         monthly_spend=user.monthly_spend,
         avg_monthly_income=avg_monthly_income,
@@ -529,6 +531,24 @@ def planning_rate_save(session, user, account_id):
         return jsonify({"error": "Invalid rate"}), 400
     planning_mod.upsert_rate(user, account_id, value, session)
     return jsonify({"ok": True, "rate": value})
+
+
+@app.route("/planning/contribution/<account_id>", methods=["POST"])
+@with_user
+def planning_contribution_save(session, user, account_id):
+    if user is None:
+        return jsonify({"error": "No user"}), 400
+    data = request.get_json(silent=True) or {}
+    value = data.get("value")
+    if value in (None, ""):
+        planning_mod.clear_contribution(user, account_id, session)
+        return jsonify({"ok": True, "value": None})
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid value"}), 400
+    planning_mod.upsert_contribution(user, account_id, parsed, session)
+    return jsonify({"ok": True, "value": parsed})
 
 
 @app.route("/planning/cashflow", methods=["POST"])

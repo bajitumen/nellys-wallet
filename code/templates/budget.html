@@ -51,7 +51,11 @@
       <span class="cat-dot" style="background: {{ g.color }};"></span>
       {{ g.primary_label }}
     </span>
-    <span class="budget-group-total" data-primary="{{ g.primary }}">${{ "{:,.2f}".format(g.total) }}</span>
+    <span class="budget-group-amounts">
+      <span class="budget-group-spent" data-primary="{{ g.primary }}">${{ "{:,.2f}".format(g.actual_total) }}</span>
+      <span class="budget-group-divider">/</span>
+      <span class="budget-group-total" data-primary="{{ g.primary }}">${{ "{:,.2f}".format(g.total) }}</span>
+    </span>
   </div>
   <table class="budget-table">
     <tbody>

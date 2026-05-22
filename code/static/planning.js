@@ -4,6 +4,7 @@
   var triggerLabel = trigger && trigger.querySelector('.inline-dropdown-label');
   var summaryEl = document.getElementById('planning-summary');
   var inputs = document.querySelectorAll('.planning-rate-input');
+  var contribInputs = document.querySelectorAll('.planning-contrib-input');
   var horizonFilter = document.querySelector('.planning-horizon-filter');
   var incomeInput = document.getElementById('planning-monthly-income');
   var spendInput = document.getElementById('planning-monthly-spend');
@@ -47,15 +48,26 @@
     return btn ? parseInt(btn.dataset.years, 10) : 10;
   }
 
+  function contributionFor(accountId) {
+    var el = document.querySelector(
+      '.planning-contrib-input[data-account="' + accountId + '"]'
+    );
+    if (!el) return 0;
+    var v = parseFloat(el.value);
+    return isNaN(v) ? 0 : v;
+  }
+
   function snapshotAccounts() {
     return Array.prototype.map.call(inputs, function(input) {
       var rate = parseFloat(input.value);
       if (isNaN(rate)) rate = 0;
+      var id = input.dataset.account;
       return {
-        id: input.dataset.account,
+        id: id,
         balance: parseFloat(input.dataset.balance),
         sign: parseInt(input.dataset.sign, 10),  // +1 asset, -1 debt
         rateAnnual: rate,
+        monthlyContribution: contributionFor(id),
       };
     });
   }
@@ -76,22 +88,26 @@
 
   function buildSeriesFor(targetId, accounts, months, netMonthly) {
     if (targetId === '__net__') {
-      // Net flow rolls into the aggregate, not any one account.
       var series = new Array(months + 1).fill(0);
+      var allocated = 0;
       accounts.forEach(function(a) {
-        var p = projectSeries(a.balance, a.rateAnnual, months, 0);
+        var p = projectSeries(a.balance, a.rateAnnual, months, a.monthlyContribution);
         for (var i = 0; i <= months; i++) {
           series[i] += a.sign * p[i];
         }
+        allocated += a.monthlyContribution;
       });
+      // Net cash flow beyond explicit per-account allocations stays unmodeled
+      // (e.g. sits in checking) and rolls linearly into net worth.
+      var remainder = netMonthly - allocated;
       for (var j = 1; j <= months; j++) {
-        series[j] += netMonthly * j;
+        series[j] += remainder * j;
       }
       return series;
     }
     var acct = accounts.find(function(a) { return a.id === targetId; });
     if (!acct) return [];
-    return projectSeries(acct.balance, acct.rateAnnual, months, netMonthly);
+    return projectSeries(acct.balance, acct.rateAnnual, months, acct.monthlyContribution);
   }
 
   function pathFromSeries(series) {
@@ -271,6 +287,27 @@
         ? { rate: null }
         : { rate: parseFloat(input.value) };
       csrfFetch('/planning/rate/' + encodeURIComponent(input.dataset.account), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch(function() {});
+    }
+    input.addEventListener('input', render);
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    });
+  });
+
+  contribInputs.forEach(function(input) {
+    var lastValue = input.value;
+    function save() {
+      if (input.value === lastValue) return;
+      lastValue = input.value;
+      var payload = input.value === ''
+        ? { value: null }
+        : { value: parseFloat(input.value) };
+      csrfFetch('/planning/contribution/' + encodeURIComponent(input.dataset.account), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
