@@ -223,7 +223,9 @@ function applyOverride(txId, payload, failMsg) {
 
 (function() {
   document.addEventListener('click', function(e) {
-    var toggle = e.target.closest('.subcat-toggle');
+    var cell = e.target.closest('.cat-dot-col');
+    if (!cell) return;
+    var toggle = cell.querySelector('.subcat-toggle');
     if (!toggle || toggle.classList.contains('subcat-toggle-empty')) return;
     e.stopPropagation();
     var row = toggle.closest('tr.category-row');

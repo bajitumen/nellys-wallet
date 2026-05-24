@@ -830,6 +830,7 @@
   }
   .bar-tooltip.visible { opacity: 1; }
   .cat-dot-col { width: 48px; padding-right: 0; white-space: nowrap; }
+  .cat-dot-col:has(.subcat-toggle:not(.subcat-toggle-empty)) { cursor: pointer; }
   .cat-dot {
     display: inline-block;
     width: 10px;
@@ -887,7 +888,7 @@
     column-count: 2;
     column-gap: 2.5rem;
   }
-  @media (max-width: 720px) {
+  @media (max-width: 960px) {
     .budget-columns { column-count: 1; }
   }
   .budget-group {

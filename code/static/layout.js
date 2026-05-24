@@ -26,19 +26,21 @@ document.addEventListener('blur', function(e) {
 }, true);
 
 (function() {
-  var trigger = document.getElementById('month-trigger');
-  var menu = document.getElementById('month-menu');
-  if (!trigger || !menu) return;
-  trigger.addEventListener('click', function(e) {
-    e.stopPropagation();
-    var open = !menu.hidden;
-    menu.hidden = open;
-    trigger.setAttribute('aria-expanded', String(!open));
-  });
   document.addEventListener('click', function(e) {
-    if (!menu.hidden && !e.target.closest('.month-menu')) {
+    var menu = document.getElementById('month-menu');
+    if (!menu) return;
+    var trigger = e.target.closest('#month-trigger');
+    if (trigger) {
+      var open = !menu.hidden;
+      menu.hidden = open;
+      trigger.setAttribute('aria-expanded', String(!open));
+      return;
+    }
+    if (e.target.closest('.month-menu')) return;
+    if (!menu.hidden) {
       menu.hidden = true;
-      trigger.setAttribute('aria-expanded', 'false');
+      var t = document.getElementById('month-trigger');
+      if (t) t.setAttribute('aria-expanded', 'false');
     }
   });
 })();
