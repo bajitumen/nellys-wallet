@@ -23,6 +23,10 @@
 
 {% macro icon_dots_three() -%}<svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>{%- endmacro %}
 
+{% macro icon_pencil() -%}<svg class="icon" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M92 216H48a8 8 0 0 1-8-8v-44a8 8 0 0 1 2.34-5.66l120-120a8 8 0 0 1 11.32 0l44 44a8 8 0 0 1 0 11.32l-120 120A8 8 0 0 1 92 216Z"/><line x1="136" y1="64" x2="192" y2="120"/></svg>{%- endmacro %}
+
+{% macro icon_trash() -%}<svg class="icon" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="216" y1="56" x2="40" y2="56"/><line x1="104" y1="104" x2="104" y2="168"/><line x1="152" y1="104" x2="152" y2="168"/><path d="M200 56v152a8 8 0 0 1-8 8H64a8 8 0 0 1-8-8V56"/><path d="M168 56V40a16 16 0 0 0-16-16h-48a16 16 0 0 0-16 16v16"/></svg>{%- endmacro %}
+
 {% macro month_picker_card(month_label, month_options, current_month, route_name, route_kwargs={}) -%}
 <div class="card month-card">
   <div class="label">Month</div>
@@ -63,6 +67,8 @@
 {% macro icon_pie() -%}<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/></svg>{%- endmacro %}
 
 {% macro icon_target() -%}<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg>{%- endmacro %}
+
+{% macro icon_sliders() -%}<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="6" r="2" fill="var(--surface, #fff)"/><circle cx="15" cy="12" r="2" fill="var(--surface, #fff)"/><circle cx="9" cy="18" r="2" fill="var(--surface, #fff)"/></svg>{%- endmacro %}
 
 {% macro icon_caret_double_right() -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="7 5 13 12 7 19"/><polyline points="13 5 19 12 13 19"/></svg>{%- endmacro %}
 

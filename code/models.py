@@ -85,6 +85,30 @@ class TransactionOverride(Base):
     split_percentage: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # Dismissed rows are excluded from totals; reversible.
     dismissed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 'manual' protects from rule overwrites; 'rule' is recomputed when rules change.
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+
+
+class TransactionRule(Base):
+    __tablename__ = "transaction_rules"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "match_field", "match_op", "match_value", "action",
+            name="uq_rule_user_field_op_value_action",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # Which Transaction column to match against.
+    match_field: Mapped[str] = mapped_column(String(32))
+    # 'equals' | 'not_equals' — case-insensitive.
+    match_op: Mapped[str] = mapped_column(String(16), nullable=False, default="equals")
+    match_value: Mapped[str] = mapped_column(String(256), index=True)
+    # 'dismiss' | 'set_category' | 'set_detailed' | 'split'
+    action: Mapped[str] = mapped_column(String(32))
+    action_value: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class AccountRate(Base):

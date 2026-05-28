@@ -89,8 +89,9 @@ def test_is_valid_detailed():
     import pfc
     assert pfc.is_valid_detailed("FOOD_AND_DRINK_COFFEE") is True
     assert pfc.is_valid_detailed("BOGUS") is False
-    # Excluded categories aren't in the taxonomy.
-    assert pfc.is_valid_detailed("INCOME_WAGES") is False
+    # Transfer/income detaileds are now valid; they're just excluded from spending.
+    assert pfc.is_valid_detailed("INCOME_WAGES") is True
+    assert pfc.is_valid_detailed("TRANSFER_OUT_OTHER_TRANSFER_OUT") is True
 
 
 # ---------------------------------------------------------------------------

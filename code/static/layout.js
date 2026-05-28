@@ -95,8 +95,57 @@ document.addEventListener('blur', function(e) {
   });
 })();
 
+window.confirmDialog = function(message, onConfirm, opts) {
+  opts = opts || {};
+  var title = opts.title || 'Are you sure?';
+  var confirmLabel = opts.confirmLabel || 'OK';
+  var danger = !!opts.danger;
+  var modal = document.createElement('div');
+  modal.className = 'confirm-modal-backdrop';
+  modal.innerHTML =
+    '<div class="confirm-modal" role="alertdialog" aria-modal="true">' +
+      '<h2 class="confirm-modal-title"></h2>' +
+      '<p class="confirm-modal-msg"></p>' +
+      '<div class="confirm-modal-actions">' +
+        '<button type="button" class="confirm-modal-cancel">Cancel</button>' +
+        '<button type="button" class="confirm-modal-ok' + (danger ? ' danger' : ' primary') + '"></button>' +
+      '</div>' +
+    '</div>';
+  modal.querySelector('.confirm-modal-title').textContent = title;
+  modal.querySelector('.confirm-modal-msg').textContent = message;
+  modal.querySelector('.confirm-modal-ok').textContent = confirmLabel;
+  document.body.appendChild(modal);
+
+  function close() {
+    document.removeEventListener('keydown', onKey);
+    modal.remove();
+  }
+  function onKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      close();
+      onConfirm();
+    }
+  }
+  document.addEventListener('keydown', onKey);
+  modal.addEventListener('click', function(e) { if (e.target === modal) close(); });
+  modal.querySelector('.confirm-modal-cancel').addEventListener('click', close);
+  modal.querySelector('.confirm-modal-ok').addEventListener('click', function() {
+    close();
+    onConfirm();
+  });
+  setTimeout(function() {
+    var ok = modal.querySelector('.confirm-modal-ok');
+    if (ok) ok.focus();
+  }, 0);
+};
+
 window.closeInlineDropdowns = function() {
-  document.querySelectorAll('.inline-dropdown-menu').forEach(function(m) { m.remove(); });
+  document.querySelectorAll('.inline-dropdown-menu').forEach(function(m) {
+    if (typeof m._cleanup === 'function') m._cleanup();
+    m.remove();
+  });
   document.querySelectorAll('.inline-dropdown-trigger[aria-expanded="true"]')
     .forEach(function(t) { t.setAttribute('aria-expanded', 'false'); });
 };
@@ -105,6 +154,8 @@ window.openInlineDropdown = function(trigger, options, currentValue, onSelect) {
   window.closeInlineDropdowns();
   var menu = document.createElement('div');
   menu.className = 'inline-dropdown-menu';
+  var optionEls = [];
+
   options.forEach(function(opt) {
     var item = document.createElement('button');
     item.type = 'button';
@@ -118,6 +169,7 @@ window.openInlineDropdown = function(trigger, options, currentValue, onSelect) {
       window.closeInlineDropdowns();
     });
     menu.appendChild(item);
+    optionEls.push(item);
   });
   trigger.parentElement.appendChild(menu);
   trigger.setAttribute('aria-expanded', 'true');
@@ -125,6 +177,54 @@ window.openInlineDropdown = function(trigger, options, currentValue, onSelect) {
   if (rect.bottom > window.innerHeight - 8) {
     menu.classList.add('inline-dropdown-menu-up');
   }
+
+  // Type-to-filter: keystrokes go into the trigger label; options filter by startsWith.
+  var labelEl = trigger.querySelector('.inline-dropdown-label');
+  var originalLabel = labelEl ? labelEl.textContent : '';
+  var typed = '';
+
+  function applyFilter() {
+    if (labelEl) labelEl.textContent = typed === '' ? originalLabel : typed;
+    var q = typed.toLowerCase();
+    optionEls.forEach(function(el, i) {
+      var text = String(options[i].menuLabel || options[i].label || '').toLowerCase();
+      el.hidden = q !== '' && !text.startsWith(q);
+    });
+  }
+
+  function onKey(e) {
+    var t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      window.closeInlineDropdowns();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      var firstVisible = optionEls.find(function(el) { return !el.hidden; });
+      if (firstVisible) firstVisible.click();
+      return;
+    }
+    if (e.key === 'Backspace') {
+      if (typed === '') return;
+      e.preventDefault();
+      typed = typed.slice(0, -1);
+      applyFilter();
+      return;
+    }
+    if (e.key && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      typed += e.key;
+      applyFilter();
+    }
+  }
+  document.addEventListener('keydown', onKey);
+
+  menu._cleanup = function() {
+    document.removeEventListener('keydown', onKey);
+    if (labelEl && typed !== '') labelEl.textContent = originalLabel;
+  };
 };
 
 document.addEventListener('click', function(e) {
@@ -266,7 +366,23 @@ document.querySelector('.theme-toggle').addEventListener('click', function() {
                   btn.disabled = false;
                   return;
                 }
-                window.location.reload();
+                // Pull transactions for the new item so the page reload shows data.
+                // Surface sync errors so the user knows to hit Refresh later.
+                return csrfFetch('/sync', { method: 'POST' })
+                  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+                  .then(function(syncRes) {
+                    if (!syncRes.ok || !syncRes.data.ok) {
+                      alert('Account linked, but initial sync failed: '
+                        + ((syncRes.data && syncRes.data.error) || 'unknown error')
+                        + '. Hit Refresh in a minute to retry.');
+                    }
+                    window.location.reload();
+                  })
+                  .catch(function(e) {
+                    alert('Account linked, but initial sync failed: ' + e.message
+                      + '. Hit Refresh in a minute to retry.');
+                    window.location.reload();
+                  });
               });
           },
           onExit: function() { btn.disabled = false; },

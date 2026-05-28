@@ -3,6 +3,8 @@ import logging
 from collections import defaultdict
 from datetime import date, datetime
 
+from sqlalchemy import func
+
 from cache import KeyedCache
 from models import Transaction, TransactionOverride, User
 from spending import _load_overrides, previous_month_window, resolve_month
@@ -35,6 +37,37 @@ def clear_cache() -> None:
 
 def available_sources(user: User) -> list[str]:
     return sorted({(it.institution_name or "Unknown") for it in user.items})
+
+
+def available_months(user: User, session, source: str | None = None) -> list[dict]:
+    if not user.items:
+        return []
+    items_by_id = {it.id: it for it in user.items}
+    if source:
+        items_by_id = {
+            i: it for i, it in items_by_id.items()
+            if (it.institution_name or "Unknown") == source
+        }
+        if not items_by_id:
+            return []
+    # SQLite-only; if we move to Postgres, swap to to_char(date, 'YYYY-MM').
+    month_col = func.strftime("%Y-%m", Transaction.date)
+    rows = (
+        session.query(month_col)
+        .filter(
+            Transaction.user_id == user.id,
+            Transaction.item_id.in_(list(items_by_id.keys())),
+            Transaction.pfc_primary.in_(("INCOME", "TRANSFER_IN")),
+            Transaction.amount < 0,
+        )
+        .distinct()
+        .order_by(month_col.desc())
+        .all()
+    )
+    return [
+        {"value": m, "label": datetime.strptime(m, "%Y-%m").strftime("%B %Y")}
+        for (m,) in rows if m
+    ]
 
 
 def _apply_income_override(tx: Transaction, override: TransactionOverride | None) -> float | None:
@@ -92,7 +125,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             Transaction.date >= prev_start,
             Transaction.date <= end,
             Transaction.item_id.in_(list(items_by_id.keys())),
-            Transaction.pfc_primary == "INCOME",
+            Transaction.pfc_primary.in_(("INCOME", "TRANSFER_IN")),
             Transaction.amount < 0,
         )
         .all()
@@ -107,7 +140,30 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
     tx_list: list[dict] = []
     prev_total = 0.0
     for tx in tx_rows:
-        amount = _apply_income_override(tx, overrides_by_tx.get(tx.plaid_transaction_id))
+        override = overrides_by_tx.get(tx.plaid_transaction_id)
+        dismissed = bool(override and override.dismissed)
+        if dismissed:
+            if not (start <= tx.date <= end):
+                continue
+            amount = -tx.amount
+            if override and override.amount_override is not None:
+                amount = override.amount_override
+            payer = (tx.merchant_name or tx.name or "(unknown)").strip() or "(unknown)"
+            tx_list.append({
+                "plaid_id": tx.plaid_transaction_id,
+                "date": tx.date,
+                "source": items_by_id[tx.item_id].institution_name or "Unknown",
+                "payer": payer,
+                "name": tx.merchant_name or tx.name or "(no description)",
+                "amount": amount,
+                "original_amount": -tx.amount,
+                "color": color_for_payer(payer),
+                "dismissed": True,
+                "category_raw": tx.pfc_primary,
+                "detailed_raw": tx.pfc_detailed,
+            })
+            continue
+        amount = _apply_income_override(tx, override)
         if amount is None:
             continue
         if prev_start <= tx.date <= prev_end:
@@ -125,11 +181,17 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             "payer": payer,
             "name": tx.merchant_name or tx.name or "(no description)",
             "amount": amount,
+            "original_amount": -tx.amount,
             "color": color_for_payer(payer),
+            "dismissed": False,
+            "category_raw": tx.pfc_primary,
+            "detailed_raw": tx.pfc_detailed,
         })
 
     out["total"] = sum(payer_totals.values())
-    out["count"] = len(tx_list)
+    # Counts only non-dismissed rows; tx_list also holds dismissed rows for the
+    # restore action, so don't unify with len(tx_list).
+    out["count"] = sum(payer_counts.values())
     out["payers"] = sorted(
         (
             {

@@ -505,6 +505,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     vertical-align: middle;
+    min-width: 0;
+    flex: 1 1 auto;
   }
   .inline-dropdown-trigger .icon {
     font-size: 0.7rem;
@@ -544,8 +546,10 @@
     font-size: 0.9rem;
     color: var(--text);
     cursor: pointer;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
+  .inline-dropdown-option[hidden] { display: none; }
   .inline-dropdown-option:hover { background: var(--bg); }
   .inline-dropdown-option.active { background: var(--bg); font-weight: 500; }
   .inline-dropdown-option.inline-dropdown-option-indent {
@@ -553,6 +557,247 @@
     color: var(--text-muted);
     font-size: 0.9em;
   }
+  .confirm-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1001;
+    padding: 1rem;
+  }
+  .confirm-modal {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  }
+  .confirm-modal-title {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  .confirm-modal-msg {
+    margin: 0 0 1rem;
+    color: var(--text-mid);
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+  .confirm-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+  .confirm-modal-actions button {
+    padding: 0.4rem 0.9rem;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.9rem;
+  }
+  .confirm-modal-actions .primary {
+    background: var(--text);
+    color: var(--surface);
+    border-color: var(--text);
+  }
+  .confirm-modal-actions .danger {
+    background: var(--negative);
+    color: var(--surface);
+    border-color: var(--negative);
+  }
+  .confirm-modal-actions button:focus { outline: 2px solid var(--text-mid); outline-offset: 1px; }
+
+  .rule-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1rem;
+  }
+  .rule-modal {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1.5rem;
+    width: 100%;
+    max-width: 640px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  }
+  .rule-modal h2 { margin: 0 0 1rem; font-size: 1.1rem; }
+  .rule-modal-section { margin-bottom: 1.25rem; }
+  .rule-modal-section-label {
+    font-size: 0.75em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-mid);
+    margin-bottom: 0.5rem;
+  }
+  .rule-modal-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .rule-modal-dd .inline-dropdown-trigger {
+    padding: 0.35rem 0.6rem;
+    text-align: left;
+    background: transparent;
+    border: 1px solid var(--line);
+  }
+  .rule-modal-dd .inline-dropdown-trigger:hover,
+  .rule-modal-dd .inline-dropdown-trigger[aria-expanded="true"] {
+    border-color: var(--text-faint);
+    background: transparent;
+  }
+  .rule-modal-dd .inline-dropdown-label {
+    max-width: none;
+  }
+  /* Constant widths so the row doesn't shift around with label length. */
+  .rule-modal-dd[data-key="scope"] { width: 140px; }
+  .rule-modal-dd[data-key="op"] { width: 160px; }
+  .rule-modal-dd-value { width: 220px; }
+  .rule-modal-dd[data-key="action"] { width: 160px; }
+  .rule-modal-dd-cat { width: 200px; }
+  .rule-modal-dd .inline-dropdown,
+  .rule-modal-dd .inline-dropdown-trigger { width: 100%; }
+  .rule-modal-extra {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-mid);
+    font-size: 0.95em;
+  }
+  .rule-modal-extra[hidden] { display: none; }
+  .rule-modal-pct,
+  .rule-modal-amt {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.2rem 0.4rem;
+    font: inherit;
+    font-size: 0.92rem;
+    width: 56px;
+    text-align: right;
+  }
+  .rule-modal-pct::-webkit-outer-spin-button,
+  .rule-modal-pct::-webkit-inner-spin-button,
+  .rule-modal-amt::-webkit-outer-spin-button,
+  .rule-modal-amt::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+  .rule-modal-pct[type=number],
+  .rule-modal-amt[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  .rule-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  .rule-modal-actions button {
+    padding: 0.4rem 0.9rem;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+  }
+  .rule-modal-actions .primary {
+    background: var(--text);
+    color: var(--surface);
+    border-color: var(--text);
+  }
+  .rule-modal-actions .primary:disabled { opacity: 0.5; cursor: wait; }
+  .rules-section-heading {
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-mid);
+    margin: 1.75rem 0 0.5rem;
+    font-weight: 500;
+  }
+  .rules-table { width: 100%; border-collapse: collapse; margin-top: 0.25rem; table-layout: fixed; }
+  /* Sentence column fills; action column shrinks to content and pins right. */
+  .rule-sentence { width: auto; }
+  .rule-actions { width: 80px; }
+  .rule-empty td {
+    padding: 0.6rem 0.75rem;
+    color: var(--text-faint);
+    font-size: 0.9em;
+    border-bottom: 1px solid var(--line);
+  }
+  .rule-add-row td {
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .rule-add-inline {
+    display: block;
+    margin: 0 auto;
+    width: 25%;
+    background: transparent;
+    border: 1px dashed var(--line);
+    color: var(--text-faint);
+    padding: 0.45rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1.15rem;
+    font-weight: 400;
+    font-family: inherit;
+    line-height: 1;
+  }
+  .rule-add-inline:hover {
+    color: var(--text);
+    border-color: var(--text-mid);
+    border-style: solid;
+  }
+  .rules-table th, .rules-table td {
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .rules-table th {
+    font-weight: 500;
+    font-size: 0.85em;
+    color: var(--text-mid);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .rule-match { font-weight: 500; }
+  .rule-sentence { line-height: 1.6; }
+  .rule-sentence strong { font-weight: 600; }
+  .rule-sentence .rule-conn { color: var(--text-mid); }
+  .rule-actions { text-align: right; white-space: nowrap; }
+  .rule-actions button {
+    background: transparent;
+    border: none;
+    color: var(--text-faint);
+    padding: 0.3rem;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .rule-actions button + button { margin-left: 0.25rem; }
+  .rule-actions .icon { width: 18px; height: 18px; display: block; }
+  .rule-edit:hover { color: var(--text); }
+  .rule-delete:hover { color: var(--negative); }
   .chart-card {
     background: var(--surface);
     border: 1px solid var(--line);

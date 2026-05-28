@@ -1,0 +1,445 @@
+"""Tests for transaction rules: creation, retroactive apply, sync-time apply."""
+
+from datetime import date
+from unittest.mock import MagicMock
+
+
+def _seed_tx(session, item, plaid_id, amount, name, pfc="FOOD_AND_DRINK", merchant=None):
+    from models import Transaction
+    session.add(Transaction(
+        user_id=item.user_id, item_id=item.id, plaid_transaction_id=plaid_id,
+        date=date.today(), amount=amount, name=name,
+        merchant_name=merchant if merchant is not None else name,
+        pfc_primary=pfc,
+    ))
+    session.commit()
+
+
+def test_apply_rule_retroactively_creates_overrides(user_with_item, db_session):
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo")
+    _seed_tx(db_session, item, "t2", 18.0, "Venmo")
+    _seed_tx(db_session, item, "t3", 9.0, "Coffee Shop")
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+    )
+    created = rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    assert created == 2
+    overrides = db_session.query(TransactionOverride).all()
+    assert {o.plaid_transaction_id for o in overrides} == {"t1", "t2"}
+    assert all(o.dismissed for o in overrides)
+
+
+def test_rule_does_not_clobber_existing_overrides(user_with_item, db_session):
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo")
+    _seed_tx(db_session, item, "t2", 18.0, "Venmo")
+    db_session.add(TransactionOverride(
+        user_id=user_with_item.id, plaid_transaction_id="t1",
+        category_override="FOOD_AND_DRINK",
+    ))
+    db_session.commit()
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+    )
+    created = rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    # Only t2 gets a new override; t1's existing override is preserved.
+    assert created == 1
+    t1_ov = db_session.query(TransactionOverride).filter_by(plaid_transaction_id="t1").one()
+    assert t1_ov.dismissed is False
+    assert t1_ov.category_override == "FOOD_AND_DRINK"
+
+
+def test_rules_apply_at_sync_time(user_with_item, db_session, patch_plaid):
+    """A pre-existing rule auto-creates overrides for new synced transactions."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    from spending import sync_transactions
+    rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+    )
+    db_session.commit()
+
+    tx = MagicMock()
+    tx.transaction_id = "newtx"
+    tx.amount = 50.0
+    tx.date = date.today()
+    tx.name = "VENMO PAYMENT"
+    tx.merchant_name = "Venmo"
+    tx.pending = False
+    tx.pending_transaction_id = None
+    pfc = MagicMock()
+    pfc.primary = "TRANSFER_OUT"
+    pfc.detailed = None
+    tx.personal_finance_category = pfc
+    resp = MagicMock()
+    resp.transactions = [tx]
+    patch_plaid.transactions_get.return_value = resp
+
+    sync_transactions(user_with_item, db_session)
+
+    ov = db_session.query(TransactionOverride).filter_by(plaid_transaction_id="newtx").one()
+    assert ov.dismissed is True
+
+
+def test_rule_set_category(user_with_item, db_session):
+    """A 'set_category' rule writes category_override and clears detailed."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 5.0, "Starbucks")
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Starbucks",
+        "set_category", "FOOD_AND_DRINK", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    ov = db_session.query(TransactionOverride).filter_by(plaid_transaction_id="t1").one()
+    assert ov.category_override == "FOOD_AND_DRINK"
+    assert ov.detailed_override is None
+    assert ov.dismissed is False
+
+
+def test_match_falls_back_to_name_when_merchant_null(user_with_item, db_session):
+    """If a tx has no merchant_name (NULL), rules matching on 'name' still apply."""
+    import rules as rules_mod
+    from models import Transaction, TransactionOverride
+    item = user_with_item.items[0]
+    from datetime import date as _date
+    db_session.add(Transaction(
+        user_id=user_with_item.id, item_id=item.id,
+        plaid_transaction_id="t1", date=_date.today(), amount=25.0,
+        name="ZELLE FROM JOHN 12345", merchant_name=None,
+        pfc_primary="TRANSFER_OUT",
+    ))
+    db_session.commit()
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "name", "ZELLE FROM JOHN 12345",
+        "dismiss", None, db_session,
+    )
+    created = rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    assert created == 1
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.dismissed is True
+
+
+def test_set_detailed_rule(user_with_item, db_session):
+    """A set_detailed rule writes detailed_override and leaves category untouched."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 9.0, "Starbucks", pfc="FOOD_AND_DRINK")
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Starbucks",
+        "set_detailed", "FOOD_AND_DRINK_COFFEE", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.detailed_override == "FOOD_AND_DRINK_COFFEE"
+    assert ov.category_override is None
+
+
+def test_split_dollar_clamps_to_tx_amount(user_with_item, db_session):
+    """split_dollar caps the user's share at the tx's full amount."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 40.0, "Roommate")
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Roommate",
+        "split_dollar", "100", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.amount_override == 40.0
+    assert ov.split_percentage == 100.0
+
+
+def test_preview_endpoint_counts_matches(client, user_with_item, db_session):
+    """POST /rules/preview returns how many txs would match — used for not_equals warnings."""
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo")
+    _seed_tx(db_session, item, "t2", 10.0, "Other1")
+    _seed_tx(db_session, item, "t3", 5.0, "Other2")
+
+    # equals: matches only Venmo
+    r = client.post("/rules/preview", json={
+        "match_field": "merchant_name", "match_op": "equals",
+        "match_value": "Venmo", "action": "dismiss",
+    })
+    assert r.status_code == 200
+    assert r.get_json()["matches"] == 1
+
+    # not_equals: matches everything except Venmo
+    r = client.post("/rules/preview", json={
+        "match_field": "merchant_name", "match_op": "not_equals",
+        "match_value": "Venmo", "action": "dismiss",
+    })
+    assert r.status_code == 200
+    assert r.get_json()["matches"] == 2
+
+
+def test_upsert_dedups_case_insensitively(user_with_item, db_session):
+    """Saving 'Venmo' then 'VENMO' as the same field/op/action collapses to one rule."""
+    import rules as rules_mod
+    from models import TransactionRule
+    rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo",
+        "dismiss", None, db_session,
+    )
+    rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "VENMO",
+        "dismiss", None, db_session,
+    )
+    db_session.commit()
+    rules = db_session.query(TransactionRule).all()
+    assert len(rules) == 1
+    # Latest casing wins for display.
+    assert rules[0].match_value == "VENMO"
+
+
+def test_invalid_match_value_for_taxonomy_field(client, user_with_item):
+    """match_field=pfc_primary with a bogus value is rejected."""
+    r = client.post("/rules", json={
+        "match_field": "pfc_primary", "match_op": "equals",
+        "match_value": "BOGUS_CATEGORY", "action": "dismiss",
+    })
+    assert r.status_code == 400
+    assert "match_value" in r.get_json()["error"]
+
+
+def test_category_scope_rule(user_with_item, db_session):
+    """A rule scoped to category matches all txs of that primary."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Random Shop", pfc="ENTERTAINMENT")
+    _seed_tx(db_session, item, "t2", 18.0, "Other", pfc="ENTERTAINMENT")
+    _seed_tx(db_session, item, "t3", 9.0, "Coffee", pfc="FOOD_AND_DRINK")
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "pfc_primary", "ENTERTAINMENT",
+        "dismiss", None, db_session,
+    )
+    created = rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    assert created == 2
+    dismissed_ids = {
+        o.plaid_transaction_id for o in
+        db_session.query(TransactionOverride).filter_by(dismissed=True)
+    }
+    assert dismissed_ids == {"t1", "t2"}
+
+
+def test_split_rule_sets_amount_from_percentage(user_with_item, db_session):
+    """A 'split' rule sets split_percentage and computes amount_override per tx."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 100.0, "Roommate")
+    _seed_tx(db_session, item, "t2", 50.0, "Roommate")
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Roommate",
+        "split", "50", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    ov1 = db_session.query(TransactionOverride).filter_by(plaid_transaction_id="t1").one()
+    ov2 = db_session.query(TransactionOverride).filter_by(plaid_transaction_id="t2").one()
+    assert ov1.split_percentage == 50.0
+    assert ov1.amount_override == 50.0
+    assert ov2.amount_override == 25.0
+
+
+def test_rules_endpoint_creates_and_applies(client, user_with_item, db_session):
+    """POST /rules creates a rule from explicit field/op/value and applies retroactively."""
+    from models import TransactionOverride, TransactionRule
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo")
+    _seed_tx(db_session, item, "t2", 18.0, "Venmo")
+
+    r = client.post("/rules", json={
+        "match_field": "merchant_name",
+        "match_op": "equals",
+        "match_value": "Venmo",
+        "action": "dismiss",
+    })
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True
+    assert body["applied_to"] == 2
+
+    rules = db_session.query(TransactionRule).all()
+    assert len(rules) == 1
+    assert rules[0].match_field == "merchant_name"
+    assert rules[0].match_op == "equals"
+    assert rules[0].match_value == "Venmo"
+    ovs = db_session.query(TransactionOverride).filter_by(dismissed=True).all()
+    assert {o.plaid_transaction_id for o in ovs} == {"t1", "t2"}
+
+
+def test_not_equals_rule(user_with_item, db_session):
+    """A not_equals rule matches every tx whose field differs from the value."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Keep")
+    _seed_tx(db_session, item, "t2", 18.0, "Other")
+    _seed_tx(db_session, item, "t3", 5.0, "Other")
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Keep",
+        "dismiss", None, db_session, match_op="not_equals",
+    )
+    created = rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    assert created == 2
+    dismissed = {o.plaid_transaction_id for o in db_session.query(TransactionOverride)
+                 .filter_by(dismissed=True)}
+    assert dismissed == {"t2", "t3"}
+
+
+def test_more_specific_rule_wins_at_sync(user_with_item, db_session, patch_plaid):
+    """When two rules in the same action group match a new tx, the more specific one wins."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    from spending import sync_transactions
+    # Broad rule: dismiss anything in TRANSFER_OUT
+    rules_mod.upsert_rule(
+        user_with_item.id, "pfc_primary", "TRANSFER_OUT",
+        "set_category", "GENERAL_MERCHANDISE", db_session,
+    )
+    # Specific rule: Venmo gets ENTERTAINMENT category
+    rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo",
+        "set_category", "ENTERTAINMENT", db_session,
+    )
+    db_session.commit()
+
+    tx = MagicMock()
+    tx.transaction_id = "newtx"
+    tx.amount = 50.0
+    tx.date = date.today()
+    tx.name = "VENMO PAYMENT"
+    tx.merchant_name = "Venmo"
+    tx.pending = False
+    tx.pending_transaction_id = None
+    pfc = MagicMock()
+    pfc.primary = "TRANSFER_OUT"
+    pfc.detailed = None
+    tx.personal_finance_category = pfc
+    resp = MagicMock()
+    resp.transactions = [tx]
+    patch_plaid.transactions_get.return_value = resp
+
+    sync_transactions(user_with_item, db_session)
+
+    ov = db_session.query(TransactionOverride).filter_by(plaid_transaction_id="newtx").one()
+    assert ov.category_override == "ENTERTAINMENT"
+    assert ov.source == "rule"
+
+
+def test_different_action_types_coexist(user_with_item, db_session):
+    """A dismiss rule and a set_category rule can both apply to the same tx."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo", pfc="TRANSFER_OUT")
+    # Broad: dismiss all TRANSFER_OUT
+    rules_mod.upsert_rule(
+        user_with_item.id, "pfc_primary", "TRANSFER_OUT",
+        "dismiss", None, db_session,
+    )
+    # Specific: set Venmo's category
+    venmo_rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo",
+        "set_category", "ENTERTAINMENT", db_session,
+    )
+    rules_mod.apply_rule_retroactively(venmo_rule, db_session)
+    db_session.commit()
+
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.dismissed is True
+    assert ov.category_override == "ENTERTAINMENT"
+
+
+def test_manual_override_protected_from_rules(user_with_item, db_session):
+    """Once a user manually edits an override, rules don't touch it."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo")
+    db_session.add(TransactionOverride(
+        user_id=user_with_item.id, plaid_transaction_id="t1",
+        category_override="TRAVEL", source="manual",
+    ))
+    db_session.commit()
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo",
+        "set_category", "ENTERTAINMENT", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.category_override == "TRAVEL"  # manual untouched
+
+
+def test_more_specific_rule_supersedes_earlier_rule_override(user_with_item, db_session):
+    """Adding a more specific rule rewrites rule-sourced overrides; manual still protected."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo", pfc="TRANSFER_OUT")
+    broad = rules_mod.upsert_rule(
+        user_with_item.id, "pfc_primary", "TRANSFER_OUT",
+        "set_category", "GENERAL_MERCHANDISE", db_session,
+    )
+    rules_mod.apply_rule_retroactively(broad, db_session)
+    db_session.commit()
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.category_override == "GENERAL_MERCHANDISE"
+    assert ov.source == "rule"
+
+    specific = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo",
+        "set_category", "ENTERTAINMENT", db_session,
+    )
+    rules_mod.apply_rule_retroactively(specific, db_session)
+    db_session.commit()
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.category_override == "ENTERTAINMENT"
+
+
+def test_delete_rule(user_with_item, db_session):
+    import rules as rules_mod
+    from models import TransactionRule
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+    )
+    db_session.commit()
+    assert db_session.query(TransactionRule).count() == 1
+    rules_mod.delete_rule(user_with_item, rule.id, db_session)
+    db_session.commit()
+    assert db_session.query(TransactionRule).count() == 0

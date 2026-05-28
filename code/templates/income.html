@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% from "_macros.html" import empty_state, inst_avatar, icon_caret_down, month_picker_card, tx_filter_header %}
+{% from "_macros.html" import empty_state, inst_avatar, icon_caret_down, icon_dots_three, month_picker_card, tx_filter_header %}
 {% block title %}Income{% endblock %}
 {% block heading %}Income{% endblock %}
 {% block content %}
@@ -97,15 +97,18 @@
       <th data-sort="string">Payer</th>
       <th class="col-hide-mobile" data-sort="string">Description</th>
       <th class="num" data-sort="number">Amount</th>
+      <th></th>
     </tr>
   </thead>
   <tbody>
   {% for tx in transactions %}
-    <tr class="tx-row"
+    <tr class="tx-row{% if tx.dismissed %} tx-dismissed{% endif %}"
         data-date="{{ tx.date.isoformat() }}"
         data-source="{{ tx.source }}"
         data-payer="{{ tx.payer }}"
-        data-description="{{ tx.name }}">
+        data-description="{{ tx.name }}"
+        data-category-raw="{{ tx.category_raw or '' }}"
+        data-item="{{ tx.detailed_raw or '' }}">
       <td class="muted" data-value="{{ tx.date.isoformat() }}">{{ tx.date.strftime('%b %d') }}</td>
       {% if not current_source %}<td class="muted col-hide-mobile">{{ tx.source }}</td>{% endif %}
       <td>
@@ -114,6 +117,14 @@
       </td>
       <td class="muted col-hide-mobile">{{ tx.name }}</td>
       <td class="num" data-value="{{ tx.amount }}">${{ "{:,.2f}".format(tx.amount) }}</td>
+      <td class="tx-actions">
+        <button class="kebab" type="button" aria-label="Transaction actions"
+                data-tx-id="{{ tx.plaid_id }}"
+                data-amount="{{ tx.original_amount }}"
+                {% if tx.dismissed %}data-dismissed="1"{% endif %}>
+          {{ icon_dots_three() }}
+        </button>
+      </td>
     </tr>
   {% endfor %}
   </tbody>
@@ -127,6 +138,12 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+  window.PFC_TAXONOMY = {{ taxonomy | tojson }};
+  window.PFC_PRIMARIES = {{ primaries | tojson }};
+  window.RULE_MATCH_OPTIONS = {{ rule_match_options | tojson }};
+</script>
 <script src="{{ url_for('static', filename='tx-filters.js') }}"></script>
+<script src="{{ url_for('static', filename='tx-actions.js') }}"></script>
 <script src="{{ url_for('static', filename='income.js') }}"></script>
 {% endblock %}

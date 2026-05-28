@@ -187,7 +187,7 @@
       <td class="tx-actions">
         <button class="kebab" type="button" aria-label="Transaction actions"
                 data-tx-id="{{ tx.plaid_id }}"
-                data-amount="{{ tx.amount }}"
+                data-amount="{{ tx.original_amount }}"
                 {% if tx.dismissed %}data-dismissed="1"{% endif %}>
           {{ icon_dots_three() }}
         </button>
@@ -214,7 +214,9 @@
 <script>
   window.PFC_TAXONOMY = {{ taxonomy | tojson }};
   window.PFC_PRIMARIES = {{ primaries | tojson }};
+  window.RULE_MATCH_OPTIONS = {{ rule_match_options | tojson }};
 </script>
 <script src="{{ url_for('static', filename='tx-filters.js') }}"></script>
+<script src="{{ url_for('static', filename='tx-actions.js') }}"></script>
 <script src="{{ url_for('static', filename='spending.js') }}"></script>
 {% endblock %}

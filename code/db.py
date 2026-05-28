@@ -56,6 +56,11 @@ def init_db():
             conn.execute(text(
                 "ALTER TABLE transaction_overrides ADD COLUMN dismissed BOOLEAN NOT NULL DEFAULT 0"
             ))
+        if ov_cols and "source" not in ov_cols:
+            conn.execute(text(
+                "ALTER TABLE transaction_overrides ADD COLUMN source VARCHAR(16) "
+                "NOT NULL DEFAULT 'manual'"
+            ))
         # Orphan NOT-NULL columns from an earlier model. Inserts of new
         # override rows fail until they're dropped, since the model doesn't
         # set them and the DB has no defaults.
@@ -105,6 +110,15 @@ def init_db():
         if rate_cols and "monthly_contribution" not in rate_cols:
             conn.execute(text(
                 "ALTER TABLE account_rates ADD COLUMN monthly_contribution FLOAT"
+            ))
+
+        rule_cols = {
+            row[1] for row in conn.execute(text("PRAGMA table_info(transaction_rules)"))
+        }
+        if rule_cols and "match_op" not in rule_cols:
+            conn.execute(text(
+                "ALTER TABLE transaction_rules ADD COLUMN match_op VARCHAR(16) "
+                "NOT NULL DEFAULT 'equals'"
             ))
 
         # Composite index for (user_id, date) Transaction reads. create_all

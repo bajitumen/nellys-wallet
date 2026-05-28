@@ -39,15 +39,15 @@ def test_monthly_income_totals_returns_n_months(user_with_item, db_session):
         assert "ts" in entry and isinstance(entry["ts"], int)
 
 
-def test_monthly_income_totals_skips_transfers(user_with_item, db_session):
-    """TRANSFER_IN rows aren't classified as income."""
+def test_monthly_income_totals_includes_transfer_in(user_with_item, db_session):
+    """TRANSFER_IN counts as income (Zelle/Venmo from friends, etc.)."""
     from income import monthly_income_totals
     item = user_with_item.items[0]
     today = date.today()
     _seed_inflow(db_session, item, "in1", 100.0, "Acme", pfc_primary="INCOME", date_=today)
     _seed_inflow(db_session, item, "in2", 500.0, "Roommate", pfc_primary="TRANSFER_IN", date_=today)
     out = monthly_income_totals(user_with_item, db_session, n_months=1)
-    assert out[0]["total"] == 100.0
+    assert out[0]["total"] == 600.0
 
 
 def test_basic_income_aggregation(user_with_item, db_session):
@@ -63,14 +63,15 @@ def test_basic_income_aggregation(user_with_item, db_session):
     assert out["payers"][0]["name"] == "Acme Corp"  # sorted desc
 
 
-def test_excludes_non_income_pfc(user_with_item, db_session):
-    """TRANSFER_IN and other non-INCOME primaries are not included."""
+def test_includes_transfer_in(user_with_item, db_session):
+    """TRANSFER_IN counts as income; other non-INCOME/TRANSFER_IN primaries don't."""
     from income import fetch_last_month
     item = user_with_item.items[0]
     _seed_inflow(db_session, item, "in1", 100.0, "Acme", pfc_primary="INCOME")
     _seed_inflow(db_session, item, "in2", 200.0, "Friend", pfc_primary="TRANSFER_IN")
+    _seed_inflow(db_session, item, "in3", 999.0, "Bogus", pfc_primary="FOOD_AND_DRINK")
     out = fetch_last_month(user_with_item, session=db_session)
-    assert out["total"] == 100.0
+    assert out["total"] == 300.0
 
 
 def test_excludes_positive_amounts(user_with_item, db_session):
@@ -148,9 +149,8 @@ def test_prev_month_change_percent(user_with_item, db_session):
 
 
 def test_dismissed_income_excluded_from_total(user_with_item, db_session):
-    """A dismissed income transaction must be excluded from the income page,
-    same as Spending. Was a silent inconsistency before income started
-    applying overrides."""
+    """A dismissed income transaction is excluded from the total but still
+    appears in the transactions list (marked dismissed) so the user can restore it."""
     from models import TransactionOverride
     from income import fetch_last_month
     item = user_with_item.items[0]
@@ -165,7 +165,10 @@ def test_dismissed_income_excluded_from_total(user_with_item, db_session):
     db_session.commit()
     out = fetch_last_month(user_with_item, session=db_session)
     assert out["total"] == 2500.0
-    assert {t["plaid_id"] for t in out["transactions"]} == {"in1"}
+    by_id = {t["plaid_id"]: t for t in out["transactions"]}
+    assert set(by_id.keys()) == {"in1", "in2"}
+    assert by_id["in1"]["dismissed"] is False
+    assert by_id["in2"]["dismissed"] is True
 
 
 def test_prev_month_change_none_when_no_prior(user_with_item, db_session):
@@ -234,6 +237,8 @@ def test_sync_invalidates_income_cache(user_with_item, db_session, patch_plaid):
     tx.date = date.today()
     tx.name = "Acme"
     tx.merchant_name = "Acme"
+    tx.pending = False
+    tx.pending_transaction_id = None
     pfc = MagicMock()
     pfc.primary = "INCOME"
     pfc.detailed = None

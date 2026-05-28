@@ -7,9 +7,11 @@ from datetime import date, datetime, timedelta, timezone
 import plaid
 from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
+from sqlalchemy import func
 
 import budget as budget_mod
 import pfc
+import rules as rules_mod
 from cache import KeyedCache
 from models import Transaction, TransactionOverride, User
 from providers import plaid_client_for
@@ -29,6 +31,37 @@ def clear_cache() -> None:
 
 def available_sources(user: User) -> list[str]:
     return sorted({(item.institution_name or "Unknown") for item in user.items})
+
+
+def available_months(user: User, session, source: str | None = None) -> list[dict]:
+    if not user.items:
+        return []
+    items_by_id = {it.id: it for it in user.items}
+    if source:
+        items_by_id = {
+            i: it for i, it in items_by_id.items()
+            if (it.institution_name or "Unknown") == source
+        }
+        if not items_by_id:
+            return []
+    # SQLite-only; if we move to Postgres, swap to to_char(date, 'YYYY-MM').
+    month_col = func.strftime("%Y-%m", Transaction.date)
+    rows = (
+        session.query(month_col)
+        .filter(
+            Transaction.user_id == user.id,
+            Transaction.item_id.in_(list(items_by_id.keys())),
+            Transaction.amount > 0,
+            ~Transaction.pfc_primary.in_(pfc.EXCLUDED_CATEGORIES),
+        )
+        .distinct()
+        .order_by(month_col.desc())
+        .all()
+    )
+    return [
+        {"value": m, "label": datetime.strptime(m, "%Y-%m").strftime("%B %Y")}
+        for (m,) in rows if m
+    ]
 
 
 def resolve_month(month: str | None) -> tuple[str, date, date, str]:
@@ -149,9 +182,15 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
         .all()
     }
 
+    new_inserts: list[Transaction] = []
     for item, result in per_item:
         out["errors"].extend(result["errors"])
         for tx in result["transactions"]:
+            if getattr(tx, "pending", False):
+                continue
+            pending_id = getattr(tx, "pending_transaction_id", None)
+            pending_row = existing.get(pending_id) if pending_id else None
+
             pfc_obj = getattr(tx, "personal_finance_category", None)
             pfc_primary = pfc_obj.primary if pfc_obj and getattr(pfc_obj, "primary", None) else None
             pfc_detailed = (
@@ -167,7 +206,15 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
                 row.item_id = item.id
                 out["updated"] += 1
             else:
-                session.add(Transaction(
+                # Carry any user override from pending → posted before insert.
+                if pending_row is not None:
+                    session.query(TransactionOverride).filter_by(
+                        user_id=user.id, plaid_transaction_id=pending_id,
+                    ).update(
+                        {"plaid_transaction_id": tx.transaction_id},
+                        synchronize_session=False,
+                    )
+                new_tx = Transaction(
                     user_id=user.id,
                     item_id=item.id,
                     plaid_transaction_id=tx.transaction_id,
@@ -177,8 +224,15 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
                     merchant_name=getattr(tx, "merchant_name", None),
                     pfc_primary=pfc_primary,
                     pfc_detailed=pfc_detailed,
-                ))
+                )
+                session.add(new_tx)
+                new_inserts.append(new_tx)
                 out["added"] += 1
+            if pending_row is not None:
+                session.delete(pending_row)
+                existing.pop(pending_id, None)
+
+    rules_mod.apply_rules_to_new_transactions(user.id, new_inserts, session)
 
     user.last_transactions_sync = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()
@@ -300,6 +354,7 @@ def _fetch_last_month_uncached(
                     pfc.humanize_detailed(detailed, category) if detailed else None
                 ),
                 "amount": amount,
+                "original_amount": tx.amount,
                 "split_percentage": override.split_percentage,
                 "dismissed": True,
             })
@@ -335,6 +390,7 @@ def _fetch_last_month_uncached(
                 pfc.humanize_detailed(detailed, category) if detailed else None
             ),
             "amount": amount,
+            "original_amount": tx.amount,
             "split_percentage": split_percentage,
             "dismissed": False,
         })
@@ -444,7 +500,7 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
                 continue
             _, amount, _, _ = applied
             spend_by_month[key] += amount
-        elif tx.amount < 0 and tx.pfc_primary == "INCOME":
+        elif tx.amount < 0 and tx.pfc_primary in ("INCOME", "TRANSFER_IN"):
             amount = -tx.amount
             if ov and ov.amount_override is not None:
                 amount = ov.amount_override

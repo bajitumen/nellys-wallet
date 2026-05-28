@@ -1,0 +1,89 @@
+{% extends "_layout.html" %}
+{% from "_macros.html" import empty_state, icon_pencil, icon_trash %}
+{% block title %}Rules{% endblock %}
+{% block heading %}Rules{% endblock %}
+{% block content %}
+
+<p class="subtitle">Automatic actions applied to matching transactions on sync</p>
+
+{% if no_user %}
+  {{ empty_state("No user provisioned yet.") }}
+{% else %}
+
+{% macro rules_section(rows, side_label) %}
+<h2 class="rules-section-heading">{{ side_label }}</h2>
+<table class="rules-table">
+  <tbody>
+  {% if rows %}
+    {% for r in rows %}
+      <tr data-rule-id="{{ r.id }}">
+        <td class="rule-sentence">
+          <span class="rule-conn">If</span>
+          <strong>{{ r.scope_label }}</strong>
+          <span class="rule-conn">{{ r.op_label }}</span>
+          <strong>{{ r.match_value }}</strong>
+          <span class="rule-conn">then</span>
+          <strong>{{ r.action_label }}</strong>
+        </td>
+        <td class="rule-actions">
+          <button type="button" class="rule-edit" data-rule-id="{{ r.id }}" aria-label="Edit rule">{{ icon_pencil() }}</button>
+          <button type="button" class="rule-delete" data-rule-id="{{ r.id }}" aria-label="Delete rule">{{ icon_trash() }}</button>
+        </td>
+      </tr>
+    {% endfor %}
+  {% else %}
+    <tr class="rule-empty"><td colspan="2">No rules yet</td></tr>
+  {% endif %}
+  <tr class="rule-add-row">
+    <td colspan="2"><button type="button" class="rule-add-inline" aria-label="Add rule">+</button></td>
+  </tr>
+  </tbody>
+</table>
+{% endmacro %}
+
+{{ rules_section(spending_rules, "Spending") }}
+{{ rules_section(income_rules, "Income") }}
+
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.PFC_PRIMARIES = {{ primaries | tojson }};
+  window.PFC_TAXONOMY = {{ taxonomy | tojson }};
+  window.RULE_MATCH_OPTIONS = {{ rule_match_options | tojson }};
+  window.RULES_BY_ID = {{ rules_by_id | tojson }};
+</script>
+<script src="{{ url_for('static', filename='tx-actions.js') }}"></script>
+<script>
+  document.addEventListener('click', function(e) {
+    if (e.target.closest('.rule-add-inline')) {
+      window.openRuleModal();
+      return;
+    }
+    var del = e.target.closest('.rule-delete');
+    if (del) {
+      var id = del.dataset.ruleId;
+      window.confirmDialog(
+        'Existing overrides stay; only future transactions stop matching.',
+        function() {
+          csrfFetch('/rules/' + encodeURIComponent(id), { method: 'DELETE' })
+            .then(function(r) {
+              if (!r.ok) { alert('Failed to delete rule'); return; }
+              window.NWAnimate.refreshMain();
+            });
+        },
+        { title: 'Delete this rule?', confirmLabel: 'Delete', danger: true }
+      );
+      return;
+    }
+    var edit = e.target.closest('.rule-edit');
+    if (edit) {
+      var id = edit.dataset.ruleId;
+      var rule = (window.RULES_BY_ID || {})[id];
+      if (rule) window.openRuleModal({ rule: rule });
+    }
+  });
+</script>
+{% endblock %}

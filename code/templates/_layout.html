@@ -1,5 +1,5 @@
 {% from "_chrome.html" import theme_bootstrap, clerk_loader with context %}
-{% from "_macros.html" import icon_house, icon_bag, icon_coin, icon_pie, icon_target, icon_caret_double_left, icon_caret_double_right %}
+{% from "_macros.html" import icon_house, icon_bag, icon_coin, icon_pie, icon_target, icon_sliders, icon_caret_double_left, icon_caret_double_right %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -38,6 +38,7 @@
     <a href="/income" data-tooltip="Income" class="{% if active_page == 'income' %}active{% endif %}">{{ icon_coin() }}<span class="nav-label">Income</span></a>
     <a href="/budget" data-tooltip="Budget" class="{% if active_page == 'budget' %}active{% endif %}">{{ icon_pie() }}<span class="nav-label">Budget</span></a>
     <a href="/planning" data-tooltip="Planning" class="{% if active_page == 'planning' %}active{% endif %}">{{ icon_target() }}<span class="nav-label">Planning</span></a>
+    <a href="/rules" data-tooltip="Rules" class="{% if active_page == 'rules' %}active{% endif %}">{{ icon_sliders() }}<span class="nav-label">Rules</span></a>
   </nav>
   <button class="theme-toggle" type="button" aria-label="Toggle dark mode">
     <svg class="icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>

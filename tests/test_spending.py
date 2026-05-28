@@ -132,15 +132,16 @@ def test_category_carries_per_primary_budget(user_with_item, db_session):
 
 
 def test_excluded_categories_drop_out(user_with_item, db_session):
-    """INCOME / TRANSFER_IN / TRANSFER_OUT are excluded from spending."""
+    """INCOME / TRANSFER_IN are excluded; TRANSFER_OUT counts (Zelle etc.)."""
     from spending import fetch_last_month
     item = user_with_item.items[0]
     _seed_tx(db_session, item, "tx1", 50.0, "FOOD_AND_DRINK")
     _seed_tx(db_session, item, "tx2", 1000.0, "TRANSFER_OUT")
     _seed_tx(db_session, item, "tx3", 500.0, "INCOME")
+    _seed_tx(db_session, item, "tx4", 200.0, "TRANSFER_IN")
     out = fetch_last_month(user_with_item, session=db_session)
-    assert out["total"] == 50.0
-    assert len(out["transactions"]) == 1
+    assert out["total"] == 1050.0
+    assert len(out["transactions"]) == 2
 
 
 def test_negative_amounts_dropped(user_with_item, db_session):
@@ -170,7 +171,7 @@ def test_recategorize_override(user_with_item, db_session):
 
 
 def test_recategorize_to_excluded_drops_tx(user_with_item, db_session):
-    """Recategorizing to TRANSFER_OUT removes the tx from spending entirely."""
+    """Recategorizing to an excluded category (TRANSFER_IN) removes the tx."""
     from models import TransactionOverride
     from spending import fetch_last_month
     item = user_with_item.items[0]
@@ -179,7 +180,7 @@ def test_recategorize_to_excluded_drops_tx(user_with_item, db_session):
     db_session.add(TransactionOverride(
         user_id=user_with_item.id,
         plaid_transaction_id="tx1",
-        category_override="TRANSFER_OUT",
+        category_override="TRANSFER_IN",
     ))
     db_session.commit()
     out = fetch_last_month(user_with_item, session=db_session)
@@ -233,7 +234,7 @@ def test_count_reflects_transaction_count(user_with_item, db_session):
     _seed_tx(db_session, item, "tx1", 50.0, "FOOD_AND_DRINK")
     _seed_tx(db_session, item, "tx2", 30.0, "FOOD_AND_DRINK")
     _seed_tx(db_session, item, "tx3", 20.0, "TRANSPORTATION")
-    _seed_tx(db_session, item, "tx4", 100.0, "TRANSFER_OUT")  # excluded
+    _seed_tx(db_session, item, "tx4", 100.0, "TRANSFER_IN")  # excluded
     out = fetch_last_month(user_with_item, session=db_session)
     assert out["count"] == 3
 
@@ -274,13 +275,16 @@ def test_repeat_call_recomputes(user_with_item, db_session):
 # sync_transactions (Plaid → DB)
 # ---------------------------------------------------------------------------
 
-def _mock_plaid_tx(tx_id, amount, primary, date_=None, name="Merchant", detailed=None):
+def _mock_plaid_tx(tx_id, amount, primary, date_=None, name="Merchant", detailed=None,
+                   pending=False, pending_transaction_id=None):
     tx = MagicMock()
     tx.transaction_id = tx_id
     tx.amount = amount
     tx.date = date_ or date.today()
     tx.name = name
     tx.merchant_name = name
+    tx.pending = pending
+    tx.pending_transaction_id = pending_transaction_id
     pfc = MagicMock()
     pfc.primary = primary
     pfc.detailed = detailed  # explicit so MagicMock doesn't auto-create a child mock
@@ -323,6 +327,50 @@ def test_sync_updates_existing_rows(user_with_item, db_session, patch_plaid):
     assert len(rows) == 1
     assert rows[0].amount == 75.0
     assert rows[0].name == "New"
+
+
+def test_sync_skips_pending_transactions(user_with_item, db_session, patch_plaid):
+    """Pending rows from Plaid are not inserted (avoid AMEX-style duplicates)."""
+    from models import Transaction
+    from spending import sync_transactions
+    resp = MagicMock()
+    resp.transactions = [
+        _mock_plaid_tx("p1", 50.0, "FOOD_AND_DRINK", pending=True),
+        _mock_plaid_tx("p2", 25.0, "FOOD_AND_DRINK", pending=False),
+    ]
+    patch_plaid.transactions_get.return_value = resp
+    result = sync_transactions(user_with_item, db_session)
+    assert result["added"] == 1
+    rows = db_session.query(Transaction).all()
+    assert len(rows) == 1
+    assert rows[0].plaid_transaction_id == "p2"
+
+
+def test_sync_replaces_pending_when_posted_arrives(user_with_item, db_session, patch_plaid):
+    """Posted tx with pending_transaction_id removes the prior pending row and migrates its override."""
+    from models import Transaction, TransactionOverride
+    from spending import sync_transactions
+    # Seed a pending row (as if it slipped in before the pending-skip fix shipped)
+    _seed_tx(db_session, user_with_item.items[0], "pend1", 32.53, "FOOD_AND_DRINK")
+    db_session.add(TransactionOverride(
+        user_id=user_with_item.id, plaid_transaction_id="pend1",
+        category_override="GENERAL_MERCHANDISE",
+    ))
+    db_session.commit()
+
+    resp = MagicMock()
+    resp.transactions = [
+        _mock_plaid_tx("post1", 32.53, "FOOD_AND_DRINK", pending_transaction_id="pend1"),
+    ]
+    patch_plaid.transactions_get.return_value = resp
+    sync_transactions(user_with_item, db_session)
+
+    rows = db_session.query(Transaction).all()
+    assert len(rows) == 1
+    assert rows[0].plaid_transaction_id == "post1"
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.plaid_transaction_id == "post1"
+    assert ov.category_override == "GENERAL_MERCHANDISE"
 
 
 def test_sync_sets_last_synced_timestamp(user_with_item, db_session, patch_plaid):
@@ -545,12 +593,37 @@ def test_monthly_totals_returns_n_months_oldest_first(user_with_item, db_session
         assert "ts" in entry and isinstance(entry["ts"], int)
 
 
+def test_available_months_scopes_by_source(user_with_item, db_session):
+    """available_months returns months filtered to the chosen source institution."""
+    from datetime import date
+    from models import PlaidItem
+    from spending import available_months
+    # Existing item: TestBank — add a spending tx in April
+    a = user_with_item.items[0]
+    _seed_tx(db_session, a, "tx_a", 50.0, "FOOD_AND_DRINK", date_=date(2026, 4, 5))
+    # Second item — add a spending tx in March
+    b = PlaidItem(user_id=user_with_item.id, institution_name="OtherBank")
+    b.set_access_token("dummy")
+    db_session.add(b)
+    db_session.commit()
+    _seed_tx(db_session, b, "tx_b", 75.0, "FOOD_AND_DRINK", date_=date(2026, 3, 5))
+
+    all_months = {m["value"] for m in available_months(user_with_item, db_session)}
+    assert {"2026-04", "2026-03"} <= all_months
+
+    only_a = {m["value"] for m in available_months(user_with_item, db_session, source="TestBank")}
+    assert only_a == {"2026-04"}
+
+    only_b = {m["value"] for m in available_months(user_with_item, db_session, source="OtherBank")}
+    assert only_b == {"2026-03"}
+
+
 def test_monthly_totals_excludes_categories(user_with_item, db_session):
     from spending import monthly_totals
     item = user_with_item.items[0]
     today = date.today()
     _seed_tx(db_session, item, "tx1", 100.0, "FOOD_AND_DRINK", date_=today)
-    _seed_tx(db_session, item, "tx2", 500.0, "TRANSFER_OUT", date_=today)
+    _seed_tx(db_session, item, "tx2", 500.0, "TRANSFER_IN", date_=today)
     out = monthly_totals(user_with_item, db_session, n_months=1)
     assert out[0]["total"] == 100.0
 
