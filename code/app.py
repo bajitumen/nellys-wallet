@@ -302,18 +302,7 @@ def spending_view(session, user):
     chips = [
         {"code": c, "label": pfc.humanize_primary(c)} for c in categories_filter
     ]
-    raw_options = rules_mod.user_match_options(user, session)
-    rule_match_options = {
-        "merchant": raw_options["merchant"],
-        "category": [
-            {"field": o["field"], "value": o["value"], "label": pfc.humanize_primary(o["value"])}
-            for o in raw_options["category"]
-        ],
-        "item": [
-            {"field": o["field"], "value": o["value"], "label": pfc.humanize_detailed(o["value"])}
-            for o in raw_options["item"]
-        ],
-    }
+    rule_match_options = _build_rule_match_options(user, session)
     return render_template(
         "spending.html",
         active_page="spending",
@@ -437,17 +426,19 @@ def transaction_override(session, user, tx_id):
 
 
 def _parse_rule_payload(data: dict):
-    """Validate and normalize a rule payload. Returns (fields_dict, error_response_or_None)."""
     match_field = data.get("match_field")
     match_op = data.get("match_op", "equals")
     match_value = data.get("match_value")
     action = data.get("action")
     action_value = data.get("action_value")
+    scope = data.get("scope", "all")
 
     if match_field not in rules_mod.VALID_MATCH_FIELDS:
         return None, (jsonify({"error": "Invalid match_field"}), 400)
     if match_op not in rules_mod.VALID_MATCH_OPS:
         return None, (jsonify({"error": "Invalid match_op"}), 400)
+    if scope not in rules_mod.VALID_SCOPES:
+        return None, (jsonify({"error": "Invalid scope"}), 400)
     if not match_value:
         return None, (jsonify({"error": "match_value required"}), 400)
     if match_field == "pfc_primary" and match_value not in pfc.ALL_PRIMARIES:
@@ -478,17 +469,13 @@ def _parse_rule_payload(data: dict):
         action_value = str(amt)
     return {
         "match_field": match_field, "match_op": match_op, "match_value": match_value,
-        "action": action, "action_value": action_value,
+        "action": action, "action_value": action_value, "scope": scope,
     }, None
 
 
 @app.route("/rules/preview", methods=["POST"])
 @with_user
 def rules_preview(session, user):
-    """Return the number of transactions a candidate rule would match.
-
-    Used by the modal to confirm risky actions (e.g. not_equals + dismiss).
-    """
     if user is None:
         return jsonify({"error": "No user"}), 400
     data = request.get_json(silent=True) or {}
@@ -497,14 +484,13 @@ def rules_preview(session, user):
         return err
     from models import Transaction
     col = rules_mod._MATCH_COLUMNS[fields["match_field"]]
-    target = fields["match_value"].lower()
-    if fields["match_op"] == "not_equals":
-        cond = func.lower(col) != target
-    else:
-        cond = func.lower(col) == target
     count = (
         session.query(func.count(Transaction.id))
-        .filter(Transaction.user_id == user.id, cond)
+        .filter(
+            Transaction.user_id == user.id,
+            rules_mod._build_match_filter(col, fields["match_op"], fields["match_value"]),
+            *rules_mod._build_scope_filter(fields["scope"]),
+        )
         .scalar() or 0
     )
     return jsonify({"matches": int(count)})
@@ -524,6 +510,7 @@ def rules_create(session, user):
     match_value = fields["match_value"]
     action = fields["action"]
     action_value = fields["action_value"]
+    scope = fields["scope"]
 
     rule_id = data.get("rule_id")
     if rule_id is not None:
@@ -535,18 +522,23 @@ def rules_create(session, user):
         )
         if existing is None:
             return jsonify({"error": "Rule not found"}), 404
+        old_criteria = (
+            existing.match_field, existing.match_op, existing.match_value, existing.scope,
+        )
         existing.match_field = match_field
         existing.match_op = match_op
         existing.match_value = match_value
         existing.action = action
         existing.action_value = action_value
+        existing.scope = scope
         rule = existing
+        applied = rules_mod.reapply_after_edit(rule, old_criteria, session)
     else:
         rule = rules_mod.upsert_rule(
             user.id, match_field, match_value, action, action_value, session,
-            match_op=match_op,
+            match_op=match_op, scope=scope,
         )
-    applied = rules_mod.apply_rule_retroactively(rule, session)
+        applied = rules_mod.apply_rule_retroactively(rule, session)
     session.commit()
     spending_mod.invalidate_cache(user.id)
     return jsonify({"ok": True, "rule_id": rule.id, "applied_to": applied})
@@ -581,27 +573,24 @@ def rules_list_view(session, user):
         )
     rule_rows = rules_mod.list_rules(user, session)
 
-    def display_value(r):
+    def _display_value(r):
         if r.match_field == "pfc_primary":
             return pfc.humanize_primary(r.match_value)
         if r.match_field == "pfc_detailed":
             return pfc.humanize_detailed(r.match_value)
         return r.match_value
 
-    def as_display(r):
-        return {
-            "id": r.id,
-            "scope_label": rules_mod.scope_label(r),
-            "op_label": rules_mod.op_label(r),
-            "match_value": display_value(r),
-            "action_label": rules_mod.action_label(r),
-        }
-
     spending_rules: list[dict] = []
     income_rules: list[dict] = []
     for r in rule_rows:
+        d = {
+            "id": r.id,
+            "scope_label": rules_mod.scope_label(r),
+            "op_label": rules_mod.op_label(r),
+            "match_value": _display_value(r),
+            "action_label": rules_mod.action_label(r),
+        }
         side = rules_mod.rule_side(r)
-        d = as_display(r)
         if side in ("spending", "both"):
             spending_rules.append(d)
         if side in ("income", "both"):
@@ -615,6 +604,7 @@ def rules_list_view(session, user):
             "match_value": r.match_value,
             "action": r.action,
             "action_value": r.action_value,
+            "scope": r.scope,
         }
         for r in rule_rows
     }
@@ -672,18 +662,7 @@ def income_view(session, user):
     )
     month_options = income_mod.available_months(user, session, source=source)
     pfc_data = _pfc_dropdown_data()
-    raw_options = rules_mod.user_match_options(user, session)
-    rule_match_options = {
-        "merchant": raw_options["merchant"],
-        "category": [
-            {"field": o["field"], "value": o["value"], "label": pfc.humanize_primary(o["value"])}
-            for o in raw_options["category"]
-        ],
-        "item": [
-            {"field": o["field"], "value": o["value"], "label": pfc.humanize_detailed(o["value"])}
-            for o in raw_options["item"]
-        ],
-    }
+    rule_match_options = _build_rule_match_options(user, session)
     return render_template(
         "income.html",
         active_page="income",

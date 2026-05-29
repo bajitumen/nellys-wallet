@@ -159,11 +159,6 @@
     height: 34px;
     margin-left: 0.25rem;
   }
-  .auth-mount-wrap {
-    display: flex;
-    justify-content: center;
-    padding: 2rem 0;
-  }
   .theme-toggle {
     margin-top: auto;
     width: 100%;
@@ -458,7 +453,6 @@
   }
   .tx-form-row { display: flex; gap: 0.4rem; align-items: center; }
   .tx-form-row label { flex-shrink: 0; }
-  .tx-form-divider { text-align: center; color: var(--text-faint); font-size: 0.75rem; margin: 0.1rem 0; }
   .tx-form-actions { display: flex; gap: 0.4rem; justify-content: flex-end; margin-top: 0.3rem; }
   .tx-form button {
     padding: 0.35rem 0.75rem;
@@ -634,6 +628,7 @@
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   }
   .rule-modal h2 { margin: 0 0 1rem; font-size: 1.1rem; }
+  .rule-modal-scope-tag { color: var(--text-mid); font-weight: 400; }
   .rule-modal-section { margin-bottom: 1.25rem; }
   .rule-modal-section-label {
     font-size: 0.75em;
@@ -732,10 +727,10 @@
     margin: 1.75rem 0 0.5rem;
     font-weight: 500;
   }
-  .rules-table { width: 100%; border-collapse: collapse; margin-top: 0.25rem; table-layout: fixed; }
+  .rules-table { margin-top: 0.25rem; table-layout: fixed; }
   /* Sentence column fills; action column shrinks to content and pins right. */
-  .rule-sentence { width: auto; }
-  .rule-actions { width: 80px; }
+  .rule-sentence { width: auto; line-height: 1.6; }
+  .rule-actions { width: 80px; text-align: right; white-space: nowrap; }
   .rule-empty td {
     padding: 0.6rem 0.75rem;
     color: var(--text-faint);
@@ -748,8 +743,8 @@
   }
   .rule-add-inline {
     display: block;
-    margin: 0 auto;
-    width: 25%;
+    margin-left: auto;
+    width: 6.25%;
     background: transparent;
     border: 1px dashed var(--line);
     color: var(--text-faint);
@@ -778,11 +773,8 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
-  .rule-match { font-weight: 500; }
-  .rule-sentence { line-height: 1.6; }
   .rule-sentence strong { font-weight: 600; }
   .rule-sentence .rule-conn { color: var(--text-mid); }
-  .rule-actions { text-align: right; white-space: nowrap; }
   .rule-actions button {
     background: transparent;
     border: none;
@@ -812,7 +804,8 @@
     letter-spacing: 0.04em;
     margin-bottom: 0.6rem;
   }
-  .networth-chart svg { display: block; width: 100%; height: 180px; margin-top: 0.4rem; }
+  .networth-chart svg,
+  .monthly-spend-chart svg { display: block; width: 100%; height: 180px; margin-top: 0.4rem; }
   /* HTML element on body so SVG preserveAspectRatio="none" can't squash it. */
   .networth-dot {
     position: fixed;
@@ -867,7 +860,6 @@
     gap: 1rem;
     margin-bottom: 2rem;
   }
-  .monthly-spend-chart svg { display: block; width: 100%; height: 180px; margin-top: 0.4rem; }
   .chart-range-filter {
     display: flex;
     gap: 0.25rem;
@@ -1098,8 +1090,6 @@
     gap: 0.4rem;
     line-height: 1;
   }
-  .month-trigger i { font-size: 0.75rem; color: var(--text-faint); transition: color 0.1s; }
-  .month-trigger:hover i { color: var(--text); }
   .month-menu {
     position: absolute;
     top: calc(100% - 0.5rem);
@@ -1199,8 +1189,6 @@
     padding: 0.35rem 0.5rem;
     text-align: right;
   }
-  .budget-input { width: 70px; }
-  .input-wrap,
   .budget-input-wrap,
   .planning-rate-input-wrap,
   .planning-contrib-input-wrap,
@@ -1214,15 +1202,12 @@
     padding: 0.05rem 0.5rem;
     transition: border-color 0.1s;
   }
-  .input-wrap:focus-within,
   .budget-input-wrap:focus-within,
   .planning-rate-input-wrap:focus-within,
   .planning-contrib-input-wrap:focus-within,
   .planning-cashflow-input-wrap:focus-within {
     border-color: var(--text-mid);
   }
-  .input-wrap .prefix,
-  .input-wrap .prefix-left,
   .budget-input-wrap .prefix,
   .planning-rate-input-wrap .prefix,
   .planning-contrib-input-wrap .prefix-left,

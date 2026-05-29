@@ -14,6 +14,7 @@ _MATCH_COLUMNS = {
 VALID_MATCH_FIELDS = frozenset(_MATCH_COLUMNS.keys())
 VALID_MATCH_OPS = frozenset({"equals", "not_equals"})
 VALID_ACTIONS = frozenset({"dismiss", "split", "split_dollar", "set_category", "set_detailed"})
+VALID_SCOPES = frozenset({"all", "spending", "income"})
 
 _FIELD_SPECIFICITY = {
     "merchant_name": 4,
@@ -41,13 +42,8 @@ INCOME_PRIMARIES = frozenset({"INCOME", "TRANSFER_IN"})
 
 
 def rule_side(rule: TransactionRule) -> str:
-    """Classify a rule as 'spending', 'income', or 'both'.
-
-    A category/item rule's side comes from its match value's primary. A
-    merchant/name rule with a categorizing action takes its side from the
-    action's target. Everything else (merchant + dismiss/split) is 'both' —
-    we can't know which page's transactions it'll touch.
-    """
+    if rule.scope in ("spending", "income"):
+        return rule.scope
     if rule.match_field == "pfc_primary":
         return "income" if rule.match_value in INCOME_PRIMARIES else "spending"
     if rule.match_field == "pfc_detailed":
@@ -88,7 +84,38 @@ def _action_group(action: str) -> str:
     return action
 
 
+def _tx_in_scope(tx: Transaction, scope: str) -> bool:
+    if scope == "all":
+        return True
+    if scope == "spending":
+        # Mirror the SQL filter (NULL pfc_primary excluded), so sync-time and
+        # retroactive paths can't disagree on a NULL-category tx.
+        return (
+            tx.amount is not None
+            and tx.amount > 0
+            and tx.pfc_primary is not None
+            and tx.pfc_primary not in INCOME_PRIMARIES
+        )
+    if scope == "income":
+        return (
+            tx.amount is not None
+            and tx.amount < 0
+            and tx.pfc_primary in INCOME_PRIMARIES
+        )
+    return False
+
+
+def _build_scope_filter(scope: str):
+    if scope == "spending":
+        return [Transaction.amount > 0, ~Transaction.pfc_primary.in_(INCOME_PRIMARIES)]
+    if scope == "income":
+        return [Transaction.amount < 0, Transaction.pfc_primary.in_(INCOME_PRIMARIES)]
+    return []
+
+
 def _tx_matches_rule(tx: Transaction, rule: TransactionRule) -> bool:
+    if not _tx_in_scope(tx, rule.scope):
+        return False
     v = getattr(tx, rule.match_field, None)
     v_lc = v.lower() if v else ""
     target = (rule.match_value or "").lower()
@@ -114,18 +141,6 @@ def _reset_rule_fields(ov: TransactionOverride) -> None:
     ov.detailed_override = None
     ov.amount_override = None
     ov.split_percentage = None
-
-
-def _match_key_for_tx(tx: Transaction) -> tuple[str, str] | None:
-    if tx.merchant_name:
-        return ("merchant_name", tx.merchant_name)
-    if tx.name:
-        return ("name", tx.name)
-    return None
-
-
-def _rule_label(tx: Transaction) -> str:
-    return tx.merchant_name or tx.name or ""
 
 
 def _apply_rule_to_override(
@@ -163,9 +178,11 @@ def _apply_rule_to_override(
 def upsert_rule(
     user_id: int, match_field: str, match_value: str, action: str,
     action_value: str | None, session, match_op: str = "equals",
+    scope: str = "all",
 ) -> TransactionRule:
     # Case-insensitive lookup so "Venmo" and "venmo" don't create separate rules.
-    # Storage keeps the caller's casing for display.
+    # Storage keeps the caller's casing for display. Scope is part of identity:
+    # the same merchant can have separate 'spending' and 'income' rules.
     rule = (
         session.query(TransactionRule)
         .filter(
@@ -174,6 +191,7 @@ def upsert_rule(
             TransactionRule.match_op == match_op,
             func.lower(TransactionRule.match_value) == match_value.lower(),
             TransactionRule.action == action,
+            TransactionRule.scope == scope,
         )
         .one_or_none()
     )
@@ -181,11 +199,11 @@ def upsert_rule(
         rule = TransactionRule(
             user_id=user_id, match_field=match_field, match_op=match_op,
             match_value=match_value, action=action, action_value=action_value,
+            scope=scope,
         )
         session.add(rule)
     else:
         rule.action_value = action_value
-        # Refresh stored casing to the latest input.
         rule.match_value = match_value
     session.flush()
     return rule
@@ -198,55 +216,56 @@ def _build_match_filter(col, op: str, value: str):
     return func.lower(col) == lowered
 
 
-def apply_rule_retroactively(rule: TransactionRule, session) -> int:
-    """Recompute overrides for every tx matching `rule`, using full rule set + specificity.
-
-    Skips txs whose existing override is source='manual'. Returns count of overrides
-    created or modified.
-    """
-    col = _MATCH_COLUMNS.get(rule.match_field)
+def _query_txs_for_criteria(
+    user_id: int, match_field: str, match_op: str, match_value: str, scope: str, session,
+) -> list[Transaction]:
+    col = _MATCH_COLUMNS.get(match_field)
     if col is None:
-        return 0
-    matched_txs = (
+        return []
+    return (
         session.query(Transaction)
         .filter(
-            Transaction.user_id == rule.user_id,
-            _build_match_filter(col, rule.match_op, rule.match_value),
+            Transaction.user_id == user_id,
+            _build_match_filter(col, match_op, match_value),
+            *_build_scope_filter(scope),
         )
         .all()
     )
-    if not matched_txs:
-        return 0
 
+
+def _recompute_overrides_for_txs(user_id: int, txs: list[Transaction], session) -> int:
+    if not txs:
+        return 0
     all_rules = (
-        session.query(TransactionRule).filter_by(user_id=rule.user_id).all()
+        session.query(TransactionRule).filter_by(user_id=user_id).all()
     )
-    tx_ids = [t.plaid_transaction_id for t in matched_txs]
+    tx_ids = [t.plaid_transaction_id for t in txs]
     existing_by_id = {
         o.plaid_transaction_id: o for o in
         session.query(TransactionOverride)
         .filter(
-            TransactionOverride.user_id == rule.user_id,
+            TransactionOverride.user_id == user_id,
             TransactionOverride.plaid_transaction_id.in_(tx_ids),
         )
     }
 
     affected = 0
-    for tx in matched_txs:
+    for tx in txs:
         existing = existing_by_id.get(tx.plaid_transaction_id)
         # Manual protection is all-or-nothing: any manual touch on a tx blocks
-        # all rule application on that tx (every field), not just the field the
-        # user edited. Keeps the rule path simple; future improvement is
-        # per-field provenance if this proves too coarse.
+        # all rule application on that tx.
         if existing is not None and existing.source == "manual":
             continue
         matching_for_tx = [r for r in all_rules if _tx_matches_rule(tx, r)]
         winners = _winning_rules(matching_for_tx)
-        # The current rule matches `tx` by construction, so `winners` is always
-        # non-empty here.
+        if not winners:
+            if existing is not None and existing.source == "rule":
+                session.delete(existing)
+                affected += 1
+            continue
         if existing is None:
             ov = TransactionOverride(
-                user_id=rule.user_id,
+                user_id=user_id,
                 plaid_transaction_id=tx.plaid_transaction_id,
                 source="rule",
             )
@@ -261,14 +280,36 @@ def apply_rule_retroactively(rule: TransactionRule, session) -> int:
     return affected
 
 
+def apply_rule_retroactively(rule: TransactionRule, session) -> int:
+    txs = _query_txs_for_criteria(
+        rule.user_id, rule.match_field, rule.match_op,
+        rule.match_value, rule.scope, session,
+    )
+    return _recompute_overrides_for_txs(rule.user_id, txs, session)
+
+
+def reapply_after_edit(
+    rule: TransactionRule, old_criteria: tuple[str, str, str, str], session,
+) -> int:
+    new_txs = _query_txs_for_criteria(
+        rule.user_id, rule.match_field, rule.match_op,
+        rule.match_value, rule.scope, session,
+    )
+    old_field, old_op, old_value, old_scope = old_criteria
+    old_txs = _query_txs_for_criteria(
+        rule.user_id, old_field, old_op, old_value, old_scope, session,
+    )
+    by_id: dict[int, Transaction] = {}
+    for t in new_txs:
+        by_id[t.id] = t
+    for t in old_txs:
+        by_id.setdefault(t.id, t)
+    return _recompute_overrides_for_txs(rule.user_id, list(by_id.values()), session)
+
+
 def apply_rules_to_new_transactions(
     user_id: int, new_txs: list[Transaction], session,
 ) -> int:
-    """At sync time: auto-create overrides for new tx rows matching saved rules.
-
-    Skip txs that already have an override (per-tx override wins).
-    Returns count of overrides created.
-    """
     if not new_txs:
         return 0
     rules = session.query(TransactionRule).filter_by(user_id=user_id).all()
@@ -315,22 +356,21 @@ def list_rules(user: User, session) -> list[TransactionRule]:
 
 
 def user_match_options(user: User, session) -> dict:
-    """Distinct merchants, categories, and items the user has transactions for.
+    def _distinct(col, order=None):
+        return [
+            v for (v,) in
+            session.query(col)
+            .filter(Transaction.user_id == user.id, col.isnot(None))
+            .distinct()
+            .order_by(order if order is not None else col)
+            .all()
+            if v
+        ]
 
-    Used by the rule-builder modal to populate value dropdowns.
-    """
-    merchants = [
-        (m,) for (m,) in
-        session.query(Transaction.merchant_name)
-        .filter(Transaction.user_id == user.id, Transaction.merchant_name.isnot(None))
-        .distinct()
-        .order_by(func.lower(Transaction.merchant_name))
-        .all()
-        if m
-    ]
+    merchants = _distinct(Transaction.merchant_name, func.lower(Transaction.merchant_name))
     # Fall back to raw name where merchant_name is null.
     names = [
-        (n,) for (n,) in
+        v for (v,) in
         session.query(Transaction.name)
         .filter(
             Transaction.user_id == user.id,
@@ -340,33 +380,17 @@ def user_match_options(user: User, session) -> dict:
         .distinct()
         .order_by(func.lower(Transaction.name))
         .all()
-        if n
+        if v
     ]
-    primaries = [
-        (p,) for (p,) in
-        session.query(Transaction.pfc_primary)
-        .filter(Transaction.user_id == user.id, Transaction.pfc_primary.isnot(None))
-        .distinct()
-        .order_by(Transaction.pfc_primary)
-        .all()
-        if p
-    ]
-    detaileds = [
-        (d,) for (d,) in
-        session.query(Transaction.pfc_detailed)
-        .filter(Transaction.user_id == user.id, Transaction.pfc_detailed.isnot(None))
-        .distinct()
-        .order_by(Transaction.pfc_detailed)
-        .all()
-        if d
-    ]
+    primaries = _distinct(Transaction.pfc_primary)
+    detaileds = _distinct(Transaction.pfc_detailed)
     return {
         "merchant": (
-            [{"field": "merchant_name", "value": m[0], "label": m[0]} for m in merchants]
-            + [{"field": "name", "value": n[0], "label": n[0]} for n in names]
+            [{"field": "merchant_name", "value": m, "label": m} for m in merchants]
+            + [{"field": "name", "value": n, "label": n} for n in names]
         ),
-        "category": [{"field": "pfc_primary", "value": p[0]} for p in primaries],
-        "item": [{"field": "pfc_detailed", "value": d[0]} for d in detaileds],
+        "category": [{"field": "pfc_primary", "value": p} for p in primaries],
+        "item": [{"field": "pfc_detailed", "value": d} for d in detaileds],
     }
 
 

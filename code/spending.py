@@ -50,7 +50,7 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         session.query(month_col)
         .filter(
             Transaction.user_id == user.id,
-            Transaction.item_id.in_(list(items_by_id.keys())),
+            Transaction.item_id.in_(items_by_id),
             Transaction.amount > 0,
             ~Transaction.pfc_primary.in_(pfc.EXCLUDED_CATEGORIES),
         )
@@ -311,7 +311,7 @@ def _fetch_last_month_uncached(
             Transaction.user_id == user.id,
             Transaction.date >= prev_start,
             Transaction.date <= end,
-            Transaction.item_id.in_(list(items_by_id.keys())),
+            Transaction.item_id.in_(items_by_id),
             Transaction.amount > 0,
         )
         .all()

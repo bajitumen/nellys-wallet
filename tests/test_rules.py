@@ -432,6 +432,230 @@ def test_more_specific_rule_supersedes_earlier_rule_override(user_with_item, db_
     assert ov.category_override == "ENTERTAINMENT"
 
 
+def test_spending_scoped_rule_does_not_touch_income_tx(user_with_item, db_session):
+    """A rule with scope='spending' must not match income transactions."""
+    import rules as rules_mod
+    from models import Transaction, TransactionOverride
+    item = user_with_item.items[0]
+    db_session.add_all([
+        # Venmo outflow (spending): amount > 0, TRANSFER_OUT
+        Transaction(
+            user_id=item.user_id, item_id=item.id, plaid_transaction_id="out1",
+            date=date.today(), amount=30.0, name="Venmo", merchant_name="Venmo",
+            pfc_primary="TRANSFER_OUT",
+        ),
+        # Venmo inflow (income): amount < 0, TRANSFER_IN
+        Transaction(
+            user_id=item.user_id, item_id=item.id, plaid_transaction_id="in1",
+            date=date.today(), amount=-500.0, name="Venmo", merchant_name="Venmo",
+            pfc_primary="TRANSFER_IN",
+        ),
+    ])
+    db_session.commit()
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+        scope="spending",
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    ovs = {o.plaid_transaction_id: o for o in db_session.query(TransactionOverride)}
+    assert "out1" in ovs and ovs["out1"].dismissed is True
+    assert "in1" not in ovs, "income Venmo tx must not be touched by spending-scoped rule"
+
+
+def test_income_scoped_rule_does_not_touch_spending_tx(user_with_item, db_session):
+    """A rule with scope='income' must not match spending transactions."""
+    import rules as rules_mod
+    from models import Transaction, TransactionOverride
+    item = user_with_item.items[0]
+    db_session.add_all([
+        Transaction(
+            user_id=item.user_id, item_id=item.id, plaid_transaction_id="out1",
+            date=date.today(), amount=30.0, name="Venmo", merchant_name="Venmo",
+            pfc_primary="TRANSFER_OUT",
+        ),
+        Transaction(
+            user_id=item.user_id, item_id=item.id, plaid_transaction_id="in1",
+            date=date.today(), amount=-500.0, name="Venmo", merchant_name="Venmo",
+            pfc_primary="TRANSFER_IN",
+        ),
+    ])
+    db_session.commit()
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+        scope="income",
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    ovs = {o.plaid_transaction_id: o for o in db_session.query(TransactionOverride)}
+    assert "in1" in ovs and ovs["in1"].dismissed is True
+    assert "out1" not in ovs
+
+
+def test_scope_filtered_at_sync_time(user_with_item, db_session, patch_plaid):
+    """A spending-scoped rule must not auto-dismiss a new income tx at sync."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    from spending import sync_transactions
+    rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+        scope="spending",
+    )
+    db_session.commit()
+
+    income_tx = MagicMock()
+    income_tx.transaction_id = "in_new"
+    income_tx.amount = -200.0
+    income_tx.date = date.today()
+    income_tx.name = "VENMO FROM JOHN"
+    income_tx.merchant_name = "Venmo"
+    income_tx.pending = False
+    income_tx.pending_transaction_id = None
+    pfc = MagicMock()
+    pfc.primary = "TRANSFER_IN"
+    pfc.detailed = None
+    income_tx.personal_finance_category = pfc
+    resp = MagicMock()
+    resp.transactions = [income_tx]
+    patch_plaid.transactions_get.return_value = resp
+
+    sync_transactions(user_with_item, db_session)
+
+    assert db_session.query(TransactionOverride).filter_by(
+        plaid_transaction_id="in_new"
+    ).one_or_none() is None
+
+
+def test_same_merchant_can_have_distinct_spending_and_income_rules(user_with_item, db_session):
+    """Two rules with the same field/value/action but different scopes are independent."""
+    import rules as rules_mod
+    from models import TransactionRule
+    spending = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+        scope="spending",
+    )
+    income = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+        scope="income",
+    )
+    db_session.commit()
+    assert spending.id != income.id
+    assert db_session.query(TransactionRule).count() == 2
+
+
+def test_spending_scope_excludes_null_pfc_primary_at_sync_time(
+    user_with_item, db_session, patch_plaid,
+):
+    """Sync-time path must skip a NULL-pfc_primary tx for spending scope,
+    matching the SQL filter used by retroactive apply and by the spending page."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    from spending import sync_transactions
+    rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Mystery", "dismiss", None, db_session,
+        scope="spending",
+    )
+    db_session.commit()
+
+    tx = MagicMock()
+    tx.transaction_id = "null_cat"
+    tx.amount = 10.0
+    tx.date = date.today()
+    tx.name = "MYSTERY CHARGE"
+    tx.merchant_name = "Mystery"
+    tx.pending = False
+    tx.pending_transaction_id = None
+    tx.personal_finance_category = None
+    resp = MagicMock()
+    resp.transactions = [tx]
+    patch_plaid.transactions_get.return_value = resp
+
+    sync_transactions(user_with_item, db_session)
+
+    assert db_session.query(TransactionOverride).filter_by(
+        plaid_transaction_id="null_cat"
+    ).one_or_none() is None
+
+
+def test_editing_rule_clears_stale_overrides_on_old_side(user_with_item, db_session):
+    """Editing a scope='all' rule to scope='spending' must clear overrides on
+    the income txs that the rule used to dismiss."""
+    import rules as rules_mod
+    from models import Transaction, TransactionOverride, TransactionRule
+    item = user_with_item.items[0]
+    db_session.add_all([
+        Transaction(
+            user_id=item.user_id, item_id=item.id, plaid_transaction_id="spend1",
+            date=date.today(), amount=30.0, name="Venmo", merchant_name="Venmo",
+            pfc_primary="TRANSFER_OUT",
+        ),
+        Transaction(
+            user_id=item.user_id, item_id=item.id, plaid_transaction_id="inc1",
+            date=date.today(), amount=-500.0, name="Venmo", merchant_name="Venmo",
+            pfc_primary="TRANSFER_IN",
+        ),
+    ])
+    db_session.commit()
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+        scope="all",
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+
+    ovs = {o.plaid_transaction_id: o for o in db_session.query(TransactionOverride)}
+    assert ovs["spend1"].dismissed is True
+    assert ovs["inc1"].dismissed is True
+
+    old_criteria = (rule.match_field, rule.match_op, rule.match_value, rule.scope)
+    rule.scope = "spending"
+    rules_mod.reapply_after_edit(rule, old_criteria, db_session)
+    db_session.commit()
+
+    ovs = {o.plaid_transaction_id: o for o in db_session.query(TransactionOverride)}
+    assert "spend1" in ovs and ovs["spend1"].dismissed is True
+    assert "inc1" not in ovs, "income override should be cleared once rule no longer covers it"
+
+
+def test_editing_rule_preserves_manual_overrides(user_with_item, db_session):
+    """Editing a rule must not touch source='manual' overrides, even on the
+    old-matched side."""
+    import rules as rules_mod
+    from models import Transaction, TransactionOverride
+    item = user_with_item.items[0]
+    db_session.add_all([
+        Transaction(
+            user_id=item.user_id, item_id=item.id, plaid_transaction_id="inc1",
+            date=date.today(), amount=-500.0, name="Venmo", merchant_name="Venmo",
+            pfc_primary="TRANSFER_IN",
+        ),
+    ])
+    db_session.add(TransactionOverride(
+        user_id=user_with_item.id, plaid_transaction_id="inc1",
+        category_override="INCOME", source="manual",
+    ))
+    db_session.commit()
+
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+        scope="all",
+    )
+    old_criteria = (rule.match_field, rule.match_op, rule.match_value, rule.scope)
+    rule.scope = "spending"
+    rules_mod.reapply_after_edit(rule, old_criteria, db_session)
+    db_session.commit()
+
+    ov = db_session.query(TransactionOverride).filter_by(plaid_transaction_id="inc1").one()
+    assert ov.source == "manual"
+    assert ov.category_override == "INCOME"
+    assert ov.dismissed is False
+
+
 def test_delete_rule(user_with_item, db_session):
     import rules as rules_mod
     from models import TransactionRule

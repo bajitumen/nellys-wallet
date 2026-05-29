@@ -56,7 +56,7 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         session.query(month_col)
         .filter(
             Transaction.user_id == user.id,
-            Transaction.item_id.in_(list(items_by_id.keys())),
+            Transaction.item_id.in_(items_by_id),
             Transaction.pfc_primary.in_(("INCOME", "TRANSFER_IN")),
             Transaction.amount < 0,
         )
@@ -124,7 +124,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             Transaction.user_id == user.id,
             Transaction.date >= prev_start,
             Transaction.date <= end,
-            Transaction.item_id.in_(list(items_by_id.keys())),
+            Transaction.item_id.in_(items_by_id),
             Transaction.pfc_primary.in_(("INCOME", "TRANSFER_IN")),
             Transaction.amount < 0,
         )

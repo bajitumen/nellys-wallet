@@ -93,8 +93,8 @@ class TransactionRule(Base):
     __tablename__ = "transaction_rules"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "match_field", "match_op", "match_value", "action",
-            name="uq_rule_user_field_op_value_action",
+            "user_id", "match_field", "match_op", "match_value", "action", "scope",
+            name="uq_rule_user_field_op_value_action_scope",
         ),
     )
 
@@ -108,6 +108,8 @@ class TransactionRule(Base):
     # 'dismiss' | 'set_category' | 'set_detailed' | 'split'
     action: Mapped[str] = mapped_column(String(32))
     action_value: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 'all' | 'spending' | 'income' — gates which transactions this rule touches.
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, default="all")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

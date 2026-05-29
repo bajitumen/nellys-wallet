@@ -120,6 +120,24 @@ def init_db():
                 "ALTER TABLE transaction_rules ADD COLUMN match_op VARCHAR(16) "
                 "NOT NULL DEFAULT 'equals'"
             ))
+        if rule_cols and "scope" not in rule_cols:
+            conn.execute(text(
+                "ALTER TABLE transaction_rules ADD COLUMN scope VARCHAR(16) "
+                "NOT NULL DEFAULT 'all'"
+            ))
+        if rule_cols:
+            rule_indexes = {row[0] for row in conn.execute(text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='index' AND tbl_name='transaction_rules'"
+            ))}
+            if "uq_rule_user_field_op_value_action" in rule_indexes:
+                conn.execute(text("DROP INDEX uq_rule_user_field_op_value_action"))
+            if "uq_rule_user_field_op_value_action_scope" not in rule_indexes:
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX uq_rule_user_field_op_value_action_scope "
+                    "ON transaction_rules "
+                    "(user_id, match_field, match_op, match_value, action, scope)"
+                ))
 
         # Composite index for (user_id, date) Transaction reads. create_all
         # only adds the index on a fresh DB; this picks up existing DBs.

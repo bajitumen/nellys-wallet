@@ -10,7 +10,7 @@
   {{ empty_state("No user provisioned yet.") }}
 {% else %}
 
-{% macro rules_section(rows, side_label) %}
+{% macro rules_section(rows, side_label, page_scope) %}
 <h2 class="rules-section-heading">{{ side_label }}</h2>
 <table class="rules-table">
   <tbody>
@@ -35,14 +35,14 @@
     <tr class="rule-empty"><td colspan="2">No rules yet</td></tr>
   {% endif %}
   <tr class="rule-add-row">
-    <td colspan="2"><button type="button" class="rule-add-inline" aria-label="Add rule">+</button></td>
+    <td colspan="2"><button type="button" class="rule-add-inline" data-page-scope="{{ page_scope }}" aria-label="Add rule">+</button></td>
   </tr>
   </tbody>
 </table>
 {% endmacro %}
 
-{{ rules_section(spending_rules, "Spending") }}
-{{ rules_section(income_rules, "Income") }}
+{{ rules_section(spending_rules, "Spending", "spending") }}
+{{ rules_section(income_rules, "Income", "income") }}
 
 {% endif %}
 
@@ -58,8 +58,9 @@
 <script src="{{ url_for('static', filename='tx-actions.js') }}"></script>
 <script>
   document.addEventListener('click', function(e) {
-    if (e.target.closest('.rule-add-inline')) {
-      window.openRuleModal();
+    var add = e.target.closest('.rule-add-inline');
+    if (add) {
+      window.openRuleModal({ pageScope: add.dataset.pageScope || 'all' });
       return;
     }
     var del = e.target.closest('.rule-delete');

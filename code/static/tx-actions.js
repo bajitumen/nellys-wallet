@@ -1,6 +1,3 @@
-// Shared transaction-row actions: kebab menu (split/dismiss/set-rule/reset/restore),
-// applyOverride, and the Set Rule modal. Loaded on Spending and Income pages.
-
 window.applyOverride = function(txId, payload, failMsg) {
   return csrfFetch('/transactions/' + encodeURIComponent(txId) + '/override', {
     method: 'POST',
@@ -28,7 +25,8 @@ window.applyOverride = function(txId, payload, failMsg) {
     menu.className = 'tx-menu';
     if (isDismissed) {
       menu.innerHTML =
-        '<button class="tx-menu-item" data-action="restore">Restore</button>';
+        '<button class="tx-menu-item" data-action="restore">Restore</button>' +
+        '<button class="tx-menu-item" data-action="set-rule">Set rule</button>';
     } else {
       menu.innerHTML =
         '<button class="tx-menu-item" data-action="split">Split</button>' +
@@ -144,6 +142,7 @@ window.openRuleModal = function(opts) {
   opts = opts || {};
   var kebab = opts.kebab || null;
   var editingRule = opts.rule || null;
+  var pageScope = opts.pageScope || window.RULE_PAGE_SCOPE || 'all';
 
   var row = kebab ? kebab.closest('tr.tx-row') : null;
   var merchant = row ? (row.dataset.description || '') : '';
@@ -198,6 +197,7 @@ window.openRuleModal = function(opts) {
       splitAmt: splitAmt,
       splitMode: splitMode,
       setCategory: setCat,
+      pageScope: r.scope || 'all',
       rule_id: r.id,
     };
   }
@@ -212,6 +212,7 @@ window.openRuleModal = function(opts) {
     splitMode: 'pct',
     setCategory: (window.PFC_PRIMARIES && window.PFC_PRIMARIES[0])
       ? window.PFC_PRIMARIES[0].code : '',
+    pageScope: pageScope,
   };
 
   var SCOPE_OPTS = [
@@ -235,11 +236,13 @@ window.openRuleModal = function(opts) {
     });
   }
 
+  var scopeTitle = { spending: ' · Spending', income: ' · Income' }[state.pageScope] || '';
   var modal = document.createElement('div');
   modal.className = 'rule-modal-backdrop';
   modal.innerHTML =
     '<div class="rule-modal" role="dialog" aria-modal="true" aria-labelledby="rule-modal-title">' +
-      '<h2 id="rule-modal-title">' + (editingRule ? 'Edit rule' : 'Set rule') + '</h2>' +
+      '<h2 id="rule-modal-title">' + (editingRule ? 'Edit rule' : 'Set rule') +
+        '<span class="rule-modal-scope-tag">' + scopeTitle + '</span></h2>' +
       '<div class="rule-modal-section">' +
         '<div class="rule-modal-section-label">If</div>' +
         '<div class="rule-modal-row">' +
@@ -275,7 +278,6 @@ window.openRuleModal = function(opts) {
 
   var pctInput = modal.querySelector('.rule-modal-pct');
   var amtInput = modal.querySelector('.rule-modal-amt');
-  // Seed inputs from state (matters when editing an existing rule).
   if (state.splitMode === 'dollar') {
     pctInput.value = '';
     amtInput.value = state.splitAmt || '';
@@ -385,6 +387,7 @@ window.openRuleModal = function(opts) {
       match_op: state.op,
       match_value: state.value.value,
       action: state.action,
+      scope: state.pageScope || 'all',
     };
     if (state.rule_id) payload.rule_id = state.rule_id;
     if (state.action === 'split') {

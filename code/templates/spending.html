@@ -215,6 +215,7 @@
   window.PFC_TAXONOMY = {{ taxonomy | tojson }};
   window.PFC_PRIMARIES = {{ primaries | tojson }};
   window.RULE_MATCH_OPTIONS = {{ rule_match_options | tojson }};
+  window.RULE_PAGE_SCOPE = 'spending';
 </script>
 <script src="{{ url_for('static', filename='tx-filters.js') }}"></script>
 <script src="{{ url_for('static', filename='tx-actions.js') }}"></script>
