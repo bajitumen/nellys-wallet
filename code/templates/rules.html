@@ -19,9 +19,14 @@
       <tr data-rule-id="{{ r.id }}">
         <td class="rule-sentence">
           <span class="rule-conn">If</span>
-          <strong>{{ r.scope_label }}</strong>
-          <span class="rule-conn">{{ r.op_label }}</span>
-          <strong>{{ r.match_value }}</strong>
+          {% for c in r.conditions %}
+            {% if not loop.first %}
+              <span class="rule-conn">{{ 'and' if r.conditions_logic == 'all' else 'or' }}</span>
+            {% endif %}
+            <strong>{{ c.scope_label }}</strong>
+            <span class="rule-conn">{{ c.op_label }}</span>
+            <strong>{{ c.match_value }}</strong>
+          {% endfor %}
           <span class="rule-conn">then</span>
           <strong>{{ r.action_label }}</strong>
         </td>
@@ -35,7 +40,7 @@
     <tr class="rule-empty"><td colspan="2">No rules yet</td></tr>
   {% endif %}
   <tr class="rule-add-row">
-    <td colspan="2"><button type="button" class="rule-add-inline" data-page-scope="{{ page_scope }}" aria-label="Add rule">+</button></td>
+    <td colspan="2"><button type="button" class="rule-add-inline" data-page-scope="{{ page_scope }}" aria-label="Add new rule"><span class="rule-add-label">Add new rule</span><span class="rule-add-plus">+</span></button></td>
   </tr>
   </tbody>
 </table>

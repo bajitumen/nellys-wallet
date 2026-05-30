@@ -125,18 +125,42 @@ def init_db():
                 "ALTER TABLE transaction_rules ADD COLUMN scope VARCHAR(16) "
                 "NOT NULL DEFAULT 'all'"
             ))
+        if rule_cols and "conditions_logic" not in rule_cols:
+            conn.execute(text(
+                "ALTER TABLE transaction_rules ADD COLUMN conditions_logic VARCHAR(8) "
+                "NOT NULL DEFAULT 'all'"
+            ))
         if rule_cols:
             rule_indexes = {row[0] for row in conn.execute(text(
                 "SELECT name FROM sqlite_master "
                 "WHERE type='index' AND tbl_name='transaction_rules'"
             ))}
-            if "uq_rule_user_field_op_value_action" in rule_indexes:
-                conn.execute(text("DROP INDEX uq_rule_user_field_op_value_action"))
-            if "uq_rule_user_field_op_value_action_scope" not in rule_indexes:
+            # The old uniqueness shape is meaningless once rules can have multiple
+            # conditions; drop both legacy variants.
+            for legacy in (
+                "uq_rule_user_field_op_value_action",
+                "uq_rule_user_field_op_value_action_scope",
+            ):
+                if legacy in rule_indexes:
+                    conn.execute(text(f"DROP INDEX {legacy}"))
+
+        # Migrate single-condition legacy rules into the conditions table.
+        cond_exists = conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='transaction_rule_conditions'"
+        )).first()
+        if rule_cols and cond_exists:
+            already_migrated = conn.execute(text(
+                "SELECT COUNT(1) FROM transaction_rule_conditions"
+            )).scalar()
+            if not already_migrated:
                 conn.execute(text(
-                    "CREATE UNIQUE INDEX uq_rule_user_field_op_value_action_scope "
-                    "ON transaction_rules "
-                    "(user_id, match_field, match_op, match_value, action, scope)"
+                    "INSERT INTO transaction_rule_conditions "
+                    "(rule_id, match_field, match_op, match_value) "
+                    "SELECT id, match_field, "
+                    "COALESCE(match_op, 'equals'), match_value "
+                    "FROM transaction_rules "
+                    "WHERE match_field IS NOT NULL AND match_value IS NOT NULL"
                 ))
 
         # Composite index for (user_id, date) Transaction reads. create_all

@@ -624,7 +624,7 @@
     border-radius: 8px;
     padding: 1.5rem;
     width: 100%;
-    max-width: 640px;
+    max-width: 760px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   }
   .rule-modal h2 { margin: 0 0 1rem; font-size: 1.1rem; }
@@ -658,11 +658,52 @@
     max-width: none;
   }
   /* Constant widths so the row doesn't shift around with label length. */
-  .rule-modal-dd[data-key="scope"] { width: 140px; }
-  .rule-modal-dd[data-key="op"] { width: 160px; }
+  .rule-modal-dd-field { width: 160px; }
+  .rule-modal-dd-op { width: 160px; }
   .rule-modal-dd-value { width: 220px; }
+  .rule-modal-dd-logic { width: 90px; }
   .rule-modal-dd[data-key="action"] { width: 160px; }
   .rule-modal-dd-cat { width: 200px; }
+  .rule-modal-conditions {
+    border: 1px dashed var(--line);
+    border-radius: 6px;
+    padding: 0.75rem 1rem 1rem;
+    margin: 0 0 1.25rem;
+  }
+  .rule-modal-conditions-legend {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0 0.5rem;
+    color: var(--text-mid);
+    font-size: 0.92em;
+  }
+  .rule-modal-condition-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+    padding: 0.35rem 0;
+  }
+  .rule-modal-cond-add,
+  .rule-modal-cond-remove {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text-mid);
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.95rem;
+    line-height: 1;
+    padding: 0;
+  }
+  .rule-modal-cond-add:hover,
+  .rule-modal-cond-remove:hover:not([disabled]) {
+    color: var(--text); border-color: var(--text-mid);
+  }
+  .rule-modal-cond-remove[disabled] { opacity: 0.4; cursor: default; }
   .rule-modal-dd .inline-dropdown,
   .rule-modal-dd .inline-dropdown-trigger { width: 100%; }
   .rule-modal-extra {
@@ -742,20 +783,22 @@
     border-bottom: 1px solid var(--line);
   }
   .rule-add-inline {
-    display: block;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     margin-left: auto;
-    width: 6.25%;
     background: transparent;
     border: 1px dashed var(--line);
     color: var(--text-faint);
-    padding: 0.45rem;
+    padding: 0.35rem 0.7rem;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 1.15rem;
-    font-weight: 400;
     font-family: inherit;
     line-height: 1;
   }
+  .rule-add-label { font-size: 0.9rem; }
+  .rule-add-plus { font-size: 1.15rem; line-height: 1; }
+  .rules-table .rule-add-row td { text-align: right; }
   .rule-add-inline:hover {
     color: var(--text);
     border-color: var(--text-mid);

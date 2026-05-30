@@ -612,9 +612,9 @@ def test_editing_rule_clears_stale_overrides_on_old_side(user_with_item, db_sess
     assert ovs["spend1"].dismissed is True
     assert ovs["inc1"].dismissed is True
 
-    old_criteria = (rule.match_field, rule.match_op, rule.match_value, rule.scope)
+    old_txs = rules_mod.snapshot_rule_txs(rule, db_session)
     rule.scope = "spending"
-    rules_mod.reapply_after_edit(rule, old_criteria, db_session)
+    rules_mod.reapply_after_edit(rule, old_txs, db_session)
     db_session.commit()
 
     ovs = {o.plaid_transaction_id: o for o in db_session.query(TransactionOverride)}
@@ -645,9 +645,9 @@ def test_editing_rule_preserves_manual_overrides(user_with_item, db_session):
         user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
         scope="all",
     )
-    old_criteria = (rule.match_field, rule.match_op, rule.match_value, rule.scope)
+    old_txs = rules_mod.snapshot_rule_txs(rule, db_session)
     rule.scope = "spending"
-    rules_mod.reapply_after_edit(rule, old_criteria, db_session)
+    rules_mod.reapply_after_edit(rule, old_txs, db_session)
     db_session.commit()
 
     ov = db_session.query(TransactionOverride).filter_by(plaid_transaction_id="inc1").one()
@@ -667,3 +667,242 @@ def test_delete_rule(user_with_item, db_session):
     rules_mod.delete_rule(user_with_item, rule.id, db_session)
     db_session.commit()
     assert db_session.query(TransactionRule).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Multi-condition rules
+# ---------------------------------------------------------------------------
+
+def test_all_logic_requires_every_condition_to_match(user_with_item, db_session):
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 20.0, "Starbucks", pfc="FOOD_AND_DRINK")
+    _seed_tx(db_session, item, "t2", 20.0, "Starbucks", pfc="ENTERTAINMENT")
+    _seed_tx(db_session, item, "t3", 20.0, "Other", pfc="FOOD_AND_DRINK")
+
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [
+            {"match_field": "merchant_name", "match_op": "equals", "match_value": "Starbucks"},
+            {"match_field": "pfc_primary", "match_op": "equals", "match_value": "FOOD_AND_DRINK"},
+        ],
+        "all", "dismiss", None, "all", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+    dismissed = {o.plaid_transaction_id for o in db_session.query(TransactionOverride).filter_by(dismissed=True)}
+    assert dismissed == {"t1"}
+
+
+def test_any_logic_matches_when_either_condition_matches(user_with_item, db_session):
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 20.0, "Starbucks", pfc="FOOD_AND_DRINK")
+    _seed_tx(db_session, item, "t2", 20.0, "Other", pfc="ENTERTAINMENT")
+    _seed_tx(db_session, item, "t3", 20.0, "Other", pfc="FOOD_AND_DRINK")
+
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [
+            {"match_field": "merchant_name", "match_op": "equals", "match_value": "Starbucks"},
+            {"match_field": "pfc_primary", "match_op": "equals", "match_value": "FOOD_AND_DRINK"},
+        ],
+        "any", "dismiss", None, "all", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+    dismissed = {o.plaid_transaction_id for o in db_session.query(TransactionOverride).filter_by(dismissed=True)}
+    assert dismissed == {"t1", "t3"}
+
+
+def test_multi_condition_payload_endpoint(client, user_with_item, db_session):
+    """POST /rules with conditions array creates a multi-clause rule and applies it."""
+    from models import TransactionRule, TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 20.0, "Starbucks", pfc="FOOD_AND_DRINK")
+    _seed_tx(db_session, item, "t2", 20.0, "Starbucks", pfc="ENTERTAINMENT")
+
+    r = client.post("/rules", json={
+        "conditions": [
+            {"match_field": "merchant_name", "match_op": "equals", "match_value": "Starbucks"},
+            {"match_field": "pfc_primary", "match_op": "equals", "match_value": "FOOD_AND_DRINK"},
+        ],
+        "conditions_logic": "all",
+        "action": "dismiss",
+        "scope": "spending",
+    })
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["applied_to"] == 1
+
+    rule = db_session.query(TransactionRule).one()
+    assert rule.conditions_logic == "all"
+    assert len(rule.conditions) == 2
+    dismissed = {o.plaid_transaction_id for o in db_session.query(TransactionOverride).filter_by(dismissed=True)}
+    assert dismissed == {"t1"}
+
+
+def test_legacy_single_condition_payload_still_accepted(client, user_with_item, db_session):
+    """Old shape ({"match_field": ..., "match_value": ...}) keeps working."""
+    from models import TransactionRule
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 20.0, "Venmo")
+    r = client.post("/rules", json={
+        "match_field": "merchant_name",
+        "match_op": "equals",
+        "match_value": "Venmo",
+        "action": "dismiss",
+        "scope": "spending",
+    })
+    assert r.status_code == 200
+    rule = db_session.query(TransactionRule).one()
+    assert len(rule.conditions) == 1
+    assert rule.conditions[0].match_value == "Venmo"
+
+
+def test_edit_rule_replaces_conditions(client, user_with_item, db_session):
+    """Editing a multi-condition rule swaps in the new condition set."""
+    import rules as rules_mod
+    from models import TransactionRule
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals", "match_value": "Old"}],
+        "all", "dismiss", None, "all", db_session,
+    )
+    db_session.commit()
+
+    r = client.post("/rules", json={
+        "rule_id": rule.id,
+        "conditions": [
+            {"match_field": "merchant_name", "match_op": "equals", "match_value": "New"},
+            {"match_field": "pfc_primary", "match_op": "not_equals", "match_value": "FOOD_AND_DRINK"},
+        ],
+        "conditions_logic": "any",
+        "action": "dismiss",
+        "scope": "all",
+    })
+    assert r.status_code == 200
+    db_session.refresh(rule)
+    assert rule.conditions_logic == "any"
+    assert len(rule.conditions) == 2
+    values = {c.match_value for c in rule.conditions}
+    assert values == {"New", "FOOD_AND_DRINK"}
+
+
+def test_source_condition_matches_only_that_institutions_txs(user_with_item, db_session):
+    """A source=Other rule must not touch txs from a different institution."""
+    import rules as rules_mod
+    from models import PlaidItem, Transaction, TransactionOverride
+    other = PlaidItem(user_id=user_with_item.id, institution_name="OtherBank")
+    other.set_access_token("access-other")
+    db_session.add(other)
+    db_session.commit()
+
+    main_item = user_with_item.items[0]
+    other_item = db_session.query(PlaidItem).filter_by(institution_name="OtherBank").one()
+    db_session.add_all([
+        Transaction(
+            user_id=user_with_item.id, item_id=main_item.id, plaid_transaction_id="t_main",
+            date=date.today(), amount=10.0, name="Coffee", merchant_name="Coffee",
+            pfc_primary="FOOD_AND_DRINK",
+        ),
+        Transaction(
+            user_id=user_with_item.id, item_id=other_item.id, plaid_transaction_id="t_other",
+            date=date.today(), amount=10.0, name="Coffee", merchant_name="Coffee",
+            pfc_primary="FOOD_AND_DRINK",
+        ),
+    ])
+    db_session.commit()
+
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "source", "match_op": "equals", "match_value": "OtherBank"}],
+        "all", "dismiss", None, "all", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+    dismissed = {o.plaid_transaction_id for o in db_session.query(TransactionOverride).filter_by(dismissed=True)}
+    assert dismissed == {"t_other"}
+
+
+def test_source_condition_combined_with_merchant_all_logic(user_with_item, db_session):
+    """source=X AND merchant=Y only dismisses txs that satisfy both."""
+    import rules as rules_mod
+    from models import PlaidItem, Transaction, TransactionOverride
+    other = PlaidItem(user_id=user_with_item.id, institution_name="OtherBank")
+    other.set_access_token("access-other")
+    db_session.add(other)
+    db_session.commit()
+    other_item = db_session.query(PlaidItem).filter_by(institution_name="OtherBank").one()
+    main_item = user_with_item.items[0]
+
+    db_session.add_all([
+        Transaction(
+            user_id=user_with_item.id, item_id=other_item.id, plaid_transaction_id="t1",
+            date=date.today(), amount=10.0, name="Venmo", merchant_name="Venmo",
+            pfc_primary="TRANSFER_OUT",
+        ),
+        Transaction(
+            user_id=user_with_item.id, item_id=other_item.id, plaid_transaction_id="t2",
+            date=date.today(), amount=10.0, name="Coffee", merchant_name="Coffee",
+            pfc_primary="FOOD_AND_DRINK",
+        ),
+        Transaction(
+            user_id=user_with_item.id, item_id=main_item.id, plaid_transaction_id="t3",
+            date=date.today(), amount=10.0, name="Venmo", merchant_name="Venmo",
+            pfc_primary="TRANSFER_OUT",
+        ),
+    ])
+    db_session.commit()
+
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [
+            {"match_field": "source", "match_op": "equals", "match_value": "OtherBank"},
+            {"match_field": "merchant_name", "match_op": "equals", "match_value": "Venmo"},
+        ],
+        "all", "dismiss", None, "all", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+    dismissed = {o.plaid_transaction_id for o in db_session.query(TransactionOverride).filter_by(dismissed=True)}
+    assert dismissed == {"t1"}
+
+
+def test_source_condition_via_endpoint(client, user_with_item, db_session):
+    """POST /rules accepts a source condition."""
+    from models import TransactionRule
+    r = client.post("/rules", json={
+        "conditions": [
+            {"match_field": "source", "match_op": "equals", "match_value": "TestBank"},
+        ],
+        "conditions_logic": "all",
+        "action": "dismiss",
+        "scope": "all",
+    })
+    assert r.status_code == 200
+    rule = db_session.query(TransactionRule).one()
+    assert rule.conditions[0].match_field == "source"
+    assert rule.conditions[0].match_value == "TestBank"
+
+
+def test_multi_condition_preview_count(client, user_with_item, db_session):
+    """Preview returns the same count the rule would apply to."""
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 20.0, "Starbucks", pfc="FOOD_AND_DRINK")
+    _seed_tx(db_session, item, "t2", 20.0, "Other", pfc="FOOD_AND_DRINK")
+    _seed_tx(db_session, item, "t3", 20.0, "Starbucks", pfc="ENTERTAINMENT")
+
+    r = client.post("/rules/preview", json={
+        "conditions": [
+            {"match_field": "merchant_name", "match_op": "equals", "match_value": "Starbucks"},
+            {"match_field": "pfc_primary", "match_op": "equals", "match_value": "FOOD_AND_DRINK"},
+        ],
+        "conditions_logic": "any",
+        "action": "dismiss",
+        "scope": "spending",
+    })
+    assert r.status_code == 200
+    assert r.get_json()["matches"] == 3

@@ -142,87 +142,32 @@ window.openRuleModal = function(opts) {
   opts = opts || {};
   var kebab = opts.kebab || null;
   var editingRule = opts.rule || null;
-  var pageScope = opts.pageScope || window.RULE_PAGE_SCOPE || 'all';
+  var pageScope = (
+    (editingRule && editingRule.scope)
+    || opts.pageScope || window.RULE_PAGE_SCOPE || 'all'
+  );
 
   var row = kebab ? kebab.closest('tr.tx-row') : null;
   var merchant = row ? (row.dataset.description || '') : '';
   var categoryRaw = row ? (row.dataset.categoryRaw || '') : '';
   var detailedRaw = row ? (row.dataset.item || '') : '';
-  var options = window.RULE_MATCH_OPTIONS || { merchant: [], category: [], item: [] };
+  var sourceRaw = row ? (row.dataset.source || '') : '';
+  var options = window.RULE_MATCH_OPTIONS
+    || { merchant: [], category: [], item: [], source: [] };
 
-  function defaultForScope(scope) {
-    var list = options[scope] || [];
-    var picks = {
-      merchant: function(o) { return o.value === merchant; },
-      category: function(o) { return o.value === categoryRaw; },
-      item: function(o) { return o.value === detailedRaw; },
-    };
-    var found = list.find(picks[scope]) || list[0];
-    if (!found) return null;
-    return { value: found.value, label: found.label, _field: found.field };
-  }
-
-  function scopeForField(field) {
-    if (field === 'pfc_primary') return 'category';
-    if (field === 'pfc_detailed') return 'item';
-    return 'merchant';
-  }
-
-  function stateFromRule(r) {
-    var scope = scopeForField(r.match_field);
-    var list = options[scope] || [];
-    var found = list.find(function(o) { return o.value === r.match_value; });
-    var label = found ? found.label : r.match_value;
-    var action = r.action;
-    var splitMode = 'pct';
-    var splitPct = '50';
-    var splitAmt = '';
-    var setCat = (window.PFC_PRIMARIES && window.PFC_PRIMARIES[0])
-      ? window.PFC_PRIMARIES[0].code : '';
-    if (action === 'split') {
-      splitPct = String(r.action_value || '50');
-    } else if (action === 'split_dollar') {
-      splitMode = 'dollar';
-      splitAmt = String(r.action_value || '');
-      action = 'split';
-    } else if (action === 'set_category') {
-      setCat = r.action_value || setCat;
-    }
-    return {
-      scope: scope,
-      op: r.match_op || 'equals',
-      value: { value: r.match_value, label: label, _field: r.match_field },
-      action: action,
-      splitPct: splitPct,
-      splitAmt: splitAmt,
-      splitMode: splitMode,
-      setCategory: setCat,
-      pageScope: r.scope || 'all',
-      rule_id: r.id,
-    };
-  }
-
-  var state = editingRule ? stateFromRule(editingRule) : {
-    scope: 'merchant',
-    op: 'equals',
-    value: defaultForScope('merchant'),
-    action: 'dismiss',
-    splitPct: '50',
-    splitAmt: '',
-    splitMode: 'pct',
-    setCategory: (window.PFC_PRIMARIES && window.PFC_PRIMARIES[0])
-      ? window.PFC_PRIMARIES[0].code : '',
-    pageScope: pageScope,
-  };
-
-  var SCOPE_OPTS = [
+  var FIELD_OPTS = [
     { value: 'merchant', label: 'Merchant' },
     { value: 'category', label: 'Category' },
     { value: 'item', label: 'Item' },
+    { value: 'source', label: 'Source' },
   ];
   var OP_OPTS = [
     { value: 'equals', label: 'equals' },
     { value: 'not_equals', label: 'does not equal' },
+  ];
+  var LOGIC_OPTS = [
+    { value: 'all', label: 'All' },
+    { value: 'any', label: 'Any' },
   ];
   var ACTION_OPTS = [
     { value: 'dismiss', label: 'Dismiss' },
@@ -230,10 +175,95 @@ window.openRuleModal = function(opts) {
     { value: 'set_category', label: 'Recategorize' },
   ];
 
-  function valueOpts() {
-    return (options[state.scope] || []).map(function(o) {
+  function fieldKeyFromMatchField(mf) {
+    if (mf === 'pfc_primary') return 'category';
+    if (mf === 'pfc_detailed') return 'item';
+    if (mf === 'source') return 'source';
+    return 'merchant';
+  }
+
+  function defaultCondition(fieldKey) {
+    var list = options[fieldKey] || [];
+    var picks = {
+      merchant: function(o) { return o.value === merchant; },
+      category: function(o) { return o.value === categoryRaw; },
+      item: function(o) { return o.value === detailedRaw; },
+      source: function(o) { return o.value === sourceRaw; },
+    };
+    var found = (picks[fieldKey] && list.find(picks[fieldKey])) || list[0] || null;
+    return {
+      field: fieldKey,
+      op: 'equals',
+      value: found ? { value: found.value, label: found.label, _field: found.field } : null,
+    };
+  }
+
+  function conditionsFromRule(r) {
+    return (r.conditions || []).map(function(c) {
+      var key = fieldKeyFromMatchField(c.match_field);
+      var list = options[key] || [];
+      var found = list.find(function(o) { return o.value === c.match_value; });
+      var label = found ? found.label : c.match_value;
+      return {
+        field: key,
+        op: c.match_op || 'equals',
+        value: { value: c.match_value, label: label, _field: c.match_field },
+      };
+    });
+  }
+
+  var state;
+  if (editingRule) {
+    var existing = conditionsFromRule(editingRule);
+    if (!existing.length) existing = [defaultCondition('merchant')];
+    var action = editingRule.action;
+    var splitMode = 'pct', splitPct = '50', splitAmt = '';
+    var setCategory = (window.PFC_PRIMARIES && window.PFC_PRIMARIES[0])
+      ? window.PFC_PRIMARIES[0].code : '';
+    if (action === 'split') {
+      splitPct = String(editingRule.action_value || '50');
+    } else if (action === 'split_dollar') {
+      splitMode = 'dollar';
+      splitAmt = String(editingRule.action_value || '');
+      action = 'split';
+    } else if (action === 'set_category') {
+      setCategory = editingRule.action_value || setCategory;
+    }
+    state = {
+      conditions: existing,
+      conditionsLogic: editingRule.conditions_logic || 'all',
+      action: action, splitPct: splitPct, splitAmt: splitAmt, splitMode: splitMode,
+      setCategory: setCategory, pageScope: pageScope, rule_id: editingRule.id,
+    };
+  } else {
+    state = {
+      conditions: [defaultCondition('merchant')],
+      conditionsLogic: 'all',
+      action: 'dismiss', splitPct: '50', splitAmt: '', splitMode: 'pct',
+      setCategory: (window.PFC_PRIMARIES && window.PFC_PRIMARIES[0])
+        ? window.PFC_PRIMARIES[0].code : '',
+      pageScope: pageScope,
+    };
+  }
+
+  function valueOptsFor(fieldKey) {
+    return (options[fieldKey] || []).map(function(o) {
       return { value: o.value, label: o.label, _field: o.field };
     });
+  }
+
+  var CARET_SVG =
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"' +
+    ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<polyline points="6 9 12 15 18 9"/></svg>';
+
+  function ddHtml(key, extraClass) {
+    return '<div class="inline-dropdown rule-modal-dd ' + (extraClass || '') +
+      '" data-key="' + key + '">' +
+      '<button type="button" class="inline-dropdown-trigger" data-key="' + key + '"' +
+      ' aria-haspopup="listbox" aria-expanded="false">' +
+      '<span class="inline-dropdown-label"></span>' + CARET_SVG +
+      '</button></div>';
   }
 
   var scopeTitle = { spending: ' · Spending', income: ' · Income' }[state.pageScope] || '';
@@ -243,18 +273,18 @@ window.openRuleModal = function(opts) {
     '<div class="rule-modal" role="dialog" aria-modal="true" aria-labelledby="rule-modal-title">' +
       '<h2 id="rule-modal-title">' + (editingRule ? 'Edit rule' : 'Set rule') +
         '<span class="rule-modal-scope-tag">' + scopeTitle + '</span></h2>' +
-      '<div class="rule-modal-section">' +
-        '<div class="rule-modal-section-label">If</div>' +
-        '<div class="rule-modal-row">' +
-          '<div class="inline-dropdown rule-modal-dd" data-key="scope"><button type="button" class="inline-dropdown-trigger" data-key="scope" aria-haspopup="listbox" aria-expanded="false"><span class="inline-dropdown-label"></span><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button></div>' +
-          '<div class="inline-dropdown rule-modal-dd" data-key="op"><button type="button" class="inline-dropdown-trigger" data-key="op" aria-haspopup="listbox" aria-expanded="false"><span class="inline-dropdown-label"></span><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button></div>' +
-          '<div class="inline-dropdown rule-modal-dd rule-modal-dd-value"><button type="button" class="inline-dropdown-trigger" data-key="value" aria-haspopup="listbox" aria-expanded="false"><span class="inline-dropdown-label"></span><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button></div>' +
-        '</div>' +
-      '</div>' +
+      '<fieldset class="rule-modal-conditions">' +
+        '<legend class="rule-modal-conditions-legend">' +
+          '<span>If</span>' +
+          ddHtml('logic', 'rule-modal-dd-logic') +
+          '<span>of the following conditions are met</span>' +
+        '</legend>' +
+        '<div class="rule-modal-conditions-list"></div>' +
+      '</fieldset>' +
       '<div class="rule-modal-section">' +
         '<div class="rule-modal-section-label">Then</div>' +
         '<div class="rule-modal-row">' +
-          '<div class="inline-dropdown rule-modal-dd" data-key="action"><button type="button" class="inline-dropdown-trigger" data-key="action" aria-haspopup="listbox" aria-expanded="false"><span class="inline-dropdown-label"></span><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button></div>' +
+          ddHtml('action') +
           '<span class="rule-modal-extra" data-extra="split" hidden>' +
             '<span>so my share is</span>' +
             '<input type="number" class="rule-modal-pct" min="1" max="100" step="1" value="50">' +
@@ -265,7 +295,7 @@ window.openRuleModal = function(opts) {
           '</span>' +
           '<span class="rule-modal-extra" data-extra="recat" hidden>' +
             '<span>to</span>' +
-            '<span class="inline-dropdown rule-modal-dd rule-modal-dd-cat" data-key="setcat"><button type="button" class="inline-dropdown-trigger" data-key="setcat" aria-haspopup="listbox" aria-expanded="false"><span class="inline-dropdown-label"></span><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button></span>' +
+            ddHtml('setcat', 'rule-modal-dd-cat') +
           '</span>' +
         '</div>' +
       '</div>' +
@@ -276,8 +306,10 @@ window.openRuleModal = function(opts) {
     '</div>';
   document.body.appendChild(modal);
 
+  var listEl = modal.querySelector('.rule-modal-conditions-list');
   var pctInput = modal.querySelector('.rule-modal-pct');
   var amtInput = modal.querySelector('.rule-modal-amt');
+
   if (state.splitMode === 'dollar') {
     pctInput.value = '';
     amtInput.value = state.splitAmt || '';
@@ -287,17 +319,13 @@ window.openRuleModal = function(opts) {
   }
   pctInput.addEventListener('input', function() {
     if (pctInput.value !== '') {
-      amtInput.value = '';
-      state.splitAmt = '';
-      state.splitMode = 'pct';
+      amtInput.value = ''; state.splitAmt = ''; state.splitMode = 'pct';
     }
     state.splitPct = pctInput.value;
   });
   amtInput.addEventListener('input', function() {
     if (amtInput.value !== '') {
-      pctInput.value = '';
-      state.splitPct = '';
-      state.splitMode = 'dollar';
+      pctInput.value = ''; state.splitPct = ''; state.splitMode = 'dollar';
     }
     state.splitAmt = amtInput.value;
   });
@@ -307,69 +335,126 @@ window.openRuleModal = function(opts) {
     return f ? f.label : '';
   }
 
-  function setLabel(key, text) {
-    var btn = modal.querySelector('button[data-key="' + key + '"] .inline-dropdown-label');
-    if (btn) btn.textContent = text || '—';
+  function setLabel(trigger, text) {
+    var lbl = trigger.querySelector('.inline-dropdown-label');
+    if (lbl) lbl.textContent = text || '—';
   }
 
-  function refreshLabels() {
-    setLabel('scope', findLabel(SCOPE_OPTS, state.scope));
-    setLabel('op', findLabel(OP_OPTS, state.op));
-    setLabel('value', state.value ? state.value.label : '—');
-    setLabel('action', findLabel(ACTION_OPTS, state.action));
-    var pName = (window.PFC_PRIMARIES || []).find(function(p) {
-      return p.code === state.setCategory;
-    });
-    setLabel('setcat', pName ? pName.label : '—');
-    modal.querySelector('[data-extra="split"]').hidden = state.action !== 'split';
-    modal.querySelector('[data-extra="recat"]').hidden = state.action !== 'set_category';
-  }
-
-  refreshLabels();
-
-  function bindTrigger(key, opts, onPick) {
-    var trigger = modal.querySelector('button.inline-dropdown-trigger[data-key="' + key + '"]');
+  function bindTrigger(trigger, optsFn, currentFn, onPick) {
     trigger.addEventListener('click', function(e) {
       e.stopPropagation();
       if (trigger.getAttribute('aria-expanded') === 'true') {
         window.closeInlineDropdowns();
         return;
       }
-      var current = (function() {
-        if (key === 'scope') return state.scope;
-        if (key === 'op') return state.op;
-        if (key === 'value') return state.value ? state.value.value : '';
-        if (key === 'action') return state.action;
-        if (key === 'setcat') return state.setCategory;
-        return null;
-      })();
-      window.openInlineDropdown(trigger, opts(), current, function(opt) {
+      window.openInlineDropdown(trigger, optsFn(), currentFn(), function(opt) {
         onPick(opt);
-        refreshLabels();
+        refresh();
       });
     });
   }
 
-  bindTrigger('scope', function() { return SCOPE_OPTS; }, function(opt) {
-    state.scope = opt.value;
-    state.value = defaultForScope(opt.value);
-  });
-  bindTrigger('op', function() { return OP_OPTS; }, function(opt) { state.op = opt.value; });
-  bindTrigger('value', valueOpts, function(opt) {
-    state.value = { value: opt.value, label: opt.label, _field: opt._field };
-  });
-  bindTrigger('action', function() { return ACTION_OPTS; }, function(opt) {
-    state.action = opt.value;
-  });
-  bindTrigger('setcat', function() {
-    return (window.PFC_PRIMARIES || []).map(function(p) {
-      return { value: p.code, label: p.label };
-    });
-  }, function(opt) { state.setCategory = opt.value; });
+  function renderConditionRow(cond, idx) {
+    var row = document.createElement('div');
+    row.className = 'rule-modal-condition-row';
+    row.dataset.idx = idx;
+    row.innerHTML =
+      ddHtml('field', 'rule-modal-dd-field') +
+      ddHtml('op', 'rule-modal-dd-op') +
+      ddHtml('value', 'rule-modal-dd-value') +
+      '<button type="button" class="rule-modal-cond-add" aria-label="Add condition">+</button>' +
+      '<button type="button" class="rule-modal-cond-remove" aria-label="Remove condition"' +
+        (state.conditions.length === 1 ? ' disabled' : '') + '>−</button>';
 
-  function escListener(e) {
-    if (e.key === 'Escape') close();
+    var fieldTrigger = row.querySelector('.rule-modal-dd-field .inline-dropdown-trigger');
+    var opTrigger = row.querySelector('.rule-modal-dd-op .inline-dropdown-trigger');
+    var valueTrigger = row.querySelector('.rule-modal-dd-value .inline-dropdown-trigger');
+    setLabel(fieldTrigger, findLabel(FIELD_OPTS, cond.field));
+    setLabel(opTrigger, findLabel(OP_OPTS, cond.op));
+    setLabel(valueTrigger, cond.value ? cond.value.label : '—');
+
+    bindTrigger(fieldTrigger,
+      function() { return FIELD_OPTS; },
+      function() { return cond.field; },
+      function(opt) {
+        cond.field = opt.value;
+        var d = defaultCondition(opt.value);
+        cond.value = d.value;
+      }
+    );
+    bindTrigger(opTrigger,
+      function() { return OP_OPTS; },
+      function() { return cond.op; },
+      function(opt) { cond.op = opt.value; }
+    );
+    bindTrigger(valueTrigger,
+      function() { return valueOptsFor(cond.field); },
+      function() { return cond.value ? cond.value.value : ''; },
+      function(opt) {
+        cond.value = { value: opt.value, label: opt.label, _field: opt._field };
+      }
+    );
+
+    row.querySelector('.rule-modal-cond-add').addEventListener('click', function(e) {
+      e.stopPropagation();
+      state.conditions.splice(idx + 1, 0, defaultCondition('merchant'));
+      refresh();
+    });
+    row.querySelector('.rule-modal-cond-remove').addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (state.conditions.length === 1) return;
+      state.conditions.splice(idx, 1);
+      refresh();
+    });
+    return row;
   }
+
+  function renderConditions() {
+    listEl.innerHTML = '';
+    state.conditions.forEach(function(c, i) {
+      listEl.appendChild(renderConditionRow(c, i));
+    });
+  }
+
+  var logicTrigger = modal.querySelector('.rule-modal-dd-logic .inline-dropdown-trigger');
+  var actionTrigger = modal.querySelector('.rule-modal-dd[data-key="action"] .inline-dropdown-trigger');
+  var setcatTrigger = modal.querySelector('.rule-modal-dd-cat .inline-dropdown-trigger');
+
+  bindTrigger(logicTrigger,
+    function() { return LOGIC_OPTS; },
+    function() { return state.conditionsLogic; },
+    function(opt) { state.conditionsLogic = opt.value; }
+  );
+  bindTrigger(actionTrigger,
+    function() { return ACTION_OPTS; },
+    function() { return state.action; },
+    function(opt) { state.action = opt.value; }
+  );
+  bindTrigger(setcatTrigger,
+    function() {
+      return (window.PFC_PRIMARIES || []).map(function(p) {
+        return { value: p.code, label: p.label };
+      });
+    },
+    function() { return state.setCategory; },
+    function(opt) { state.setCategory = opt.value; }
+  );
+
+  function refresh() {
+    setLabel(logicTrigger, findLabel(LOGIC_OPTS, state.conditionsLogic));
+    setLabel(actionTrigger, findLabel(ACTION_OPTS, state.action));
+    var pName = (window.PFC_PRIMARIES || []).find(function(p) {
+      return p.code === state.setCategory;
+    });
+    setLabel(setcatTrigger, pName ? pName.label : '—');
+    modal.querySelector('[data-extra="split"]').hidden = state.action !== 'split';
+    modal.querySelector('[data-extra="recat"]').hidden = state.action !== 'set_category';
+    renderConditions();
+  }
+
+  refresh();
+
+  function escListener(e) { if (e.key === 'Escape') close(); }
   function close() {
     document.removeEventListener('keydown', escListener);
     modal.remove();
@@ -382,10 +467,13 @@ window.openRuleModal = function(opts) {
   document.addEventListener('keydown', escListener);
 
   function buildPayload() {
+    var unset = state.conditions.find(function(c) { return !c.value; });
+    if (unset) { alert('Pick a value for every condition.'); return null; }
     var payload = {
-      match_field: state.value._field,
-      match_op: state.op,
-      match_value: state.value.value,
+      conditions: state.conditions.map(function(c) {
+        return { match_field: c.value._field, match_op: c.op, match_value: c.value.value };
+      }),
+      conditions_logic: state.conditionsLogic,
       action: state.action,
       scope: state.pageScope || 'all',
     };
@@ -426,16 +514,15 @@ window.openRuleModal = function(opts) {
   }
 
   modal.querySelector('.rule-modal-save').addEventListener('click', function() {
-    if (!state.value) {
-      alert('Pick a value to match against.');
-      return;
-    }
     var payload = buildPayload();
     if (!payload) return;
-    // not_equals + dismiss is a footgun (dismisses everything but the chosen
+    // not_equals + dismiss can be a footgun (dismisses everything but the chosen
     // match). Preview affected count and confirm before applying.
-    var risky = payload.match_op === 'not_equals' && payload.action === 'dismiss';
-    if (risky) {
+    var anyNotEqualsDismiss = (
+      payload.action === 'dismiss'
+      && payload.conditions.some(function(c) { return c.match_op === 'not_equals'; })
+    );
+    if (anyNotEqualsDismiss) {
       csrfFetch('/rules/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

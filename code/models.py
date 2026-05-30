@@ -91,26 +91,39 @@ class TransactionOverride(Base):
 
 class TransactionRule(Base):
     __tablename__ = "transaction_rules"
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id", "match_field", "match_op", "match_value", "action", "scope",
-            name="uq_rule_user_field_op_value_action_scope",
-        ),
-    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    # Which Transaction column to match against.
-    match_field: Mapped[str] = mapped_column(String(32))
-    # 'equals' | 'not_equals' — case-insensitive.
-    match_op: Mapped[str] = mapped_column(String(16), nullable=False, default="equals")
-    match_value: Mapped[str] = mapped_column(String(256), index=True)
+    # Legacy single-condition fields. New rules write to `conditions` instead.
+    # Kept nullable for backward compat with rows created before the migration.
+    match_field: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    match_op: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, default="equals")
+    match_value: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, index=True)
     # 'dismiss' | 'set_category' | 'set_detailed' | 'split'
     action: Mapped[str] = mapped_column(String(32))
     action_value: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     # 'all' | 'spending' | 'income' — gates which transactions this rule touches.
     scope: Mapped[str] = mapped_column(String(16), nullable=False, default="all")
+    # 'all' (AND) | 'any' (OR) — how to combine multiple conditions.
+    conditions_logic: Mapped[str] = mapped_column(String(8), nullable=False, default="all")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    conditions: Mapped[list["TransactionRuleCondition"]] = relationship(
+        "TransactionRuleCondition", cascade="all, delete-orphan",
+        order_by="TransactionRuleCondition.id",
+    )
+
+
+class TransactionRuleCondition(Base):
+    __tablename__ = "transaction_rule_conditions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rule_id: Mapped[int] = mapped_column(
+        ForeignKey("transaction_rules.id", ondelete="CASCADE"), index=True,
+    )
+    match_field: Mapped[str] = mapped_column(String(32))
+    match_op: Mapped[str] = mapped_column(String(16), nullable=False, default="equals")
+    match_value: Mapped[str] = mapped_column(String(256))
 
 
 class AccountRate(Base):

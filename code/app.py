@@ -425,26 +425,56 @@ def transaction_override(session, user, tx_id):
     })
 
 
+def _validate_condition(c: dict):
+    field = c.get("match_field")
+    op = c.get("match_op", "equals")
+    value = c.get("match_value")
+    if field not in rules_mod.VALID_MATCH_FIELDS:
+        return None, "Invalid match_field"
+    if op not in rules_mod.VALID_MATCH_OPS:
+        return None, "Invalid match_op"
+    if not value:
+        return None, "match_value required"
+    if field == "pfc_primary" and value not in pfc.ALL_PRIMARIES:
+        return None, "Unknown category match_value"
+    if field == "pfc_detailed" and not pfc.is_valid_detailed(value):
+        return None, "Unknown detailed match_value"
+    return {"match_field": field, "match_op": op, "match_value": value}, None
+
+
 def _parse_rule_payload(data: dict):
-    match_field = data.get("match_field")
-    match_op = data.get("match_op", "equals")
-    match_value = data.get("match_value")
+    """Validate a rule payload.
+
+    Accepts either the multi-condition shape ({"conditions": [...], "conditions_logic": ...})
+    or the legacy single-condition shape ({"match_field": ..., ...}).
+    """
+    raw_conditions = data.get("conditions")
+    if raw_conditions is None:
+        raw_conditions = [{
+            "match_field": data.get("match_field"),
+            "match_op": data.get("match_op", "equals"),
+            "match_value": data.get("match_value"),
+        }]
+    if not isinstance(raw_conditions, list) or not raw_conditions:
+        return None, (jsonify({"error": "At least one condition required"}), 400)
+
+    conditions: list[dict] = []
+    for c in raw_conditions:
+        parsed, err = _validate_condition(c)
+        if err:
+            return None, (jsonify({"error": err}), 400)
+        conditions.append(parsed)
+
+    conditions_logic = data.get("conditions_logic", "all")
+    if conditions_logic not in rules_mod.VALID_LOGIC:
+        return None, (jsonify({"error": "Invalid conditions_logic"}), 400)
+
     action = data.get("action")
     action_value = data.get("action_value")
     scope = data.get("scope", "all")
 
-    if match_field not in rules_mod.VALID_MATCH_FIELDS:
-        return None, (jsonify({"error": "Invalid match_field"}), 400)
-    if match_op not in rules_mod.VALID_MATCH_OPS:
-        return None, (jsonify({"error": "Invalid match_op"}), 400)
     if scope not in rules_mod.VALID_SCOPES:
         return None, (jsonify({"error": "Invalid scope"}), 400)
-    if not match_value:
-        return None, (jsonify({"error": "match_value required"}), 400)
-    if match_field == "pfc_primary" and match_value not in pfc.ALL_PRIMARIES:
-        return None, (jsonify({"error": "Unknown category match_value"}), 400)
-    if match_field == "pfc_detailed" and not pfc.is_valid_detailed(match_value):
-        return None, (jsonify({"error": "Unknown detailed match_value"}), 400)
     if action not in rules_mod.VALID_ACTIONS:
         return None, (jsonify({"error": "Invalid action"}), 400)
     if action == "set_category" and action_value and action_value not in pfc.ALL_PRIMARIES:
@@ -468,7 +498,7 @@ def _parse_rule_payload(data: dict):
             return None, (jsonify({"error": "Split dollar amount must be positive"}), 400)
         action_value = str(amt)
     return {
-        "match_field": match_field, "match_op": match_op, "match_value": match_value,
+        "conditions": conditions, "conditions_logic": conditions_logic,
         "action": action, "action_value": action_value, "scope": scope,
     }, None
 
@@ -482,18 +512,11 @@ def rules_preview(session, user):
     fields, err = _parse_rule_payload(data)
     if err:
         return err
-    from models import Transaction
-    col = rules_mod._MATCH_COLUMNS[fields["match_field"]]
-    count = (
-        session.query(func.count(Transaction.id))
-        .filter(
-            Transaction.user_id == user.id,
-            rules_mod._build_match_filter(col, fields["match_op"], fields["match_value"]),
-            *rules_mod._build_scope_filter(fields["scope"]),
-        )
-        .scalar() or 0
+    txs = rules_mod._query_txs_for_payload(
+        user.id, fields["conditions"], fields["conditions_logic"],
+        fields["scope"], session,
     )
-    return jsonify({"matches": int(count)})
+    return jsonify({"matches": len(txs)})
 
 
 @app.route("/rules", methods=["POST"])
@@ -505,12 +528,6 @@ def rules_create(session, user):
     fields, err = _parse_rule_payload(data)
     if err:
         return err
-    match_field = fields["match_field"]
-    match_op = fields["match_op"]
-    match_value = fields["match_value"]
-    action = fields["action"]
-    action_value = fields["action_value"]
-    scope = fields["scope"]
 
     rule_id = data.get("rule_id")
     if rule_id is not None:
@@ -522,21 +539,17 @@ def rules_create(session, user):
         )
         if existing is None:
             return jsonify({"error": "Rule not found"}), 404
-        old_criteria = (
-            existing.match_field, existing.match_op, existing.match_value, existing.scope,
+        old_txs = rules_mod.snapshot_rule_txs(existing, session)
+        rules_mod.update_rule(
+            existing, fields["conditions"], fields["conditions_logic"],
+            fields["action"], fields["action_value"], fields["scope"], session,
         )
-        existing.match_field = match_field
-        existing.match_op = match_op
-        existing.match_value = match_value
-        existing.action = action
-        existing.action_value = action_value
-        existing.scope = scope
         rule = existing
-        applied = rules_mod.reapply_after_edit(rule, old_criteria, session)
+        applied = rules_mod.reapply_after_edit(rule, old_txs, session)
     else:
-        rule = rules_mod.upsert_rule(
-            user.id, match_field, match_value, action, action_value, session,
-            match_op=match_op, scope=scope,
+        rule = rules_mod.create_rule(
+            user.id, fields["conditions"], fields["conditions_logic"],
+            fields["action"], fields["action_value"], fields["scope"], session,
         )
         applied = rules_mod.apply_rule_retroactively(rule, session)
     session.commit()
@@ -556,6 +569,7 @@ def _build_rule_match_options(user, session) -> dict:
             {"field": o["field"], "value": o["value"], "label": pfc.humanize_detailed(o["value"])}
             for o in raw["item"]
         ],
+        "source": raw.get("source", []),
     }
 
 
@@ -563,7 +577,7 @@ def _build_rule_match_options(user, session) -> dict:
 @with_user
 def rules_list_view(session, user):
     pfc_data = _pfc_dropdown_data()
-    empty_options = {"merchant": [], "category": [], "item": []}
+    empty_options = {"merchant": [], "category": [], "item": [], "source": []}
     if user is None:
         return render_template(
             "rules.html", active_page="rules", no_user=True,
@@ -573,21 +587,13 @@ def rules_list_view(session, user):
         )
     rule_rows = rules_mod.list_rules(user, session)
 
-    def _display_value(r):
-        if r.match_field == "pfc_primary":
-            return pfc.humanize_primary(r.match_value)
-        if r.match_field == "pfc_detailed":
-            return pfc.humanize_detailed(r.match_value)
-        return r.match_value
-
     spending_rules: list[dict] = []
     income_rules: list[dict] = []
     for r in rule_rows:
         d = {
             "id": r.id,
-            "scope_label": rules_mod.scope_label(r),
-            "op_label": rules_mod.op_label(r),
-            "match_value": _display_value(r),
+            "conditions": rules_mod.condition_labels(r),
+            "conditions_logic": r.conditions_logic,
             "action_label": rules_mod.action_label(r),
         }
         side = rules_mod.rule_side(r)
@@ -599,9 +605,15 @@ def rules_list_view(session, user):
     rules_by_id = {
         str(r.id): {
             "id": r.id,
-            "match_field": r.match_field,
-            "match_op": r.match_op,
-            "match_value": r.match_value,
+            "conditions": [
+                {
+                    "match_field": c.match_field,
+                    "match_op": c.match_op,
+                    "match_value": c.match_value,
+                }
+                for c in rules_mod.rule_conditions(r)
+            ],
+            "conditions_logic": r.conditions_logic,
             "action": r.action,
             "action_value": r.action_value,
             "scope": r.scope,
@@ -651,7 +663,7 @@ def income_view(session, user):
             month_label=month_options[0]["label"],
             daily_avg=0.0, prev_month_change_pct=None,
             primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
-            rule_match_options={"merchant": [], "category": [], "item": []},
+            rule_match_options={"merchant": [], "category": [], "item": [], "source": []},
         )
 
     sources = income_mod.available_sources(user)
