@@ -187,6 +187,21 @@ ALL_PRIMARIES: list[str] = [
     "GOVERNMENT_AND_NON_PROFIT",
 ]
 
+# Primaries that make sense on each side. INCOME/TRANSFER_IN are income-side;
+# everything else is spending-side.
+INCOME_SIDE_PRIMARIES: list[str] = ["INCOME", "TRANSFER_IN"]
+SPENDING_SIDE_PRIMARIES: list[str] = [
+    p for p in ALL_PRIMARIES if p not in INCOME_SIDE_PRIMARIES
+]
+
+
+def primaries_for_side(side: str) -> list[str]:
+    if side == "spending":
+        return SPENDING_SIDE_PRIMARIES
+    if side == "income":
+        return INCOME_SIDE_PRIMARIES
+    return ALL_PRIMARIES
+
 
 _VALID_DETAILED: set[str] = {
     code for codes in PFC_TAXONOMY.values() for code in codes

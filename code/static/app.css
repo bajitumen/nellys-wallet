@@ -658,9 +658,9 @@
     max-width: none;
   }
   /* Constant widths so the row doesn't shift around with label length. */
-  .rule-modal-dd-field { width: 160px; }
-  .rule-modal-dd-op { width: 160px; }
-  .rule-modal-dd-value { width: 220px; }
+  .rule-modal-dd-field { flex: 0 0 160px; min-width: 0; }
+  .rule-modal-dd-op { flex: 0 0 160px; min-width: 0; }
+  .rule-modal-dd-value { flex: 1 1 220px; min-width: 0; }
   .rule-modal-dd-logic { width: 90px; }
   .rule-modal-dd[data-key="action"] { width: 160px; }
   .rule-modal-dd-cat { width: 200px; }
@@ -677,13 +677,24 @@
     padding: 0 0.5rem;
     color: var(--text-mid);
     font-size: 0.92em;
+    flex-wrap: wrap;
   }
   .rule-modal-condition-row {
     display: flex;
     align-items: baseline;
     gap: 0.5rem;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     padding: 0.35rem 0;
+  }
+  @media (max-width: 640px) {
+    .rule-modal { padding: 1rem; }
+    .rule-modal-dd-field,
+    .rule-modal-dd-op,
+    .rule-modal-dd-value { flex: 1 1 100%; }
+    .rule-modal-dd-cat,
+    .rule-modal-dd[data-key="action"] { width: 100%; }
+    .rule-modal-row { flex-direction: column; align-items: stretch; }
+    .rule-modal-row .rule-modal-extra { width: 100%; }
   }
   .rule-modal-cond-add,
   .rule-modal-cond-remove {

@@ -86,8 +86,13 @@
     });
   }
 
+  var _refreshInFlight = null;
+
   function refreshMain(href) {
-    return fetch(href || window.location.href, { credentials: 'same-origin' })
+    // Serialize: a second concurrent refresh would race with the first's DOM
+    // replace and could leave stale content if it resolves out of order.
+    if (_refreshInFlight) return _refreshInFlight;
+    _refreshInFlight = fetch(href || window.location.href, { credentials: 'same-origin' })
       .then(function(r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.text();
@@ -105,7 +110,14 @@
         if (window._txFilters && window._txFilters.refresh) {
           window._txFilters.refresh();
         }
-      });
+      })
+      .catch(function(err) {
+        console.error('refreshMain failed', err);
+        // Fall back to a hard reload so the user never gets stuck on stale UI.
+        window.location.reload();
+      })
+      .then(function() { _refreshInFlight = null; });
+    return _refreshInFlight;
   }
 
   function wireMonthMenu() {

@@ -1,7 +1,7 @@
 import os
 import stat
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 import config
@@ -30,6 +30,38 @@ engine = create_engine(
     connect_args={"check_same_thread": False} if config.DATABASE_URL.startswith("sqlite") else {},
     echo=False,
 )
+
+
+def _is_file_backed_sqlite(url: str) -> bool:
+    if not url.startswith("sqlite"):
+        return False
+    # In-memory: sqlite:// or sqlite:///:memory:
+    if url in ("sqlite://", "sqlite:///") or url.endswith(":memory:"):
+        return False
+    return True
+
+
+if config.DATABASE_URL.startswith("sqlite"):
+    # WAL allows concurrent reads with one writer (default is full DB lock).
+    # busy_timeout makes writers wait up to 10s for a lock instead of failing
+    # immediately — prevents user-visible hangs when a background sync overlaps
+    # with a rule save.
+    #
+    # Operational caveats for deploys:
+    #   * WAL writes two sidecar files (<db>-wal, <db>-shm). A backup that
+    #     copies only the main .db file can lose committed data. Use
+    #     `sqlite3.backup()` / `VACUUM INTO`, not `cp`.
+    #   * WAL relies on POSIX fcntl locks; misbehaves on networked filesystems
+    #     (NFS, SMB). Keep the DB on local disk.
+    # WAL is skipped for in-memory test DBs (no-op there anyway).
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_connection, _record):
+        cur = dbapi_connection.cursor()
+        if _is_file_backed_sqlite(config.DATABASE_URL):
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA busy_timeout=10000")
+        cur.close()
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 

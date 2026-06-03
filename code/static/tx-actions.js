@@ -495,21 +495,51 @@ window.openRuleModal = function(opts) {
 
   function submit(payload) {
     var saveBtn = modal.querySelector('.rule-modal-save');
+    var origLabel = saveBtn.textContent;
     saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+
+    var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timeoutMs = 30000;
+    var timer = setTimeout(function() {
+      if (controller) controller.abort();
+    }, timeoutMs);
+
+    function done() {
+      clearTimeout(timer);
+      saveBtn.disabled = false;
+      saveBtn.textContent = origLabel;
+    }
+
     csrfFetch('/rules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: controller ? controller.signal : undefined,
     })
       .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
       .then(function(res) {
         if (!res.ok) {
+          done();
           alert('Failed to save rule: ' + (res.data.error || 'unknown error'));
-          saveBtn.disabled = false;
           return;
         }
+        clearTimeout(timer);
+        if (res.data && res.data.warning) {
+          alert('Rule saved, but applying to past transactions failed: ' + res.data.warning);
+        }
+        // Hard reload: a rule save can affect many rows; refreshMain races with
+        // a follow-up save if the user opens another modal mid-refresh.
         close();
-        window.NWAnimate.refreshMain();
+        window.location.reload();
+      })
+      .catch(function(err) {
+        done();
+        if (err && err.name === 'AbortError') {
+          alert('Saving the rule timed out. A background sync may still be running — try again in a few seconds.');
+        } else {
+          alert('Failed to save rule: ' + (err && err.message ? err.message : 'network error'));
+        }
       });
   }
 

@@ -104,10 +104,11 @@ def inject_layout_globals():
     }
 
 
-def _pfc_dropdown_data() -> dict:
+def _pfc_dropdown_data(side: str = "all") -> dict:
+    allowed = set(pfc.primaries_for_side(side))
     primaries = [
         {"code": code, "label": pfc.humanize_primary(code)}
-        for code in pfc.ALL_PRIMARIES
+        for code in pfc.ALL_PRIMARIES if code in allowed
     ]
     taxonomy = {
         primary: [
@@ -115,6 +116,7 @@ def _pfc_dropdown_data() -> dict:
             for code in details
         ]
         for primary, details in pfc.PFC_TAXONOMY.items()
+        if primary in allowed
     }
     return {"primaries": primaries, "taxonomy": taxonomy}
 
@@ -277,7 +279,7 @@ def spending_view(session, user):
     ]
     month_options = _month_options(12)
 
-    pfc_data = _pfc_dropdown_data()
+    pfc_data = _pfc_dropdown_data(side="spending")
     if user is None:
         return render_template(
             "spending.html", active_page="spending", linked=False, no_user=True,
@@ -302,7 +304,7 @@ def spending_view(session, user):
     chips = [
         {"code": c, "label": pfc.humanize_primary(c)} for c in categories_filter
     ]
-    rule_match_options = _build_rule_match_options(user, session)
+    rule_match_options = _build_rule_match_options(user, session, side="spending")
     return render_template(
         "spending.html",
         active_page="spending",
@@ -529,45 +531,85 @@ def rules_create(session, user):
     if err:
         return err
 
-    rule_id = data.get("rule_id")
+    raw_rule_id = data.get("rule_id")
+    rule_id: int | None = None
+    if raw_rule_id is not None:
+        try:
+            rule_id = int(raw_rule_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid rule_id"}), 400
+
+    apply_warning = None
     if rule_id is not None:
         from models import TransactionRule
         existing = (
             session.query(TransactionRule)
-            .filter_by(id=int(rule_id), user_id=user.id)
+            .filter_by(id=rule_id, user_id=user.id)
             .one_or_none()
         )
         if existing is None:
             return jsonify({"error": "Rule not found"}), 404
-        old_txs = rules_mod.snapshot_rule_txs(existing, session)
+        # Snapshot the txs the OLD rule definition touched as plain IDs so we
+        # don't depend on ORM object freshness across the transaction.
+        old_tx_ids = [t.id for t in rules_mod.snapshot_rule_txs(existing, session)]
         rules_mod.update_rule(
             existing, fields["conditions"], fields["conditions_logic"],
             fields["action"], fields["action_value"], fields["scope"], session,
         )
         rule = existing
-        applied = rules_mod.reapply_after_edit(rule, old_txs, session)
+        # Atomic: rule edit + override reconciliation in one transaction. If
+        # reapply fails we MUST roll back the rule edit too — otherwise the
+        # overrides left over from the old rule definition never self-heal.
+        try:
+            from models import Transaction
+            old_txs = (
+                session.query(Transaction).filter(Transaction.id.in_(old_tx_ids)).all()
+                if old_tx_ids else []
+            )
+            applied = rules_mod.reapply_after_edit(rule, old_txs, session)
+            session.commit()
+        except Exception:
+            log.exception("reapply_after_edit failed for rule_id=%s", rule.id)
+            session.rollback()
+            return jsonify({
+                "error": "Could not apply the edited rule to past transactions. Please try again.",
+            }), 500
     else:
         rule = rules_mod.create_rule(
             user.id, fields["conditions"], fields["conditions_logic"],
             fields["action"], fields["action_value"], fields["scope"], session,
         )
-        applied = rules_mod.apply_rule_retroactively(rule, session)
-    session.commit()
+        # Persist the rule first; on create there are no stale overrides to
+        # reconcile, so a failed retro apply is recoverable from the next sync.
+        session.commit()
+        try:
+            applied = rules_mod.apply_rule_retroactively(rule, session)
+            session.commit()
+        except Exception:
+            log.exception("apply_rule_retroactively failed for rule_id=%s", rule.id)
+            session.rollback()
+            applied = 0
+            apply_warning = "Rule saved, but applying to past transactions failed."
     spending_mod.invalidate_cache(user.id)
-    return jsonify({"ok": True, "rule_id": rule.id, "applied_to": applied})
+    out = {"ok": True, "rule_id": rule.id, "applied_to": applied}
+    if apply_warning:
+        out["warning"] = apply_warning
+    return jsonify(out)
 
 
-def _build_rule_match_options(user, session) -> dict:
+def _build_rule_match_options(user, session, side: str = "all") -> dict:
     raw = rules_mod.user_match_options(user, session)
+    allowed_primaries = set(pfc.primaries_for_side(side))
     return {
         "merchant": raw["merchant"],
         "category": [
             {"field": o["field"], "value": o["value"], "label": pfc.humanize_primary(o["value"])}
-            for o in raw["category"]
+            for o in raw["category"] if o["value"] in allowed_primaries
         ],
         "item": [
             {"field": o["field"], "value": o["value"], "label": pfc.humanize_detailed(o["value"])}
             for o in raw["item"]
+            if pfc.primary_of(o["value"]) in allowed_primaries
         ],
         "source": raw.get("source", []),
     }
@@ -637,10 +679,15 @@ def rules_list_view(session, user):
 def rules_delete(session, user, rule_id):
     if user is None:
         return jsonify({"error": "No user"}), 400
-    ok = rules_mod.delete_rule(user, rule_id, session)
-    if not ok:
-        return jsonify({"error": "Rule not found"}), 404
-    session.commit()
+    try:
+        ok = rules_mod.delete_rule(user, rule_id, session)
+        if not ok:
+            return jsonify({"error": "Rule not found"}), 404
+        session.commit()
+    except Exception:
+        log.exception("delete_rule failed for rule_id=%s", rule_id)
+        session.rollback()
+        return jsonify({"error": "Could not delete the rule. Please try again."}), 500
     spending_mod.invalidate_cache(user.id)
     return jsonify({"ok": True})
 
@@ -653,7 +700,7 @@ def income_view(session, user):
     month_options = _month_options(12)
 
     if user is None:
-        pfc_data = _pfc_dropdown_data()
+        pfc_data = _pfc_dropdown_data(side="income")
         return render_template(
             "income.html", active_page="income", no_user=True, linked=False,
             total=0.0, count=0, payers=[], transactions=[],
@@ -673,8 +720,8 @@ def income_view(session, user):
         user, month=month, source=source, session=session,
     )
     month_options = income_mod.available_months(user, session, source=source)
-    pfc_data = _pfc_dropdown_data()
-    rule_match_options = _build_rule_match_options(user, session)
+    pfc_data = _pfc_dropdown_data(side="income")
+    rule_match_options = _build_rule_match_options(user, session, side="income")
     return render_template(
         "income.html",
         active_page="income",

@@ -432,6 +432,242 @@ def test_more_specific_rule_supersedes_earlier_rule_override(user_with_item, db_
     assert ov.category_override == "ENTERTAINMENT"
 
 
+def test_create_rule_is_idempotent_on_identical_payload(client, user_with_item, db_session):
+    """Posting the same rule payload twice creates exactly one rule.
+
+    Guards the timeout-retry case where the client aborts but the server
+    already committed: a follow-up retry must not duplicate.
+    """
+    from models import TransactionRule
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo")
+    payload = {
+        "conditions": [
+            {"match_field": "merchant_name", "match_op": "equals", "match_value": "Venmo"},
+        ],
+        "conditions_logic": "all",
+        "action": "dismiss",
+        "scope": "spending",
+    }
+    r1 = client.post("/rules", json=payload)
+    r2 = client.post("/rules", json=payload)
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert r1.get_json()["rule_id"] == r2.get_json()["rule_id"]
+    assert db_session.query(TransactionRule).count() == 1
+
+
+def test_create_rule_is_idempotent_regardless_of_match_value_case(client, user_with_item, db_session):
+    """Same logical rule with different casing on match_value still dedupes."""
+    from models import TransactionRule
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo")
+    r1 = client.post("/rules", json={
+        "conditions": [{"match_field": "merchant_name", "match_op": "equals", "match_value": "Venmo"}],
+        "conditions_logic": "all", "action": "dismiss", "scope": "spending",
+    })
+    r2 = client.post("/rules", json={
+        "conditions": [{"match_field": "merchant_name", "match_op": "equals", "match_value": "VENMO"}],
+        "conditions_logic": "all", "action": "dismiss", "scope": "spending",
+    })
+    assert r1.get_json()["rule_id"] == r2.get_json()["rule_id"]
+    assert db_session.query(TransactionRule).count() == 1
+
+
+def test_create_rule_different_logic_is_separate(client, user_with_item, db_session):
+    """Same conditions but different conditions_logic is NOT a duplicate."""
+    from models import TransactionRule
+    conds = [
+        {"match_field": "merchant_name", "match_op": "equals", "match_value": "Venmo"},
+        {"match_field": "pfc_primary", "match_op": "equals", "match_value": "FOOD_AND_DRINK"},
+    ]
+    client.post("/rules", json={"conditions": conds, "conditions_logic": "all",
+                                 "action": "dismiss", "scope": "all"})
+    client.post("/rules", json={"conditions": conds, "conditions_logic": "any",
+                                 "action": "dismiss", "scope": "all"})
+    assert db_session.query(TransactionRule).count() == 2
+
+
+def test_edit_with_failing_reapply_rolls_back_rule_edit(client, user_with_item, db_session, monkeypatch):
+    """If reapply_after_edit fails the rule edit must roll back too.
+
+    Otherwise the user has a rule that disagrees with the overrides it left
+    behind, and nothing in the codebase ever reconciles them.
+    """
+    import rules as rules_mod
+    from models import TransactionRule
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Starbucks")
+
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals", "match_value": "Starbucks"}],
+        "all", "dismiss", None, "all", db_session,
+    )
+    db_session.commit()
+    original_value = rule.conditions[0].match_value
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("apply blew up")
+    monkeypatch.setattr(rules_mod, "reapply_after_edit", boom)
+
+    r = client.post("/rules", json={
+        "rule_id": rule.id,
+        "conditions": [{"match_field": "merchant_name", "match_op": "equals", "match_value": "Peets"}],
+        "conditions_logic": "all",
+        "action": "dismiss",
+        "scope": "all",
+    })
+    assert r.status_code == 500
+
+    db_session.expire_all()
+    after = db_session.query(TransactionRule).filter_by(id=rule.id).one()
+    assert after.conditions[0].match_value == original_value, \
+        "rule edit must roll back when reapply fails"
+
+
+def test_rules_endpoint_rejects_non_integer_rule_id(client, user_with_item, db_session):
+    """rule_id='abc' returns 400, not 500 from int() throwing."""
+    r = client.post("/rules", json={
+        "rule_id": "not-an-int",
+        "conditions": [{"match_field": "merchant_name", "match_op": "equals", "match_value": "X"}],
+        "conditions_logic": "all", "action": "dismiss", "scope": "all",
+    })
+    assert r.status_code == 400
+
+
+def test_null_field_does_not_match_not_equals_rule(user_with_item, db_session):
+    """A tx with NULL merchant_name must NOT match `merchant_name != X`.
+
+    SQL `lower(NULL) != x` is NULL (excluded); Python must agree, otherwise the
+    same rule applies at sync time but not on retro-apply.
+    """
+    import rules as rules_mod
+    from models import Transaction, TransactionOverride
+    item = user_with_item.items[0]
+    # merchant_name is NULL; name is populated.
+    db_session.add(Transaction(
+        user_id=user_with_item.id, item_id=item.id, plaid_transaction_id="t1",
+        date=date.today(), amount=10.0, name="ATM WITHDRAWAL",
+        merchant_name=None, pfc_primary="GENERAL_MERCHANDISE",
+    ))
+    db_session.commit()
+
+    # In-memory matcher: NULL merchant_name should NOT satisfy != "Starbucks".
+    cond = rules_mod._LegacyCondition("merchant_name", "not_equals", "Starbucks")
+    tx = db_session.query(Transaction).one()
+    assert rules_mod._condition_matches_tx(tx, cond) is False
+
+    # End-to-end: rule with merchant_name != Starbucks should leave the tx alone.
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "not_equals", "match_value": "Starbucks"}],
+        "all", "dismiss", None, "all", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+    assert db_session.query(TransactionOverride).count() == 0
+
+
+def test_delete_rule_clears_rule_sourced_overrides(user_with_item, db_session):
+    """Deleting a rule must clear the source='rule' overrides it created."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo")
+    _seed_tx(db_session, item, "t2", 10.0, "Venmo")
+
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals", "match_value": "Venmo"}],
+        "all", "dismiss", None, "all", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+    assert db_session.query(TransactionOverride).filter_by(dismissed=True).count() == 2
+
+    rules_mod.delete_rule(user_with_item, rule.id, db_session)
+    db_session.commit()
+    assert db_session.query(TransactionOverride).count() == 0
+
+
+def test_delete_rule_preserves_manual_overrides(user_with_item, db_session):
+    """Manual overrides survive rule deletion even when they overlap the rule's scope."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo")
+    db_session.add(TransactionOverride(
+        user_id=user_with_item.id, plaid_transaction_id="t1",
+        category_override="ENTERTAINMENT", source="manual",
+    ))
+    db_session.commit()
+
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals", "match_value": "Venmo"}],
+        "all", "dismiss", None, "all", db_session,
+    )
+    db_session.commit()  # rule exists but won't touch the manual override
+    rules_mod.delete_rule(user_with_item, rule.id, db_session)
+    db_session.commit()
+
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.source == "manual"
+    assert ov.category_override == "ENTERTAINMENT"
+
+
+def test_delete_rule_does_not_clear_overrides_from_another_rule(user_with_item, db_session):
+    """Two rules dismiss the same tx; deleting one keeps the other's effect."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo", pfc="TRANSFER_OUT")
+
+    r_merchant = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals", "match_value": "Venmo"}],
+        "all", "dismiss", None, "all", db_session,
+    )
+    rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "pfc_primary", "match_op": "equals", "match_value": "TRANSFER_OUT"}],
+        "all", "dismiss", None, "all", db_session,
+    )
+    rules_mod.apply_rule_retroactively(r_merchant, db_session)
+    db_session.commit()
+    assert db_session.query(TransactionOverride).filter_by(dismissed=True).count() == 1
+
+    rules_mod.delete_rule(user_with_item, r_merchant.id, db_session)
+    db_session.commit()
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.dismissed is True  # other rule still in play
+
+
+def test_winning_rules_ties_break_by_id(user_with_item, db_session):
+    """On equal specificity the older rule wins (deterministic)."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 10.0, "Same", pfc="FOOD_AND_DRINK")
+
+    older = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals", "match_value": "Same"}],
+        "all", "set_category", "GENERAL_MERCHANDISE", "all", db_session,
+    )
+    db_session.commit()
+    rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals", "match_value": "Same"}],
+        "all", "set_category", "ENTERTAINMENT", "all", db_session,
+    )
+    db_session.commit()
+    rules_mod.apply_rule_retroactively(older, db_session)
+    db_session.commit()
+    ov = db_session.query(TransactionOverride).one()
+    assert ov.category_override == "GENERAL_MERCHANDISE"  # older wins, stable
+
+
 def test_spending_scoped_rule_does_not_touch_income_tx(user_with_item, db_session):
     """A rule with scope='spending' must not match income transactions."""
     import rules as rules_mod

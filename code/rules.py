@@ -179,12 +179,20 @@ def _build_scope_filter(scope: str):
 
 
 def _condition_matches_tx(tx: Transaction, cond, item_institutions=None) -> bool:
-    target = (cond.match_value or "").lower()
+    # Align with SQL semantics: NULL on either side means "unknown" and never
+    # satisfies an equality test (in either direction). Without this, retro-apply
+    # (SQL) and sync-time apply (Python) disagree on NULL-field txs, so the same
+    # rule can match a tx in one path and skip it in the other.
     if cond.match_field == "source":
-        v_lc = (item_institutions or {}).get(tx.item_id, "Unknown").lower()
+        if tx.item_id is None:
+            return False
+        v = (item_institutions or {}).get(tx.item_id)
     else:
         v = getattr(tx, cond.match_field, None)
-        v_lc = v.lower() if v else ""
+    if v is None:
+        return False
+    target = (cond.match_value or "").lower()
+    v_lc = v.lower()
     if cond.match_op == "not_equals":
         return v_lc != target
     return v_lc == target
@@ -201,12 +209,20 @@ def _tx_matches_rule(tx: Transaction, rule: TransactionRule, item_institutions=N
 
 
 def _winning_rules(matched: list[TransactionRule]) -> list[TransactionRule]:
-    """Per action group, keep only the most specific matching rule."""
+    """Per action group, keep only the most specific matching rule.
+
+    Tie-break is deterministic: on equal specificity the older rule wins
+    (lower id). Without this, the result depends on row order from the DB
+    and the same tx can flap between rules across syncs.
+    """
+    def rank(r: TransactionRule) -> tuple:
+        # Higher specificity sorts first; older id breaks ties.
+        return (-rule_specificity(r), r.id if r.id is not None else 0)
+
     by_group: dict[str, TransactionRule] = {}
-    for r in matched:
+    for r in sorted(matched, key=rank):
         key = _action_group(r.action)
-        cur = by_group.get(key)
-        if cur is None or rule_specificity(r) > rule_specificity(cur):
+        if key not in by_group:
             by_group[key] = r
     return list(by_group.values())
 
@@ -316,7 +332,10 @@ def _recompute_overrides_for_txs(user_id: int, txs: list[Transaction], session) 
     if not txs:
         return 0
     all_rules = (
-        session.query(TransactionRule).filter_by(user_id=user_id).all()
+        session.query(TransactionRule)
+        .filter_by(user_id=user_id)
+        .order_by(TransactionRule.id)
+        .all()
     )
     institutions = _item_institutions(user_id, session)
     tx_ids = [t.plaid_transaction_id for t in txs]
@@ -384,7 +403,12 @@ def apply_rules_to_new_transactions(
 ) -> int:
     if not new_txs:
         return 0
-    rules = session.query(TransactionRule).filter_by(user_id=user_id).all()
+    rules = (
+        session.query(TransactionRule)
+        .filter_by(user_id=user_id)
+        .order_by(TransactionRule.id)
+        .all()
+    )
     if not rules:
         return 0
     institutions = _item_institutions(user_id, session)
@@ -436,11 +460,70 @@ def _mirror_legacy_fields(rule: TransactionRule, conditions: list[dict]) -> None
         rule.match_value = None
 
 
+def _canonical_payload_conditions(conditions: list[dict]) -> tuple:
+    """Stable key for a list of payload conditions (case-insensitive on value)."""
+    return tuple(sorted(
+        (
+            c["match_field"],
+            c.get("match_op", "equals"),
+            (c.get("match_value") or "").lower(),
+        )
+        for c in conditions
+    ))
+
+
+def _canonical_rule_conditions(rule: TransactionRule) -> tuple:
+    return tuple(sorted(
+        (
+            c.match_field,
+            c.match_op or "equals",
+            (c.match_value or "").lower(),
+        )
+        for c in rule_conditions(rule)
+    ))
+
+
+def find_equivalent_rule(
+    user_id: int, conditions: list[dict], conditions_logic: str,
+    action: str, action_value: str | None, scope: str, session,
+) -> TransactionRule | None:
+    """Return an existing rule with the same logical identity, or None."""
+    target = _canonical_payload_conditions(conditions)
+    candidates = (
+        session.query(TransactionRule)
+        .filter(
+            TransactionRule.user_id == user_id,
+            TransactionRule.action == action,
+            TransactionRule.scope == scope,
+            TransactionRule.conditions_logic == conditions_logic,
+        )
+        .all()
+    )
+    for r in candidates:
+        if (r.action_value or None) != (action_value or None):
+            continue
+        if _canonical_rule_conditions(r) == target:
+            return r
+    return None
+
+
 def create_rule(
     user_id: int, conditions: list[dict], conditions_logic: str,
     action: str, action_value: str | None, scope: str, session,
 ) -> TransactionRule:
-    """Always inserts a new rule. Caller is responsible for dedupe semantics."""
+    """Idempotent create: returns an existing rule with the same logical identity
+    if one exists, otherwise inserts a new one.
+
+    Identity = (user, sorted conditions, conditions_logic, action, action_value, scope).
+    This prevents duplicates when a client retries after a slow apply / aborted
+    request — the retry returns the same rule instead of inserting a copy.
+    """
+    existing = find_equivalent_rule(
+        user_id, conditions, conditions_logic, action, action_value, scope, session,
+    )
+    if existing is not None:
+        return existing
+
     rule = TransactionRule(
         user_id=user_id, action=action, action_value=action_value,
         scope=scope, conditions_logic=conditions_logic,
@@ -569,6 +652,13 @@ def user_match_options(user: User, session) -> dict:
 
 
 def delete_rule(user: User, rule_id: int, session) -> bool:
+    """Delete a rule and reconcile the overrides it created.
+
+    Snapshots the txs the rule used to match, deletes the rule, then recomputes
+    overrides for those txs without the rule in play. Any source='rule' overrides
+    that were created only because of this rule get cleared. Manual overrides
+    are protected by `_recompute_overrides_for_txs`.
+    """
     row = (
         session.query(TransactionRule)
         .filter_by(id=rule_id, user_id=user.id)
@@ -576,5 +666,8 @@ def delete_rule(user: User, rule_id: int, session) -> bool:
     )
     if row is None:
         return False
+    old_txs = _query_txs_for_rule(row, session)
     session.delete(row)
+    session.flush()
+    _recompute_overrides_for_txs(user.id, old_txs, session)
     return True
