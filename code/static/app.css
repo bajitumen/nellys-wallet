@@ -627,8 +627,16 @@
     max-width: 760px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   }
-  .rule-modal h2 { margin: 0 0 1rem; font-size: 1.1rem; }
+  .rule-modal h2 {
+    margin: 0 0 1rem;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+  }
   .rule-modal-scope-tag { color: var(--text-mid); font-weight: 400; }
+  .rule-modal h2 .rule-modal-dd { font-size: 0.9rem; font-weight: 400; }
   .rule-modal-section { margin-bottom: 1.25rem; }
   .rule-modal-section-label {
     font-size: 0.75em;
@@ -662,6 +670,7 @@
   .rule-modal-dd-op { flex: 0 0 160px; min-width: 0; }
   .rule-modal-dd-value { flex: 1 1 220px; min-width: 0; }
   .rule-modal-dd-logic { width: 90px; }
+  .rule-modal-dd-applyto { width: 130px; }
   .rule-modal-dd[data-key="action"] { width: 160px; }
   .rule-modal-dd-cat { width: 200px; }
   .rule-modal-conditions {
@@ -779,6 +788,80 @@
     margin: 1.75rem 0 0.5rem;
     font-weight: 500;
   }
+  .settings-form { margin: 0; }
+  .settings-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .settings-row-text { flex: 1; min-width: 0; line-height: 1.5; }
+  .settings-row-label { font-size: 1rem; color: var(--text); }
+  .settings-hint {
+    margin: 0.3rem 0 0;
+    color: var(--text-mid); font-size: 0.9em; line-height: 1.5;
+  }
+  .ph-check {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    color: var(--text-mid);
+    flex-shrink: 0;
+    margin-top: 0.1rem;
+  }
+  .ph-check input { position: absolute; opacity: 0; pointer-events: none; }
+  .ph-check svg { width: 1.35rem; height: 1.35rem; display: none; }
+  .ph-check input:checked ~ .ph-check-on { display: block; color: var(--text); }
+  .ph-check input:not(:checked) ~ .ph-check-off { display: block; }
+  .ph-check:hover { color: var(--text); }
+  .ph-check input:focus-visible ~ svg {
+    outline: 2px solid var(--text-mid);
+    outline-offset: 2px;
+    border-radius: 50%;
+  }
+  .settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 1.25rem;
+  }
+  .settings-actions .primary {
+    padding: 0.45rem 1.1rem; border-radius: 4px;
+    background: var(--text); color: var(--surface); border: 1px solid var(--text);
+    cursor: pointer; font: inherit;
+  }
+  .settings-actions .primary:disabled {
+    background: var(--line); color: var(--text-faint); border-color: var(--line);
+    cursor: not-allowed;
+  }
+  .rules-tabs,
+  .page-tabs {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--line);
+    margin: 1rem 0 1.5rem;
+  }
+  .rules-tab,
+  .page-tab {
+    padding: 0.5rem 0.9rem;
+    font-size: 0.92rem;
+    color: var(--text-mid);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .rules-tab:hover,
+  .page-tab:hover { color: var(--text); }
+  .rules-tab.active,
+  .page-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--text);
+    font-weight: 500;
+  }
   .rules-table { margin-top: 0.25rem; table-layout: fixed; }
   /* Sentence column fills; action column shrinks to content and pins right. */
   .rule-sentence { width: auto; line-height: 1.6; }
@@ -786,12 +869,12 @@
   .rule-empty td {
     padding: 0.6rem 0.75rem;
     color: var(--text-faint);
-    font-size: 0.9em;
+    line-height: 1.6;
     border-bottom: 1px solid var(--line);
   }
-  .rule-add-row td {
+  .rules-table .rule-add-row td {
     padding: 0.3rem 0;
-    border-bottom: 1px solid var(--line);
+    border-bottom: none;
   }
   .rule-add-inline {
     display: inline-flex;

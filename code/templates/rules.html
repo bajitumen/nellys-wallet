@@ -10,12 +10,27 @@
   {{ empty_state("No user provisioned yet.") }}
 {% else %}
 
-{% macro rules_section(rows, side_label, page_scope) %}
-<h2 class="rules-section-heading">{{ side_label }}</h2>
-<table class="rules-table">
+{% set tabs = [
+  ("spending", "Spending"),
+  ("income", "Income"),
+  ("both", "Both"),
+] %}
+
+<nav class="rules-tabs" role="tablist">
+  {% for tab_id, label in tabs %}
+    <a class="rules-tab{% if active_tab == tab_id %} active{% endif %}"
+       href="?tab={{ tab_id }}"
+       role="tab"
+       aria-selected="{{ 'true' if active_tab == tab_id else 'false' }}">
+      {{ label }}
+    </a>
+  {% endfor %}
+</nav>
+
+<table class="rules-table" data-page-scope="{{ active_tab }}">
   <tbody>
-  {% if rows %}
-    {% for r in rows %}
+  {% if tab_rules %}
+    {% for r in tab_rules %}
       <tr data-rule-id="{{ r.id }}">
         <td class="rule-sentence">
           <span class="rule-conn">If</span>
@@ -40,14 +55,10 @@
     <tr class="rule-empty"><td colspan="2">No rules yet</td></tr>
   {% endif %}
   <tr class="rule-add-row">
-    <td colspan="2"><button type="button" class="rule-add-inline" data-page-scope="{{ page_scope }}" aria-label="Add new rule"><span class="rule-add-label">Add new rule</span><span class="rule-add-plus">+</span></button></td>
+    <td colspan="2"><button type="button" class="rule-add-inline" data-page-scope="{{ 'all' if active_tab == 'both' else active_tab }}" aria-label="Add new rule"><span class="rule-add-label">Add new rule</span><span class="rule-add-plus">+</span></button></td>
   </tr>
   </tbody>
 </table>
-{% endmacro %}
-
-{{ rules_section(spending_rules, "Spending", "spending") }}
-{{ rules_section(income_rules, "Income", "income") }}
 
 {% endif %}
 
@@ -63,6 +74,13 @@
 <script src="{{ url_for('static', filename='tx-actions.js') }}"></script>
 <script>
   document.addEventListener('click', function(e) {
+    var tab = e.target.closest('.rules-tab');
+    if (tab) {
+      e.preventDefault();
+      history.pushState({}, '', tab.getAttribute('href'));
+      window.NWAnimate.refreshMain(tab.getAttribute('href'));
+      return;
+    }
     var add = e.target.closest('.rule-add-inline');
     if (add) {
       window.openRuleModal({ pageScope: add.dataset.pageScope || 'all' });

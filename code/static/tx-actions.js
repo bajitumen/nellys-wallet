@@ -20,18 +20,19 @@ window.applyOverride = function(txId, payload, failMsg) {
     });
   }
 
-  function buildMenu(isDismissed) {
+  function buildMenu(isDismissed, hasRule) {
     var menu = document.createElement('div');
     menu.className = 'tx-menu';
+    var ruleLabel = hasRule ? 'Edit rule' : 'Set rule';
     if (isDismissed) {
       menu.innerHTML =
         '<button class="tx-menu-item" data-action="restore">Restore</button>' +
-        '<button class="tx-menu-item" data-action="set-rule">Set rule</button>';
+        '<button class="tx-menu-item" data-action="set-rule">' + ruleLabel + '</button>';
     } else {
       menu.innerHTML =
         '<button class="tx-menu-item" data-action="split">Split</button>' +
         '<button class="tx-menu-item" data-action="dismiss">Dismiss</button>' +
-        '<button class="tx-menu-item" data-action="set-rule">Set rule</button>' +
+        '<button class="tx-menu-item" data-action="set-rule">' + ruleLabel + '</button>' +
         '<button class="tx-menu-item" data-action="reset">Reset to original</button>';
     }
     return menu;
@@ -68,7 +69,9 @@ window.applyOverride = function(txId, payload, failMsg) {
       if (existing) {
         existing.remove();
       } else {
-        var menu = buildMenu(kebab.dataset.dismissed === '1');
+        var row = kebab.closest('tr.tx-row');
+        var hasRule = !!(row && row.dataset.ruleId);
+        var menu = buildMenu(kebab.dataset.dismissed === '1', hasRule);
         kebab.parentElement.appendChild(menu);
         positionMenu(menu);
       }
@@ -94,7 +97,14 @@ window.applyOverride = function(txId, payload, failMsg) {
       window.applyOverride(txId, { dismiss: true }, 'Failed to dismiss');
     } else if (action === 'set-rule') {
       menu.remove();
-      window.openRuleModal({ kebab: kebab });
+      var row = kebab.closest('tr.tx-row');
+      var ruleId = row && row.dataset.ruleId;
+      var existingRule = ruleId && window.RULES_BY_ID && window.RULES_BY_ID[ruleId];
+      if (existingRule) {
+        window.openRuleModal({ kebab: kebab, rule: existingRule });
+      } else {
+        window.openRuleModal({ kebab: kebab });
+      }
     } else if (action === 'reset') {
       window.applyOverride(txId, { clear: true }, 'Failed to reset');
     } else if (action === 'restore') {
@@ -173,6 +183,11 @@ window.openRuleModal = function(opts) {
     { value: 'dismiss', label: 'Dismiss' },
     { value: 'split', label: 'Split' },
     { value: 'set_category', label: 'Recategorize' },
+  ];
+  var APPLY_TO_OPTS = [
+    { value: 'spending', label: 'Spending' },
+    { value: 'income', label: 'Income' },
+    { value: 'all', label: 'Both' },
   ];
 
   function fieldKeyFromMatchField(mf) {
@@ -266,13 +281,14 @@ window.openRuleModal = function(opts) {
       '</button></div>';
   }
 
-  var scopeTitle = { spending: ' · Spending', income: ' · Income' }[state.pageScope] || '';
   var modal = document.createElement('div');
   modal.className = 'rule-modal-backdrop';
   modal.innerHTML =
     '<div class="rule-modal" role="dialog" aria-modal="true" aria-labelledby="rule-modal-title">' +
       '<h2 id="rule-modal-title">' + (editingRule ? 'Edit rule' : 'Set rule') +
-        '<span class="rule-modal-scope-tag">' + scopeTitle + '</span></h2>' +
+        '<span class="rule-modal-scope-tag">: </span>' +
+        ddHtml('applyTo', 'rule-modal-dd-applyto') +
+      '</h2>' +
       '<fieldset class="rule-modal-conditions">' +
         '<legend class="rule-modal-conditions-legend">' +
           '<span>If</span>' +
@@ -419,6 +435,7 @@ window.openRuleModal = function(opts) {
   var logicTrigger = modal.querySelector('.rule-modal-dd-logic .inline-dropdown-trigger');
   var actionTrigger = modal.querySelector('.rule-modal-dd[data-key="action"] .inline-dropdown-trigger');
   var setcatTrigger = modal.querySelector('.rule-modal-dd-cat .inline-dropdown-trigger');
+  var applyToTrigger = modal.querySelector('.rule-modal-dd-applyto .inline-dropdown-trigger');
 
   bindTrigger(logicTrigger,
     function() { return LOGIC_OPTS; },
@@ -439,10 +456,16 @@ window.openRuleModal = function(opts) {
     function() { return state.setCategory; },
     function(opt) { state.setCategory = opt.value; }
   );
+  bindTrigger(applyToTrigger,
+    function() { return APPLY_TO_OPTS; },
+    function() { return state.pageScope; },
+    function(opt) { state.pageScope = opt.value; }
+  );
 
   function refresh() {
     setLabel(logicTrigger, findLabel(LOGIC_OPTS, state.conditionsLogic));
     setLabel(actionTrigger, findLabel(ACTION_OPTS, state.action));
+    setLabel(applyToTrigger, findLabel(APPLY_TO_OPTS, state.pageScope));
     var pName = (window.PFC_PRIMARIES || []).find(function(p) {
       return p.code === state.setCategory;
     });

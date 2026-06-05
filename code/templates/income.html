@@ -108,7 +108,8 @@
         data-payer="{{ tx.payer }}"
         data-description="{{ tx.name }}"
         data-category-raw="{{ tx.category_raw or '' }}"
-        data-item="{{ tx.detailed_raw or '' }}">
+        data-item="{{ tx.detailed_raw or '' }}"
+        {% if tx.rule_id %}data-rule-id="{{ tx.rule_id }}"{% endif %}>
       <td class="muted" data-value="{{ tx.date.isoformat() }}">{{ tx.date.strftime('%b %d') }}</td>
       {% if not current_source %}<td class="muted col-hide-mobile">{{ tx.source }}</td>{% endif %}
       <td>
@@ -142,6 +143,7 @@
   window.PFC_TAXONOMY = {{ taxonomy | tojson }};
   window.PFC_PRIMARIES = {{ primaries | tojson }};
   window.RULE_MATCH_OPTIONS = {{ rule_match_options | tojson }};
+  window.RULES_BY_ID = {{ rules_by_id | tojson }};
   window.RULE_PAGE_SCOPE = 'income';
 </script>
 <script src="{{ url_for('static', filename='tx-filters.js') }}"></script>

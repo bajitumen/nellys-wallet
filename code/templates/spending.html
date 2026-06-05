@@ -153,6 +153,7 @@
         data-source="{{ tx.source }}"
         data-description="{{ tx.name }}"
         data-item="{{ tx.detailed_raw or '' }}"
+        {% if tx.rule_id %}data-rule-id="{{ tx.rule_id }}"{% endif %}
         {% if categories_filter and tx.category_raw not in categories_filter %}style="display: none"{% endif %}>
       <td class="muted" data-value="{{ tx.date.isoformat() }}">{{ tx.date.strftime('%b %d') }}</td>
       {% if not current_source %}<td class="muted col-hide-mobile">{{ tx.source }}</td>{% endif %}
@@ -215,6 +216,7 @@
   window.PFC_TAXONOMY = {{ taxonomy | tojson }};
   window.PFC_PRIMARIES = {{ primaries | tojson }};
   window.RULE_MATCH_OPTIONS = {{ rule_match_options | tojson }};
+  window.RULES_BY_ID = {{ rules_by_id | tojson }};
   window.RULE_PAGE_SCOPE = 'spending';
 </script>
 <script src="{{ url_for('static', filename='tx-filters.js') }}"></script>

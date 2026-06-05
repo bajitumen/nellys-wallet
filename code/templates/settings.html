@@ -1,0 +1,72 @@
+{% extends "_layout.html" %}
+{% from "_macros.html" import empty_state %}
+{% block title %}Settings{% endblock %}
+{% block heading %}Settings{% endblock %}
+{% block content %}
+
+{% if no_user %}
+  {{ empty_state("No user provisioned yet.") }}
+{% else %}
+
+{% set tabs = [
+  ("accounts", "Accounts"),
+] %}
+
+<nav class="page-tabs" role="tablist">
+  {% for tab_id, label in tabs %}
+    <a class="page-tab{% if active_tab == tab_id %} active{% endif %}"
+       href="?tab={{ tab_id }}"
+       role="tab"
+       aria-selected="{{ 'true' if active_tab == tab_id else 'false' }}">
+      {{ label }}
+    </a>
+  {% endfor %}
+</nav>
+
+<form method="post" class="settings-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="settings-row">
+    <div class="settings-row-text">
+      <div class="settings-row-label">Count transfers between my accounts as transactions</div>
+    </div>
+    <label class="ph-check">
+      <input type="checkbox" name="count_transfers"
+             {% if count_transfers %}checked{% endif %}>
+      <svg class="ph-check-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="currentColor"/>
+        <polyline points="8 12.5 11 15.5 16.5 9.5" stroke="var(--surface, #fff)" fill="none"/>
+      </svg>
+      <svg class="ph-check-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/>
+      </svg>
+    </label>
+  </div>
+  <div class="settings-actions">
+    <button type="submit" class="primary" disabled>Save</button>
+  </div>
+</form>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function() {
+    var form = document.querySelector('.settings-form');
+    if (!form) return;
+    var save = form.querySelector('.settings-actions .primary');
+    var inputs = form.querySelectorAll('input[type="checkbox"]');
+    var initial = {};
+    inputs.forEach(function(el) { initial[el.name] = el.checked; });
+    function changed() {
+      for (var i = 0; i < inputs.length; i++) {
+        if (inputs[i].checked !== initial[inputs[i].name]) return true;
+      }
+      return false;
+    }
+    function refresh() { save.disabled = !changed(); }
+    inputs.forEach(function(el) { el.addEventListener('change', refresh); });
+    refresh();
+  })();
+</script>
+{% endblock %}

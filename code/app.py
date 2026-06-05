@@ -177,6 +177,32 @@ def plaid_faq():
     return render_template("plaid_faq.html")
 
 
+@app.route("/settings", methods=["GET", "POST"])
+@with_user
+def settings_view(session, user):
+    active_tab = request.args.get("tab") or "accounts"
+    if active_tab not in {"accounts"}:
+        active_tab = "accounts"
+    if user is None:
+        return render_template(
+            "settings.html", active_page="settings", no_user=True,
+            active_tab=active_tab, count_transfers=True,
+        )
+    if request.method == "POST":
+        user.count_transfers_as_transactions = (
+            request.form.get("count_transfers") == "on"
+        )
+        session.commit()
+        spending_mod.invalidate_cache(user.id)
+        income_mod.invalidate_cache(user.id)
+        return redirect("/settings?tab=" + active_tab)
+    return render_template(
+        "settings.html", active_page="settings", no_user=False,
+        active_tab=active_tab,
+        count_transfers=user.count_transfers_as_transactions,
+    )
+
+
 @app.route("/sign-in", defaults={"page": "sign-in"})
 @app.route("/sign-up", defaults={"page": "sign-up"})
 def auth_page(page):
@@ -291,6 +317,8 @@ def spending_view(session, user):
             month_label=month_options[0]["label"],
             daily_avg=0.0, prev_month_change_pct=None,
             primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
+            rule_match_options={"merchant": [], "category": [], "item": [], "source": []},
+            rules_by_id={},
         )
 
     sources = spending_mod.available_sources(user)
@@ -305,6 +333,10 @@ def spending_view(session, user):
         {"code": c, "label": pfc.humanize_primary(c)} for c in categories_filter
     ]
     rule_match_options = _build_rule_match_options(user, session, side="spending")
+    visible_rule_ids = sorted({
+        tx["rule_id"] for tx in transactions if tx.get("rule_id")
+    })
+    rules_by_id = rules_mod.rules_by_id_dict(user.id, session, visible_rule_ids)
     return render_template(
         "spending.html",
         active_page="spending",
@@ -327,6 +359,7 @@ def spending_view(session, user):
         prev_month_change_pct=data["prev_month_change_pct"],
         primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
         rule_match_options=rule_match_options,
+        rules_by_id=rules_by_id,
     )
 
 
@@ -618,19 +651,25 @@ def _build_rule_match_options(user, session, side: str = "all") -> dict:
 @app.route("/rules", methods=["GET"])
 @with_user
 def rules_list_view(session, user):
+    valid_tabs = {"spending", "income", "both"}
+    active_tab = request.args.get("tab") or "spending"
+    if active_tab not in valid_tabs:
+        active_tab = "spending"
+
     pfc_data = _pfc_dropdown_data()
     empty_options = {"merchant": [], "category": [], "item": [], "source": []}
     if user is None:
         return render_template(
             "rules.html", active_page="rules", no_user=True,
-            spending_rules=[], income_rules=[], has_rules=False,
+            active_tab=active_tab,
+            tab_rules=[],
+            has_rules=False,
             primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
             rule_match_options=empty_options, rules_by_id={},
         )
     rule_rows = rules_mod.list_rules(user, session)
 
-    spending_rules: list[dict] = []
-    income_rules: list[dict] = []
+    rules_by_tab: dict[str, list[dict]] = {"spending": [], "income": [], "both": []}
     for r in rule_rows:
         d = {
             "id": r.id,
@@ -639,10 +678,12 @@ def rules_list_view(session, user):
             "action_label": rules_mod.action_label(r),
         }
         side = rules_mod.rule_side(r)
-        if side in ("spending", "both"):
-            spending_rules.append(d)
-        if side in ("income", "both"):
-            income_rules.append(d)
+        if side == "both":
+            rules_by_tab["both"].append(d)
+        elif side == "spending":
+            rules_by_tab["spending"].append(d)
+        elif side == "income":
+            rules_by_tab["income"].append(d)
 
     rules_by_id = {
         str(r.id): {
@@ -664,7 +705,8 @@ def rules_list_view(session, user):
     }
     return render_template(
         "rules.html", active_page="rules", no_user=False,
-        spending_rules=spending_rules, income_rules=income_rules,
+        active_tab=active_tab,
+        tab_rules=rules_by_tab[active_tab],
         has_rules=bool(rule_rows),
         primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
         rule_match_options=_build_rule_match_options(user, session),
@@ -711,6 +753,7 @@ def income_view(session, user):
             daily_avg=0.0, prev_month_change_pct=None,
             primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
             rule_match_options={"merchant": [], "category": [], "item": [], "source": []},
+            rules_by_id={},
         )
 
     sources = income_mod.available_sources(user)
@@ -722,6 +765,10 @@ def income_view(session, user):
     month_options = income_mod.available_months(user, session, source=source)
     pfc_data = _pfc_dropdown_data(side="income")
     rule_match_options = _build_rule_match_options(user, session, side="income")
+    visible_rule_ids = sorted({
+        tx["rule_id"] for tx in data["transactions"] if tx.get("rule_id")
+    })
+    rules_by_id = rules_mod.rules_by_id_dict(user.id, session, visible_rule_ids)
     return render_template(
         "income.html",
         active_page="income",
@@ -741,6 +788,7 @@ def income_view(session, user):
         prev_month_change_pct=data["prev_month_change_pct"],
         primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
         rule_match_options=rule_match_options,
+        rules_by_id=rules_by_id,
     )
 
 

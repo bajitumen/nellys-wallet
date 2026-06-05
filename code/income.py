@@ -5,6 +5,7 @@ from datetime import date, datetime
 
 from sqlalchemy import func
 
+import rules as rules_mod
 from cache import KeyedCache
 from models import Transaction, TransactionOverride, User
 from spending import _load_overrides, previous_month_window, resolve_month
@@ -50,6 +51,11 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         }
         if not items_by_id:
             return []
+    income_primaries = (
+        ("INCOME", "TRANSFER_IN")
+        if getattr(user, "count_transfers_as_transactions", True)
+        else ("INCOME",)
+    )
     # SQLite-only; if we move to Postgres, swap to to_char(date, 'YYYY-MM').
     month_col = func.strftime("%Y-%m", Transaction.date)
     rows = (
@@ -57,7 +63,7 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         .filter(
             Transaction.user_id == user.id,
             Transaction.item_id.in_(items_by_id),
-            Transaction.pfc_primary.in_(("INCOME", "TRANSFER_IN")),
+            Transaction.pfc_primary.in_(income_primaries),
             Transaction.amount < 0,
         )
         .distinct()
@@ -118,6 +124,11 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             return out
 
     prev_start, prev_end = previous_month_window(start, end)
+    income_primaries = (
+        ("INCOME", "TRANSFER_IN")
+        if getattr(user, "count_transfers_as_transactions", True)
+        else ("INCOME",)
+    )
     tx_rows = (
         session.query(Transaction)
         .filter(
@@ -125,7 +136,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             Transaction.date >= prev_start,
             Transaction.date <= end,
             Transaction.item_id.in_(items_by_id),
-            Transaction.pfc_primary.in_(("INCOME", "TRANSFER_IN")),
+            Transaction.pfc_primary.in_(income_primaries),
             Transaction.amount < 0,
         )
         .all()
@@ -134,6 +145,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
     overrides_by_tx = _load_overrides(
         user.id, [t.plaid_transaction_id for t in tx_rows], session,
     )
+    rule_id_by_tx = rules_mod.applied_rule_id_by_tx(tx_rows, user.id, session)
 
     payer_totals: dict[str, float] = defaultdict(float)
     payer_counts: dict[str, int] = defaultdict(int)
@@ -161,6 +173,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
                 "dismissed": True,
                 "category_raw": tx.pfc_primary,
                 "detailed_raw": tx.pfc_detailed,
+                "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
             })
             continue
         amount = _apply_income_override(tx, override)
@@ -186,6 +199,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             "dismissed": False,
             "category_raw": tx.pfc_primary,
             "detailed_raw": tx.pfc_detailed,
+            "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
         })
 
     out["total"] = sum(payer_totals.values())

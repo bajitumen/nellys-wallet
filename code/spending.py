@@ -44,6 +44,9 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         }
         if not items_by_id:
             return []
+    excluded = set(pfc.EXCLUDED_CATEGORIES)
+    if not getattr(user, "count_transfers_as_transactions", True):
+        excluded.add("TRANSFER_OUT")
     # SQLite-only; if we move to Postgres, swap to to_char(date, 'YYYY-MM').
     month_col = func.strftime("%Y-%m", Transaction.date)
     rows = (
@@ -52,7 +55,7 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
             Transaction.user_id == user.id,
             Transaction.item_id.in_(items_by_id),
             Transaction.amount > 0,
-            ~Transaction.pfc_primary.in_(pfc.EXCLUDED_CATEGORIES),
+            ~Transaction.pfc_primary.in_(excluded),
         )
         .distinct()
         .order_by(month_col.desc())
@@ -305,6 +308,12 @@ def _fetch_last_month_uncached(
             return out
 
     prev_start, prev_end = previous_month_window(start, end)
+    extra_filters = []
+    if not getattr(user, "count_transfers_as_transactions", True):
+        extra_filters.append(
+            (Transaction.pfc_primary.is_(None))
+            | (Transaction.pfc_primary != "TRANSFER_OUT")
+        )
     tx_rows = (
         session.query(Transaction)
         .filter(
@@ -313,6 +322,7 @@ def _fetch_last_month_uncached(
             Transaction.date <= end,
             Transaction.item_id.in_(items_by_id),
             Transaction.amount > 0,
+            *extra_filters,
         )
         .all()
     )
@@ -320,6 +330,7 @@ def _fetch_last_month_uncached(
     overrides_by_tx = _load_overrides(
         user.id, [t.plaid_transaction_id for t in tx_rows], session,
     )
+    rule_id_by_tx = rules_mod.applied_rule_id_by_tx(tx_rows, user.id, session)
 
     totals: dict[str, float] = defaultdict(float)
     counts: dict[str, int] = defaultdict(int)
@@ -357,6 +368,7 @@ def _fetch_last_month_uncached(
                 "original_amount": tx.amount,
                 "split_percentage": override.split_percentage,
                 "dismissed": True,
+                "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
             })
             continue
 
@@ -393,6 +405,7 @@ def _fetch_last_month_uncached(
             "original_amount": tx.amount,
             "split_percentage": split_percentage,
             "dismissed": False,
+            "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
         })
 
     out["total"] = sum(totals.values())
@@ -487,6 +500,9 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
         user.id, [t.plaid_transaction_id for t in tx_rows], session,
     )
 
+    count_transfers = getattr(user, "count_transfers_as_transactions", True)
+    income_primaries = {"INCOME", "TRANSFER_IN"} if count_transfers else {"INCOME"}
+
     spend_by_month: dict[tuple[int, int], float] = defaultdict(float)
     income_by_month: dict[tuple[int, int], float] = defaultdict(float)
     for tx in tx_rows:
@@ -495,12 +511,14 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
             continue
         key = (tx.date.year, tx.date.month)
         if tx.amount > 0:
+            if not count_transfers and tx.pfc_primary == "TRANSFER_OUT":
+                continue
             applied = _apply_spend_override(tx, ov)
             if applied is None:
                 continue
             _, amount, _, _ = applied
             spend_by_month[key] += amount
-        elif tx.amount < 0 and tx.pfc_primary in ("INCOME", "TRANSFER_IN"):
+        elif tx.amount < 0 and tx.pfc_primary in income_primaries:
             amount = -tx.amount
             if ov and ov.amount_override is not None:
                 amount = ov.amount_override

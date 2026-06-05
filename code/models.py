@@ -29,6 +29,12 @@ class User(Base):
     monthly_income: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     monthly_spend: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # When False, transfers between the user's own accounts (Plaid's
+    # TRANSFER_IN / TRANSFER_OUT) are dropped from spending + income totals.
+    count_transfers_as_transactions: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True,
+    )
+
     items: Mapped[list["PlaidItem"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

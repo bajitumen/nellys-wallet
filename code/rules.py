@@ -102,20 +102,16 @@ def _resolve_source_item_ids(user_id: int, value: str, session) -> set[int]:
 
 
 def rule_side(rule: TransactionRule) -> str:
-    if rule.scope in ("spending", "income"):
-        return rule.scope
-    conds = rule_conditions(rule)
-    for c in conds:
-        if c.match_field == "pfc_primary":
-            return "income" if c.match_value in INCOME_PRIMARIES else "spending"
-        if c.match_field == "pfc_detailed":
-            primary = pfc_mod.primary_of(c.match_value)
-            return "income" if primary in INCOME_PRIMARIES else "spending"
-    if rule.action == "set_category":
-        return "income" if rule.action_value in INCOME_PRIMARIES else "spending"
-    if rule.action == "set_detailed":
-        primary = pfc_mod.primary_of(rule.action_value or "")
-        return "income" if primary in INCOME_PRIMARIES else "spending"
+    """Which /rules section(s) the rule appears in.
+
+    Honors the user's explicit scope choice: 'spending' / 'income' go to that
+    section only; 'all' goes to BOTH sections. We deliberately don't infer
+    from match fields anymore — the user picked 'Both' for a reason.
+    """
+    if rule.scope == "spending":
+        return "spending"
+    if rule.scope == "income":
+        return "income"
     return "both"
 
 
@@ -385,6 +381,67 @@ def apply_rule_retroactively(rule: TransactionRule, session) -> int:
 def snapshot_rule_txs(rule: TransactionRule, session) -> list[Transaction]:
     """Capture the txs the rule currently matches, for use before an edit."""
     return _query_txs_for_rule(rule, session)
+
+
+def applied_rule_id_by_tx(
+    txs: list[Transaction], user_id: int, session,
+) -> dict[str, int]:
+    """Return {plaid_transaction_id: rule_id} for each tx where a rule currently matches.
+
+    Picks the most-specific matching rule (older id wins on ties), mirroring
+    `_winning_rules`. Used to render an "Edit rule" affordance on rule-affected rows.
+    """
+    if not txs:
+        return {}
+    rules = (
+        session.query(TransactionRule)
+        .filter_by(user_id=user_id)
+        .order_by(TransactionRule.id)
+        .all()
+    )
+    if not rules:
+        return {}
+    institutions = _item_institutions(user_id, session)
+    out: dict[str, int] = {}
+    for tx in txs:
+        matched = [r for r in rules if _tx_matches_rule(tx, r, institutions)]
+        if not matched:
+            continue
+        winner = sorted(matched, key=lambda r: (-rule_specificity(r), r.id))[0]
+        out[tx.plaid_transaction_id] = winner.id
+    return out
+
+
+def rules_by_id_dict(user_id: int, session, rule_ids: list[int]) -> dict[str, dict]:
+    """Serialize the named rules into the shape the rule-modal expects."""
+    if not rule_ids:
+        return {}
+    rows = (
+        session.query(TransactionRule)
+        .filter(
+            TransactionRule.user_id == user_id,
+            TransactionRule.id.in_(rule_ids),
+        )
+        .all()
+    )
+    return {
+        str(r.id): {
+            "id": r.id,
+            "conditions": [
+                {
+                    "match_field": c.match_field,
+                    "match_op": c.match_op,
+                    "match_value": c.match_value,
+                }
+                for c in rule_conditions(r)
+            ],
+            "conditions_logic": r.conditions_logic,
+            "action": r.action,
+            "action_value": r.action_value,
+            "scope": r.scope,
+        }
+        for r in rows
+    }
 
 
 def reapply_after_edit(

@@ -113,6 +113,11 @@ def init_db():
             conn.execute(text("ALTER TABLE users ADD COLUMN monthly_income FLOAT"))
         if user_cols and "monthly_spend" not in user_cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN monthly_spend FLOAT"))
+        if user_cols and "count_transfers_as_transactions" not in user_cols:
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN count_transfers_as_transactions "
+                "BOOLEAN NOT NULL DEFAULT 1"
+            ))
 
         tx_cols = {
             row[1] for row in conn.execute(text("PRAGMA table_info(transactions)"))
