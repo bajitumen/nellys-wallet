@@ -51,11 +51,6 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         }
         if not items_by_id:
             return []
-    income_primaries = (
-        ("INCOME", "TRANSFER_IN")
-        if getattr(user, "count_transfers_as_transactions", True)
-        else ("INCOME",)
-    )
     # SQLite-only; if we move to Postgres, swap to to_char(date, 'YYYY-MM').
     month_col = func.strftime("%Y-%m", Transaction.date)
     rows = (
@@ -63,8 +58,9 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         .filter(
             Transaction.user_id == user.id,
             Transaction.item_id.in_(items_by_id),
-            Transaction.pfc_primary.in_(income_primaries),
+            Transaction.pfc_primary.in_(("INCOME", "TRANSFER_IN")),
             Transaction.amount < 0,
+            Transaction.is_internal_transfer.is_(False),
         )
         .distinct()
         .order_by(month_col.desc())
@@ -124,11 +120,6 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             return out
 
     prev_start, prev_end = previous_month_window(start, end)
-    income_primaries = (
-        ("INCOME", "TRANSFER_IN")
-        if getattr(user, "count_transfers_as_transactions", True)
-        else ("INCOME",)
-    )
     tx_rows = (
         session.query(Transaction)
         .filter(
@@ -136,8 +127,9 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             Transaction.date >= prev_start,
             Transaction.date <= end,
             Transaction.item_id.in_(items_by_id),
-            Transaction.pfc_primary.in_(income_primaries),
+            Transaction.pfc_primary.in_(("INCOME", "TRANSFER_IN")),
             Transaction.amount < 0,
+            Transaction.is_internal_transfer.is_(False),
         )
         .all()
     )

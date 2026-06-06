@@ -788,53 +788,6 @@
     margin: 1.75rem 0 0.5rem;
     font-weight: 500;
   }
-  .settings-form { margin: 0; }
-  .settings-row {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1.5rem;
-    padding: 1rem 0;
-    border-bottom: 1px solid var(--line);
-  }
-  .settings-row-text { flex: 1; min-width: 0; line-height: 1.5; }
-  .settings-row-label { font-size: 1rem; color: var(--text); }
-  .settings-hint {
-    margin: 0.3rem 0 0;
-    color: var(--text-mid); font-size: 0.9em; line-height: 1.5;
-  }
-  .ph-check {
-    display: inline-flex;
-    align-items: center;
-    cursor: pointer;
-    color: var(--text-mid);
-    flex-shrink: 0;
-    margin-top: 0.1rem;
-  }
-  .ph-check input { position: absolute; opacity: 0; pointer-events: none; }
-  .ph-check svg { width: 1.35rem; height: 1.35rem; display: none; }
-  .ph-check input:checked ~ .ph-check-on { display: block; color: var(--text); }
-  .ph-check input:not(:checked) ~ .ph-check-off { display: block; }
-  .ph-check:hover { color: var(--text); }
-  .ph-check input:focus-visible ~ svg {
-    outline: 2px solid var(--text-mid);
-    outline-offset: 2px;
-    border-radius: 50%;
-  }
-  .settings-actions {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 1.25rem;
-  }
-  .settings-actions .primary {
-    padding: 0.45rem 1.1rem; border-radius: 4px;
-    background: var(--text); color: var(--surface); border: 1px solid var(--text);
-    cursor: pointer; font: inherit;
-  }
-  .settings-actions .primary:disabled {
-    background: var(--line); color: var(--text-faint); border-color: var(--line);
-    cursor: not-allowed;
-  }
   .rules-tabs,
   .page-tabs {
     display: flex;
@@ -1519,7 +1472,6 @@
       grid-template-columns: repeat(2, 1fr) !important;
     }
     .overview-charts { grid-template-columns: 1fr; }
-    .overview-charts .monthly-spend-chart { order: -1; }
     .col-hide-mobile { display: none !important; }
   }
 
@@ -1600,7 +1552,6 @@
     .card .value .delta { font-size: 0.45em; }
 
     .overview-charts { grid-template-columns: 1fr; }
-    .overview-charts .monthly-spend-chart { order: -1; }
     .chart-card { padding: 0.85rem 1rem; }
 
     th, td { padding: 0.5rem 0.4rem; }

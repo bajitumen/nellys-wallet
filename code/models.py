@@ -208,6 +208,12 @@ class Transaction(Base):
     pfc_primary: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     pfc_detailed: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
+    # True when this tx has been paired with the opposite leg of a transfer
+    # between the user's own accounts. Set by rules.pair_internal_transfers().
+    is_internal_transfer: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, index=True,
+    )
+
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

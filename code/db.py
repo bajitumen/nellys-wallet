@@ -126,6 +126,15 @@ def init_db():
             conn.execute(text(
                 "ALTER TABLE transactions ADD COLUMN pfc_detailed VARCHAR(64)"
             ))
+        if tx_cols and "is_internal_transfer" not in tx_cols:
+            conn.execute(text(
+                "ALTER TABLE transactions ADD COLUMN is_internal_transfer "
+                "BOOLEAN NOT NULL DEFAULT 0"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_tx_internal_transfer "
+                "ON transactions (user_id, is_internal_transfer)"
+            ))
 
         item_cols = {
             row[1] for row in conn.execute(text("PRAGMA table_info(plaid_items)"))

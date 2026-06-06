@@ -177,32 +177,6 @@ def plaid_faq():
     return render_template("plaid_faq.html")
 
 
-@app.route("/settings", methods=["GET", "POST"])
-@with_user
-def settings_view(session, user):
-    active_tab = request.args.get("tab") or "accounts"
-    if active_tab not in {"accounts"}:
-        active_tab = "accounts"
-    if user is None:
-        return render_template(
-            "settings.html", active_page="settings", no_user=True,
-            active_tab=active_tab, count_transfers=True,
-        )
-    if request.method == "POST":
-        user.count_transfers_as_transactions = (
-            request.form.get("count_transfers") == "on"
-        )
-        session.commit()
-        spending_mod.invalidate_cache(user.id)
-        income_mod.invalidate_cache(user.id)
-        return redirect("/settings?tab=" + active_tab)
-    return render_template(
-        "settings.html", active_page="settings", no_user=False,
-        active_tab=active_tab,
-        count_transfers=user.count_transfers_as_transactions,
-    )
-
-
 @app.route("/sign-in", defaults={"page": "sign-in"})
 @app.route("/sign-up", defaults={"page": "sign-up"})
 def auth_page(page):

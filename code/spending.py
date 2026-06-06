@@ -44,9 +44,6 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         }
         if not items_by_id:
             return []
-    excluded = set(pfc.EXCLUDED_CATEGORIES)
-    if not getattr(user, "count_transfers_as_transactions", True):
-        excluded.add("TRANSFER_OUT")
     # SQLite-only; if we move to Postgres, swap to to_char(date, 'YYYY-MM').
     month_col = func.strftime("%Y-%m", Transaction.date)
     rows = (
@@ -55,7 +52,8 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
             Transaction.user_id == user.id,
             Transaction.item_id.in_(items_by_id),
             Transaction.amount > 0,
-            ~Transaction.pfc_primary.in_(excluded),
+            ~Transaction.pfc_primary.in_(pfc.EXCLUDED_CATEGORIES),
+            Transaction.is_internal_transfer.is_(False),
         )
         .distinct()
         .order_by(month_col.desc())
@@ -237,6 +235,11 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
 
     rules_mod.apply_rules_to_new_transactions(user.id, new_inserts, session)
 
+    # After new tx rows land, look for new internal-transfer pairs so the
+    # "Exclude transfers between my accounts" setting can drop them automatically.
+    import transfers as transfers_mod
+    transfers_mod.pair_internal_transfers(user.id, session)
+
     user.last_transactions_sync = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()
     invalidate_cache(user.id)
@@ -308,12 +311,6 @@ def _fetch_last_month_uncached(
             return out
 
     prev_start, prev_end = previous_month_window(start, end)
-    extra_filters = []
-    if not getattr(user, "count_transfers_as_transactions", True):
-        extra_filters.append(
-            (Transaction.pfc_primary.is_(None))
-            | (Transaction.pfc_primary != "TRANSFER_OUT")
-        )
     tx_rows = (
         session.query(Transaction)
         .filter(
@@ -322,7 +319,7 @@ def _fetch_last_month_uncached(
             Transaction.date <= end,
             Transaction.item_id.in_(items_by_id),
             Transaction.amount > 0,
-            *extra_filters,
+            Transaction.is_internal_transfer.is_(False),
         )
         .all()
     )
@@ -500,25 +497,22 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
         user.id, [t.plaid_transaction_id for t in tx_rows], session,
     )
 
-    count_transfers = getattr(user, "count_transfers_as_transactions", True)
-    income_primaries = {"INCOME", "TRANSFER_IN"} if count_transfers else {"INCOME"}
-
     spend_by_month: dict[tuple[int, int], float] = defaultdict(float)
     income_by_month: dict[tuple[int, int], float] = defaultdict(float)
     for tx in tx_rows:
+        if tx.is_internal_transfer:
+            continue
         ov = overrides_by_tx.get(tx.plaid_transaction_id)
         if ov and ov.dismissed:
             continue
         key = (tx.date.year, tx.date.month)
         if tx.amount > 0:
-            if not count_transfers and tx.pfc_primary == "TRANSFER_OUT":
-                continue
             applied = _apply_spend_override(tx, ov)
             if applied is None:
                 continue
             _, amount, _, _ = applied
             spend_by_month[key] += amount
-        elif tx.amount < 0 and tx.pfc_primary in income_primaries:
+        elif tx.amount < 0 and tx.pfc_primary in ("INCOME", "TRANSFER_IN"):
             amount = -tx.amount
             if ov and ov.amount_override is not None:
                 amount = ov.amount_override

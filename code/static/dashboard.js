@@ -273,17 +273,42 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
   svg.addEventListener('mousemove', function(e) { handleHoverAt(e.clientX); });
   svg.addEventListener('mouseleave', hideHover);
 
+  // Direction-locking touch handling: defer the hover read-out until we know
+  // whether the user is scrolling the page (vertical) or scrubbing the chart
+  // (horizontal). Without this, any touch on the chart calls preventDefault
+  // in touchmove and traps vertical page scroll on mobile.
+  var touchState = null;
+  var TOUCH_LOCK_THRESHOLD = 8;  // px before we commit to an axis
+
   svg.addEventListener('touchstart', function(e) {
-    if (e.touches.length > 0) handleHoverAt(e.touches[0].clientX);
+    if (e.touches.length !== 1) { touchState = null; return; }
+    touchState = {
+      x0: e.touches[0].clientX,
+      y0: e.touches[0].clientY,
+      lock: null,  // 'h' = chart, 'v' = page scroll
+    };
   }, { passive: true });
+
   svg.addEventListener('touchmove', function(e) {
-    if (e.touches.length > 0) {
-      handleHoverAt(e.touches[0].clientX);
+    if (!touchState || e.touches.length !== 1) return;
+    var t = e.touches[0];
+    var dx = t.clientX - touchState.x0;
+    var dy = t.clientY - touchState.y0;
+    if (touchState.lock === null) {
+      if (Math.abs(dx) > TOUCH_LOCK_THRESHOLD || Math.abs(dy) > TOUCH_LOCK_THRESHOLD) {
+        touchState.lock = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      }
+    }
+    if (touchState.lock === 'h') {
+      handleHoverAt(t.clientX);
       e.preventDefault();
     }
+    // lock === 'v' or null: stay out of the way, let the page scroll.
   }, { passive: false });
-  svg.addEventListener('touchend', hideHover);
-  svg.addEventListener('touchcancel', hideHover);
+
+  function endTouch() { touchState = null; hideHover(); }
+  svg.addEventListener('touchend', endTouch);
+  svg.addEventListener('touchcancel', endTouch);
   window.addEventListener('scroll', hideHover, { passive: true });
 
   var SERIES = window.NETWORTH_SERIES || {};
