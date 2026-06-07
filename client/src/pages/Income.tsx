@@ -5,6 +5,8 @@ import { Page } from "../components/Page";
 import { EmptyState } from "../components/EmptyState";
 import { MonthPickerCard, type MonthOption } from "../components/MonthPicker";
 import { KebabMenu, type KebabAction } from "../components/KebabMenu";
+import { FilterChips } from "../components/FilterChips";
+import { useSorted } from "../lib/useSorted";
 import {
   RuleModal, type ExistingRule, type Primary, type RuleMatchOptions,
 } from "../components/RuleModal";
@@ -95,6 +97,28 @@ function IncomeView({ data }: { data: IncomeData }) {
   const qc = useQueryClient();
   const [modalTx, setModalTx] = useState<Tx | null>(null);
   const [editingRule, setEditingRule] = useState<ExistingRule | null>(null);
+  const [payerFilter, setPayerFilter] = useState<string[]>([]);
+
+  function togglePayer(name: string) {
+    setPayerFilter((prev) =>
+      prev.includes(name) ? prev.filter((p) => p !== name) : [...prev, name],
+    );
+  }
+
+  const filtered = payerFilter.length === 0
+    ? data.transactions
+    : data.transactions.filter((tx) => payerFilter.includes(tx.payer));
+  const { sorted: visibleTransactions, sort, toggle } = useSorted<Tx, "date" | "payer" | "amount">(
+    filtered,
+    { key: "date", dir: "desc" },
+    {
+      date: (tx) => tx.date,
+      payer: (tx) => tx.payer.toLowerCase(),
+      amount: (tx) => tx.amount,
+    },
+  );
+  const arrow = (key: "date" | "payer" | "amount") =>
+    sort.key === key ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
 
   const applyOverride = useMutation({
     mutationFn: (vars: { txId: string; payload: Record<string, unknown> }) =>
@@ -145,7 +169,16 @@ function IncomeView({ data }: { data: IncomeData }) {
         </p>
       )}
 
-      {data.transactions.length === 0 ? (
+      {data.payers.length > 1 && (
+        <FilterChips
+          ariaLabel="Filter by payer"
+          options={data.payers.map((p) => ({ value: p.name, label: p.name }))}
+          selected={payerFilter}
+          onToggle={togglePayer}
+        />
+      )}
+
+      {visibleTransactions.length === 0 ? (
         <EmptyState
           headline="No income for this month."
           hint="Click Refresh to sync the latest transactions, or pick a different month."
@@ -154,16 +187,22 @@ function IncomeView({ data }: { data: IncomeData }) {
         <table className="tx-table">
           <thead>
             <tr>
-              <th>Date</th>
+              <th onClick={() => toggle("date")} style={{ cursor: "pointer" }}>
+                Date{arrow("date")}
+              </th>
               <th>Source</th>
-              <th>Payer</th>
+              <th onClick={() => toggle("payer")} style={{ cursor: "pointer" }}>
+                Payer{arrow("payer")}
+              </th>
               <th className="col-hide-mobile">Description</th>
-              <th className="num">Amount</th>
+              <th className="num" onClick={() => toggle("amount")} style={{ cursor: "pointer" }}>
+                Amount{arrow("amount")}
+              </th>
               <th />
             </tr>
           </thead>
           <tbody>
-            {data.transactions.map((tx) => (
+            {visibleTransactions.map((tx) => (
               <tr
                 key={tx.plaid_id}
                 className={`tx-row${tx.dismissed ? " tx-dismissed" : ""}`}

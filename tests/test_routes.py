@@ -203,47 +203,43 @@ def test_security_headers_present(client):
     assert "Referrer-Policy" in r.headers
 
 
-def test_plaid_setup_renders(client, user):
-    """A user with creds (the fixture default) sees the update form."""
-    r = client.get("/settings/plaid")
+def test_api_plaid_status_returns_has_creds(client, user):
+    """The fixture user has creds; the SPA status endpoint reports that."""
+    r = client.get("/api/settings/plaid")
     assert r.status_code == 200
-    assert b"Plaid client ID" in r.data
-    assert b"Plaid secret" in r.data
+    assert r.get_json()["has_creds"] is True
 
 
-def test_plaid_setup_post_saves_credentials(client, db_session):
-    """Posting valid creds saves them encrypted and redirects to /."""
+def test_api_plaid_save_persists_credentials(client, db_session):
     from models import User
     u = User(clerk_user_id="needs-plaid", email="x@x")
     db_session.add(u)
     db_session.commit()
     assert u.get_plaid_credentials() is None
 
-    r = client.post("/settings/plaid", data={
-        "plaid_client_id": "abc123",
-        "plaid_secret": "xyz789",
-    }, follow_redirects=False)
-    assert r.status_code == 302
-    assert r.headers["Location"].endswith("/")
-
+    r = client.post(
+        "/api/settings/plaid",
+        json={"plaid_client_id": "abc123", "plaid_secret": "xyz789"},
+    )
+    assert r.status_code == 200
+    assert r.get_json()["ok"] is True
     db_session.expire_all()
     refreshed = db_session.query(User).filter_by(id=u.id).one()
     assert refreshed.get_plaid_credentials() == ("abc123", "xyz789")
 
 
-def test_plaid_setup_post_rejects_empty(client, db_session):
-    """Empty fields re-render the form with an error, don't save."""
+def test_api_plaid_save_rejects_empty(client, db_session):
     from models import User
     u = User(clerk_user_id="needs-plaid", email="x@x")
     db_session.add(u)
     db_session.commit()
 
-    r = client.post("/settings/plaid", data={
-        "plaid_client_id": "",
-        "plaid_secret": "",
-    })
-    assert r.status_code == 200
-    assert b"Both fields are required" in r.data
+    r = client.post(
+        "/api/settings/plaid",
+        json={"plaid_client_id": "", "plaid_secret": ""},
+    )
+    assert r.status_code == 400
+    assert "required" in r.get_json()["error"].lower()
     db_session.expire_all()
     assert db_session.query(User).filter_by(id=u.id).one().get_plaid_credentials() is None
 
@@ -259,30 +255,6 @@ def test_api_overview_signals_setup_required_when_no_creds(client, db_session):
     # The exact status varies by auth wiring; assert behavior at the public seam:
     # either 409 (setup_required path) or 200 with a not-yet-linked user.
     assert r.status_code in (200, 409)
-
-
-def test_sign_in_redirects_when_clerk_disabled(client):
-    """No Clerk keys configured → /sign-in bounces to the dashboard."""
-    r = client.get("/sign-in", follow_redirects=False)
-    assert r.status_code == 302
-    assert r.headers["Location"].endswith("/")
-
-
-def test_sign_in_renders_when_clerk_enabled(client):
-    """With Clerk configured, /sign-in renders the placeholder div the JS
-    will mount the widget into."""
-    from app import app as flask_app
-    flask_app.config["TESTING"] = True
-    flask_app.config["WTF_CSRF_ENABLED"] = False
-    import auth
-    orig_enabled = auth.clerk_enabled
-    auth.clerk_enabled = lambda: True
-    try:
-        r = client.get("/sign-in")
-        assert r.status_code == 200
-        assert b'id="clerk-sign-in"' in r.data
-    finally:
-        auth.clerk_enabled = orig_enabled
 
 
 def test_static_favicon_cache_header(client):

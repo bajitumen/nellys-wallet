@@ -2,6 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Page } from "../components/Page";
 import { EmptyState } from "../components/EmptyState";
 import { InstAvatar } from "../components/InstAvatar";
+import { NetWorthChart, type SeriesPoint, type SeriesOption } from "../components/NetWorthChart";
+import { CashflowChart, type MonthRow } from "../components/CashflowChart";
 import { ApiError, getJson } from "../lib/api";
 
 type Account = {
@@ -14,13 +16,6 @@ type Account = {
   balance: number | null;
   available: number | null;
   plaid_account_id: string;
-};
-type MonthRow = {
-  month: string;
-  label: string;
-  spend: number;
-  income: number;
-  ts: number;
 };
 type OverviewData = {
   linked: boolean;
@@ -35,6 +30,9 @@ type OverviewData = {
   net_total: number;
   monthly_cashflow: MonthRow[];
   has_monthly_data: boolean;
+  networth_snapshot_count: number;
+  networth_series_data: Record<string, SeriesPoint[]>;
+  networth_series_options: SeriesOption[];
 };
 
 function formatUsd(n: number): string {
@@ -103,6 +101,18 @@ function OverviewView({ data }: { data: OverviewData }) {
           <div className="value">{formatUsd(data.credit_total)}</div>
         </div>
       </div>
+
+      {(data.networth_snapshot_count > 0 || data.has_monthly_data) && (
+        <div className="overview-charts">
+          {data.networth_snapshot_count > 0 && (
+            <NetWorthChart
+              seriesData={data.networth_series_data}
+              seriesOptions={data.networth_series_options}
+            />
+          )}
+          {data.has_monthly_data && <CashflowChart data={data.monthly_cashflow} />}
+        </div>
+      )}
 
       <AccountBucket title="Cash" accounts={data.cash} />
       <AccountBucket title="Investments" accounts={data.investment} />

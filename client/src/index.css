@@ -1,1 +1,26 @@
 @import "./styles/app.css";
+
+.tx-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1rem 0;
+}
+.tx-filter-chips .filter-chip {
+  margin-left: 0;
+  cursor: pointer;
+}
+.tx-filter-chips .filter-chip-active {
+  background: var(--text);
+  color: var(--surface);
+  border-color: var(--text);
+}
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 1rem;
+  background: var(--bg);
+}

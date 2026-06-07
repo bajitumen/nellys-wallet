@@ -1,18 +1,33 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
-import { UserButton, useUser } from "@clerk/clerk-react";
-import { IconPlus, IconRefresh } from "./icons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { SignedIn, UserButton } from "@clerk/clerk-react";
+import { IconRefresh } from "./icons";
+import { AddAccountButton } from "./AddAccountButton";
+import { getJson, postJson } from "../lib/api";
+import { useClerkEnabled } from "../lib/clerkContext";
+import { useSidebar } from "../lib/sidebarContext";
 
 type Props = {
   heading: ReactNode;
   children: ReactNode;
-  onRefresh?: () => void;
-  lastSyncedLabel?: string;
-  onAddAccount?: () => void;
 };
 
-export function Page({ heading, children, onRefresh, lastSyncedLabel, onAddAccount }: Props) {
-  const { isSignedIn } = useUser();
+export function Page({ heading, children }: Props) {
+  const qc = useQueryClient();
+  const clerkEnabled = useClerkEnabled();
+  const { open, setOpen } = useSidebar();
+  const me = useQuery<{ last_sync_label: string | null }>({
+    queryKey: ["me"],
+    queryFn: () => getJson("/api/me"),
+    retry: false,
+    staleTime: 60_000,
+  });
+  const sync = useMutation({
+    mutationFn: () => postJson<{ ok: boolean }>("/sync"),
+    onSuccess: () => qc.invalidateQueries(),
+    onError: (e: Error) => alert(`Sync failed: ${e.message}`),
+  });
 
   useEffect(() => {
     if (typeof heading === "string") document.title = `${heading} · Nelly's Wallet`;
@@ -26,7 +41,8 @@ export function Page({ heading, children, onRefresh, lastSyncedLabel, onAddAccou
           type="button"
           aria-label="Open menu"
           aria-controls="sidebar"
-          aria-expanded={false}
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
         >
           <svg
             className="icon"
@@ -43,35 +59,26 @@ export function Page({ heading, children, onRefresh, lastSyncedLabel, onAddAccou
           </svg>
         </button>
         <h1>{heading}</h1>
-        {isSignedIn && (
-          <div className="page-actions">
-            {onRefresh && (
-              <button
-                className="action-btn"
-                type="button"
-                aria-label="Refresh data"
-                title={lastSyncedLabel ? `Last synced ${lastSyncedLabel}` : "Refresh"}
-                onClick={onRefresh}
-              >
-                <IconRefresh />
-              </button>
-            )}
-            {onAddAccount && (
-              <button
-                className="action-btn"
-                type="button"
-                aria-label="Add account"
-                title="Add account"
-                onClick={onAddAccount}
-              >
-                <IconPlus />
-              </button>
-            )}
-            <div className="header-user-button">
-              <UserButton />
-            </div>
-          </div>
-        )}
+        <div className="page-actions">
+          <button
+            className="action-btn"
+            type="button"
+            aria-label="Refresh data"
+            title={me.data?.last_sync_label ? `Last synced ${me.data.last_sync_label}` : "Refresh"}
+            disabled={sync.isPending}
+            onClick={() => sync.mutate()}
+          >
+            <IconRefresh />
+          </button>
+          <AddAccountButton />
+          {clerkEnabled && (
+            <SignedIn>
+              <div className="header-user-button">
+                <UserButton />
+              </div>
+            </SignedIn>
+          )}
+        </div>
       </div>
       {children}
     </>

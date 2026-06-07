@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, g, jsonify, redirect, render_template, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_from_directory
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 from sqlalchemy import func
 
@@ -42,22 +42,6 @@ app.config.update(
 
 csrf = CSRFProtect(app)
 
-app.jinja_env.filters["letter_color"] = providers.institution_letter_color
-
-
-@app.context_processor
-def inject_csrf_token():
-    return {"csrf_token": generate_csrf}
-
-
-@app.context_processor
-def inject_clerk_config():
-    return {
-        "clerk_publishable_key": config.CLERK_PUBLISHABLE_KEY,
-        "clerk_frontend_api": config.CLERK_FRONTEND_API,
-        "clerk_enabled": auth.clerk_enabled(),
-    }
-
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -71,28 +55,7 @@ def current_user(session):
     return auth.get_current_user(request, session)
 
 
-_SETUP_PATH = "/settings/plaid"
-
-
 def with_user(f):
-    @wraps(f)
-    def wrapped(*args, **kwargs):
-        with SessionLocal() as session:
-            user = current_user(session)
-            if user is None and auth.clerk_enabled():
-                return redirect("/sign-in")
-            if (
-                user is not None
-                and user.get_plaid_credentials() is None
-                and request.path != _SETUP_PATH
-            ):
-                return redirect(_SETUP_PATH)
-            g.user = user
-            return f(session, user, *args, **kwargs)
-    return wrapped
-
-
-def with_user_json(f):
     @wraps(f)
     def wrapped(*args, **kwargs):
         with SessionLocal() as session:
@@ -102,27 +65,18 @@ def with_user_json(f):
             if (
                 user is not None
                 and user.get_plaid_credentials() is None
+                and request.path != "/api/settings/plaid"
             ):
-                return jsonify({"error": "Plaid credentials missing", "setup_required": True}), 409
+                return jsonify({
+                    "error": "Plaid credentials missing",
+                    "setup_required": True,
+                }), 409
             g.user = user
             return f(session, user, *args, **kwargs)
     return wrapped
 
 
-@app.context_processor
-def inject_layout_globals():
-    user = getattr(g, "user", None)
-    last_sync = user.last_transactions_sync if user is not None else None
-    today_utc = datetime.now(timezone.utc).date()
-    needs_daily_sync = bool(
-        user is not None
-        and user.items
-        and (last_sync is None or last_sync.date() < today_utc)
-    )
-    return {
-        "last_sync_label": spending_mod.relative_time(last_sync),
-        "needs_daily_sync": needs_daily_sync,
-    }
+with_user_json = with_user
 
 
 def _pfc_dropdown_data(side: str = "all") -> dict:
@@ -166,48 +120,6 @@ def add_response_headers(response):
         response.cache_control.public = True
         response.cache_control.max_age = 86400
     return response
-
-
-@app.route("/settings/plaid", methods=["GET", "POST"])
-@with_user
-def plaid_setup(session, user):
-    if user is None:
-        # Clerk off and no seed user yet — punt home.
-        return redirect("/")
-    error = None
-    if request.method == "POST":
-        client_id = (request.form.get("plaid_client_id") or "").strip()
-        secret = (request.form.get("plaid_secret") or "").strip()
-        if not client_id or not secret:
-            error = "Both fields are required."
-        else:
-            user.set_plaid_credentials(client_id, secret)
-            session.commit()
-            providers.invalidate_cache(user.id)
-            return redirect("/")
-    return render_template(
-        "plaid_setup.html",
-        active_page="settings",
-        has_creds=user.get_plaid_credentials() is not None,
-        error=error,
-    )
-
-
-@app.route("/settings/plaid/faq")
-def plaid_faq():
-    return render_template("plaid_faq.html")
-
-
-@app.route("/sign-in", defaults={"page": "sign-in"})
-@app.route("/sign-up", defaults={"page": "sign-up"})
-def auth_page(page):
-    if not auth.clerk_enabled():
-        return redirect("/")
-    return render_template(
-        "auth_page.html",
-        active_page="auth",
-        page=page,
-    )
 
 
 @app.route("/link/token", methods=["POST"])
@@ -641,6 +553,48 @@ def sync_route(session, user):
     return jsonify({"ok": True, **result})
 
 
+@app.route("/api/settings/plaid", methods=["GET"])
+@with_user_json
+def api_plaid_status(session, user):
+    return jsonify({"has_creds": user is not None and user.get_plaid_credentials() is not None})
+
+
+@app.route("/api/settings/plaid", methods=["POST"])
+def api_plaid_save():
+    with SessionLocal() as session:
+        user = current_user(session)
+        if user is None and auth.clerk_enabled():
+            return jsonify({"error": "Not signed in"}), 401
+        if user is None:
+            return jsonify({"error": "No user"}), 400
+        data = request.get_json(silent=True) or {}
+        client_id = (data.get("plaid_client_id") or "").strip()
+        secret = (data.get("plaid_secret") or "").strip()
+        if not client_id or not secret:
+            return jsonify({"error": "Both fields are required."}), 400
+        user.set_plaid_credentials(client_id, secret)
+        session.commit()
+        providers.invalidate_cache(user.id)
+        return jsonify({"ok": True})
+
+
+@app.route("/api/me")
+@with_user_json
+def api_me(session, user):
+    last_sync = user.last_transactions_sync if user is not None else None
+    today_utc = datetime.now(timezone.utc).date()
+    needs_daily_sync = bool(
+        user is not None
+        and user.items
+        and (last_sync is None or last_sync.date() < today_utc)
+    )
+    return jsonify({
+        "last_sync": last_sync.isoformat() if last_sync else None,
+        "last_sync_label": spending_mod.relative_time(last_sync),
+        "needs_daily_sync": needs_daily_sync,
+    })
+
+
 @app.route("/api/csrf-token")
 def api_csrf_token():
     return jsonify({"token": generate_csrf()})
@@ -655,6 +609,8 @@ def api_overview(session, user):
             "errors": [], "cash_total": 0.0, "credit_total": 0.0,
             "investment_total": 0.0, "net_total": 0.0,
             "monthly_cashflow": [], "has_monthly_data": False,
+            "networth_chart": None, "networth_snapshot_count": 0,
+            "networth_series_data": {}, "networth_series_options": [],
         })
     data = providers.fetch_all(user)
     cash_total = providers.sum_balances(data["cash"])
@@ -663,6 +619,39 @@ def api_overview(session, user):
     net_total = cash_total + investment_total - credit_total
     monthly_combined = spending_mod.monthly_cashflow(user, session, n_months=12)
     has_monthly_data = any(m["spend"] > 0 or m["income"] > 0 for m in monthly_combined)
+
+    snapshots = networth_mod.get_snapshots(user, session)
+    now_ts = int(time.time())
+    networth_default_start = now_ts - 30 * 86400
+    cutoff_dt = date.today() - timedelta(days=30)
+    networth_default_snapshots = [s for s in snapshots if s.taken_at.date() >= cutoff_dt]
+    networth_chart = networth_mod.build_chart(
+        networth_default_snapshots,
+        range_start_ts=networth_default_start,
+        range_end_ts=now_ts,
+    )
+    account_snaps = networth_mod.get_account_snapshots(user, session)
+    series_data = networth_mod.build_series_data(snapshots, account_snaps)
+    series_options = [{"key": "net", "label": "Net Worth"}]
+    inst_accounts: dict[str, list] = {}
+    for bucket in ("cash", "investment", "other"):
+        for acct in data[bucket]:
+            inst = acct.get("institution") or "Unknown"
+            inst_accounts.setdefault(inst, []).append(acct)
+    seen_insts: set[str] = set()
+    for it in user.items:
+        inst = it.institution_name or "Unknown"
+        if inst in seen_insts or inst not in inst_accounts:
+            continue
+        seen_insts.add(inst)
+        series_options.append({"key": "inst:" + inst, "label": inst})
+        for acct in inst_accounts[inst]:
+            series_options.append({
+                "key": "acct:" + acct["plaid_account_id"],
+                "label": inst + " — " + acct["name"],
+                "menu_label": acct["name"],
+                "indent": True,
+            })
     return jsonify({
         "linked": bool(user.items),
         "cash": data["cash"], "credit": data["credit"],
@@ -672,6 +661,10 @@ def api_overview(session, user):
         "investment_total": investment_total, "net_total": net_total,
         "monthly_cashflow": monthly_combined if has_monthly_data else [],
         "has_monthly_data": has_monthly_data,
+        "networth_chart": networth_chart,
+        "networth_snapshot_count": len(snapshots),
+        "networth_series_data": series_data,
+        "networth_series_options": series_options,
     })
 
 

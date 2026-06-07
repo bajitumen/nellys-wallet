@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
+import { useSidebar } from "../lib/sidebarContext";
 import type { IconProps } from "./icons";
 import {
   IconBag,
@@ -35,6 +36,7 @@ function readDark(): boolean {
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [isDark, setIsDark] = useState(readDark);
+  const { open } = useSidebar();
 
   useEffect(() => {
     localStorage.setItem("sidebarCollapsed", collapsed ? "1" : "0");
@@ -53,7 +55,7 @@ export function Sidebar() {
   }
 
   return (
-    <aside className={`sidebar${collapsed ? " collapsed" : ""}`} id="sidebar">
+    <aside className={`sidebar${collapsed ? " collapsed" : ""}${open ? " open" : ""}`} id="sidebar">
       <button
         type="button"
         className="sidebar-collapse-toggle"
