@@ -117,9 +117,9 @@ def action_label(rule: TransactionRule) -> str:
     if rule.action == "set_detailed":
         return f"label as {pfc_mod.humanize_detailed(rule.action_value)}"
     if rule.action == "split":
-        return f"split — my share {rule.action_value}%"
+        return f"split so my share is {rule.action_value}%"
     if rule.action == "split_dollar":
-        return f"split — my share ${rule.action_value}"
+        return f"split so my share is ${rule.action_value}"
     return rule.action
 
 

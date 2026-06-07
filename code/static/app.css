@@ -606,7 +606,8 @@
     color: var(--surface);
     border-color: var(--negative);
   }
-  .confirm-modal-actions button:focus { outline: 2px solid var(--text-mid); outline-offset: 1px; }
+  .confirm-modal-actions button:focus { outline: none; }
+  .confirm-modal-actions button:focus-visible { outline: 2px solid var(--text-mid); outline-offset: 1px; }
 
   .rule-modal-backdrop {
     position: fixed;
@@ -663,22 +664,36 @@
     background: transparent;
   }
   .rule-modal-dd .inline-dropdown-label {
-    max-width: none;
+    /* Truncate inside the trigger's own width (220px for value, etc.) so a
+       long merchant string like a full Zelle descriptor doesn't blow out the
+       row. The general .inline-dropdown-label cap of 240px is the wrong axis
+       here — we want "fill the cell and ellipsize." */
+    max-width: 100%;
+    flex: 1 1 0;
   }
-  /* Constant widths so the row doesn't shift around with label length. */
+  /* Constant widths so the row doesn't shift around with label length.
+     `flex: 0 0` keeps them from growing/shrinking; the label inside ellipsizes
+     against the trigger's fixed width (set via `width: 100%` on the trigger). */
   .rule-modal-dd-field { flex: 0 0 160px; min-width: 0; }
   .rule-modal-dd-op { flex: 0 0 160px; min-width: 0; }
-  .rule-modal-dd-value { flex: 1 1 220px; min-width: 0; }
-  .rule-modal-dd-logic { width: 90px; }
-  .rule-modal-dd-applyto { width: 130px; }
-  .rule-modal-dd[data-key="action"] { width: 160px; }
-  .rule-modal-dd-cat { width: 200px; }
+  .rule-modal-dd-value { flex: 0 0 220px; min-width: 0; max-width: 100%; }
+  .rule-modal-dd-logic { flex: 0 0 90px; }
+  .rule-modal-dd-applyto { flex: 0 0 130px; }
+  .rule-modal-dd[data-key="action"] { flex: 0 0 160px; }
+  .rule-modal-dd-cat { flex: 0 0 200px; }
   .rule-modal-conditions {
     border: 1px dashed var(--line);
     border-radius: 6px;
     padding: 0.75rem 1rem 1rem;
     margin: 0 0 1.25rem;
+    /* Fieldsets default to `min-width: min-content`, which lets them grow past
+       a flex/block parent's width when a child can't shrink (long ellipsized
+       label, say). Explicitly clamp to the parent's box. */
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
   }
+  .rule-modal-conditions-list { min-width: 0; }
   .rule-modal-conditions-legend {
     display: inline-flex;
     align-items: baseline;

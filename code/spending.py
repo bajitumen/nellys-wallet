@@ -390,9 +390,12 @@ def _fetch_last_month_uncached(
             primary_budgets[primary] += amount
 
     # Without a source filter, include un-spent primaries so the budget column has rows.
-    category_keys = set(totals.keys())
+    # Income-side primaries (INCOME / TRANSFER_IN) never belong on the spending table.
+    category_keys = {k for k in totals.keys() if pfc.is_spend_category(k)}
     if source is None:
-        category_keys.update(pfc.PFC_TAXONOMY.keys())
+        category_keys.update(
+            p for p in pfc.PFC_TAXONOMY.keys() if pfc.is_spend_category(p)
+        )
 
     def _subitems_for(primary: str) -> list[dict]:
         items = [

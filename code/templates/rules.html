@@ -90,7 +90,7 @@
     if (del) {
       var id = del.dataset.ruleId;
       window.confirmDialog(
-        'Existing overrides stay; only future transactions stop matching.',
+        'Past transactions touched by this rule will be reconciled, and future transactions will stop matching.',
         function() {
           csrfFetch('/rules/' + encodeURIComponent(id), { method: 'DELETE' })
             .then(function(r) {

@@ -82,7 +82,11 @@ def test_basic_aggregation(user_with_item, db_session):
 
 
 def test_all_tab_includes_unspent_primaries(user_with_item, db_session):
-    """Without a source filter, every spending primary appears even with $0."""
+    """Without a source filter, every SPENDING-side primary appears even with $0.
+
+    Income-side primaries (INCOME / TRANSFER_IN) must NOT show up — the spending
+    table is for spending categories only.
+    """
     from spending import fetch_last_month
     import pfc
     item = user_with_item.items[0]
@@ -90,7 +94,10 @@ def test_all_tab_includes_unspent_primaries(user_with_item, db_session):
     out = fetch_last_month(user_with_item, session=db_session)
     names = {c["name"] for c in out["categories"]}
     for primary in pfc.PFC_TAXONOMY:
-        assert pfc.humanize_primary(primary) in names
+        if pfc.is_spend_category(primary):
+            assert pfc.humanize_primary(primary) in names
+        else:
+            assert pfc.humanize_primary(primary) not in names
     # Unspent categories carry $0 and 0 transactions.
     travel = next(c for c in out["categories"] if c["name"] == "Travel")
     assert travel["total"] == 0.0
