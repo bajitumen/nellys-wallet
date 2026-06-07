@@ -192,29 +192,31 @@ def _empty_income():
     }
 
 
-def test_income_route_no_user(client):
-    r = client.get("/income")
+def test_api_income_no_user(client):
+    r = client.get("/api/income")
     assert r.status_code == 200
-    assert b"No user provisioned" in r.data
+    assert r.get_json()["transactions"] == []
 
 
-def test_income_route_renders(client, user_with_item):
+def test_api_income_returns_data(client, user_with_item):
     with patch("income.fetch_last_month", return_value=_empty_income()):
-        r = client.get("/income")
+        r = client.get("/api/income")
     assert r.status_code == 200
-    assert b"Income" in r.data
+    body = r.get_json()
+    assert body["transactions"] == []
+    assert body["total"] == 0.0
 
 
-def test_income_route_source_filter_propagates(client, user_with_item):
+def test_api_income_source_filter_propagates(client, user_with_item):
     with patch("income.fetch_last_month", return_value=_empty_income()) as mock:
-        client.get("/income?source=TestBank")
+        client.get("/api/income?source=TestBank")
     _, kwargs = mock.call_args
     assert kwargs.get("source") == "TestBank"
 
 
-def test_income_route_invalid_source_falls_back_to_none(client, user_with_item):
+def test_api_income_invalid_source_falls_back_to_none(client, user_with_item):
     with patch("income.fetch_last_month", return_value=_empty_income()) as mock:
-        client.get("/income?source=Bogus")
+        client.get("/api/income?source=Bogus")
     _, kwargs = mock.call_args
     assert kwargs.get("source") is None
 

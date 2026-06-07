@@ -43,14 +43,14 @@ def test_clear_rate_removes_row(user, db_session):
 # routes
 # ---------------------------------------------------------------------------
 
-def test_planning_view_no_user(client):
-    r = client.get("/planning")
+def test_api_planning_no_user(client):
+    r = client.get("/api/planning")
     assert r.status_code == 200
-    assert b"No user provisioned" in r.data
+    assert r.get_json()["accounts"] == []
 
 
-def test_planning_view_renders_accounts(client, user_with_item):
-    """Accounts from fetch_all show up in the rates table."""
+def test_api_planning_returns_accounts(client, user_with_item):
+    """Accounts from fetch_all are surfaced by the JSON endpoint."""
     fetch_data = {
         "cash": [{
             "institution": "TestBank", "logo": None, "primary_color": None,
@@ -67,11 +67,10 @@ def test_planning_view_renders_accounts(client, user_with_item):
         "investment": [], "other": [], "errors": [],
     }
     with patch("providers.fetch_all", return_value=fetch_data):
-        r = client.get("/planning")
+        r = client.get("/api/planning")
     assert r.status_code == 200
-    assert b"Total net worth" in r.data
-    assert b"Checking" in r.data
-    assert b"Credit Card" in r.data
+    names = {a["name"] for a in r.get_json()["accounts"]}
+    assert names == {"Checking", "Credit Card"}
 
 
 def test_planning_rate_save_creates(client, user_with_item, db_session):

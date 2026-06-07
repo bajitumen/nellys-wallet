@@ -2,8 +2,9 @@ import logging
 import time
 from datetime import date, datetime, timedelta, timezone
 from functools import wraps
+from pathlib import Path
 
-from flask import Flask, g, jsonify, redirect, render_template, request
+from flask import Flask, g, jsonify, redirect, render_template, request, send_from_directory
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 from sqlalchemy import func
 
@@ -25,6 +26,9 @@ init_db()
 from models import TransactionOverride, User
 
 log = logging.getLogger(__name__)
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_CLIENT_DIST = _REPO_ROOT / "client" / "dist"
 
 app = Flask(__name__)
 app.secret_key = config.FLASK_SECRET_KEY
@@ -83,6 +87,23 @@ def with_user(f):
                 and request.path != _SETUP_PATH
             ):
                 return redirect(_SETUP_PATH)
+            g.user = user
+            return f(session, user, *args, **kwargs)
+    return wrapped
+
+
+def with_user_json(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        with SessionLocal() as session:
+            user = current_user(session)
+            if user is None and auth.clerk_enabled():
+                return jsonify({"error": "Not signed in"}), 401
+            if (
+                user is not None
+                and user.get_plaid_credentials() is None
+            ):
+                return jsonify({"error": "Plaid credentials missing", "setup_required": True}), 409
             g.user = user
             return f(session, user, *args, **kwargs)
     return wrapped
@@ -186,154 +207,6 @@ def auth_page(page):
         "auth_page.html",
         active_page="auth",
         page=page,
-    )
-
-
-@app.route("/")
-@with_user
-def dashboard(session, user):
-    if user is None:
-        return render_template(
-            "dashboard.html", active_page="overview", linked=False, no_user=True
-        )
-
-    data = providers.fetch_all(user)
-    linked = bool(user.items)
-
-    cash_total = providers.sum_balances(data["cash"])
-    investment_total = providers.sum_balances(data["investment"])
-    credit_total = providers.sum_balances(data["credit"])
-    net_total = cash_total + investment_total - credit_total
-
-    # Anchor X axis to last 30 days even when data is sparse.
-    snapshots = networth_mod.get_snapshots(user, session)
-    now_ts = int(time.time())
-    networth_default_start = now_ts - 30 * 86400
-    cutoff_dt = date.today() - timedelta(days=30)
-    networth_default_snapshots = [
-        s for s in snapshots if s.taken_at.date() >= cutoff_dt
-    ]
-    networth_chart = networth_mod.build_chart(
-        networth_default_snapshots,
-        range_start_ts=networth_default_start,
-        range_end_ts=now_ts,
-    )
-
-    account_snaps = networth_mod.get_account_snapshots(user, session)
-    series_data = networth_mod.build_series_data(snapshots, account_snaps)
-
-    networth_series_options = [{"key": "net", "label": "Net Worth"}]
-    inst_accounts: dict[str, list] = {}
-    for bucket in ("cash", "investment", "other"):
-        for acct in data[bucket]:
-            inst = acct.get("institution") or "Unknown"
-            inst_accounts.setdefault(inst, []).append(acct)
-    seen_insts: set[str] = set()
-    for it in user.items:
-        inst = it.institution_name or "Unknown"
-        if inst in seen_insts or inst not in inst_accounts:
-            continue
-        seen_insts.add(inst)
-        networth_series_options.append({"key": "inst:" + inst, "label": inst})
-        for acct in inst_accounts[inst]:
-            networth_series_options.append({
-                "key": "acct:" + acct["plaid_account_id"],
-                "label": inst + " — " + acct["name"],
-                "menu_label": acct["name"],
-                "indent": True,
-            })
-
-    monthly_combined = spending_mod.monthly_cashflow(user, session, n_months=12)
-    has_monthly_data = any(m["spend"] > 0 or m["income"] > 0 for m in monthly_combined)
-
-    return render_template(
-        "dashboard.html",
-        active_page="overview",
-        cash_accounts=data["cash"],
-        credit_accounts=data["credit"],
-        investment_accounts=data["investment"],
-        other_accounts=data["other"],
-        errors=data["errors"],
-        cash_total=cash_total,
-        credit_total=credit_total,
-        investment_total=investment_total,
-        net_total=net_total,
-        linked=linked,
-        no_user=False,
-        networth_chart=networth_chart,
-        networth_snapshot_count=len(snapshots),
-        networth_series_options=networth_series_options,
-        networth_series_data=series_data,
-        has_monthly_data=has_monthly_data,
-        monthly_totals_raw=monthly_combined if has_monthly_data else [],
-    )
-
-
-@app.route("/spending")
-@with_user
-def spending_view(session, user):
-    source = request.args.get("source") or None
-    month = request.args.get("month") or None
-    categories_filter = [
-        c for c in request.args.getlist("category") if pfc.is_valid_primary(c)
-    ]
-    month_options = _month_options(12)
-
-    pfc_data = _pfc_dropdown_data(side="spending")
-    if user is None:
-        return render_template(
-            "spending.html", active_page="spending", linked=False, no_user=True,
-            total=0.0, count=0, categories=[], transactions=[], errors=[],
-            sources=[], source_logos={}, current_source=None,
-            categories_filter=[], category_chips=[],
-            month_options=month_options,
-            current_month=month_options[0]["value"],
-            month_label=month_options[0]["label"],
-            daily_avg=0.0, prev_month_change_pct=None,
-            primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
-            rule_match_options={"merchant": [], "category": [], "item": [], "source": []},
-            rules_by_id={},
-        )
-
-    sources = spending_mod.available_sources(user)
-    if source and source not in sources:
-        source = None
-    data = spending_mod.fetch_last_month(
-        user, month=month, source=source, session=session,
-    )
-    month_options = spending_mod.available_months(user, session, source=source)
-    transactions = data["transactions"]
-    chips = [
-        {"code": c, "label": pfc.humanize_primary(c)} for c in categories_filter
-    ]
-    rule_match_options = _build_rule_match_options(user, session, side="spending")
-    visible_rule_ids = sorted({
-        tx["rule_id"] for tx in transactions if tx.get("rule_id")
-    })
-    rules_by_id = rules_mod.rules_by_id_dict(user.id, session, visible_rule_ids)
-    return render_template(
-        "spending.html",
-        active_page="spending",
-        no_user=False,
-        linked=bool(user.items),
-        total=data["total"],
-        count=data["count"],
-        categories=data["categories"],
-        transactions=transactions,
-        errors=data["errors"],
-        sources=sources,
-        source_logos=providers.source_avatars(user),
-        current_source=source,
-        categories_filter=categories_filter,
-        category_chips=chips,
-        month_options=month_options,
-        current_month=data["month"],
-        month_label=data["month_label"],
-        daily_avg=data["daily_avg"],
-        prev_month_change_pct=data["prev_month_change_pct"],
-        primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
-        rule_match_options=rule_match_options,
-        rules_by_id=rules_by_id,
     )
 
 
@@ -622,55 +495,6 @@ def _build_rule_match_options(user, session, side: str = "all") -> dict:
     }
 
 
-@app.route("/rules", methods=["GET"])
-@with_user
-def rules_list_view(session, user):
-    valid_tabs = {"spending", "income", "both"}
-    active_tab = request.args.get("tab") or "spending"
-    if active_tab not in valid_tabs:
-        active_tab = "spending"
-
-    pfc_data = _pfc_dropdown_data()
-    empty_options = {"merchant": [], "category": [], "item": [], "source": []}
-    if user is None:
-        return render_template(
-            "rules.html", active_page="rules", no_user=True,
-            active_tab=active_tab,
-            tab_rules=[],
-            has_rules=False,
-            primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
-            rule_match_options=empty_options, rules_by_id={},
-        )
-    rule_rows = rules_mod.list_rules(user, session)
-
-    rules_by_tab: dict[str, list[dict]] = {"spending": [], "income": [], "both": []}
-    for r in rule_rows:
-        d = {
-            "id": r.id,
-            "conditions": rules_mod.condition_labels(r),
-            "conditions_logic": r.conditions_logic,
-            "action_label": rules_mod.action_label(r),
-        }
-        side = rules_mod.rule_side(r)
-        if side == "both":
-            rules_by_tab["both"].append(d)
-        elif side == "spending":
-            rules_by_tab["spending"].append(d)
-        elif side == "income":
-            rules_by_tab["income"].append(d)
-
-    rules_by_id = rules_mod.rules_by_id_dict(
-        user.id, session, [r.id for r in rule_rows],
-    )
-    return render_template(
-        "rules.html", active_page="rules", no_user=False,
-        active_tab=active_tab,
-        tab_rules=rules_by_tab[active_tab],
-        has_rules=bool(rule_rows),
-        primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
-        rule_match_options=_build_rule_match_options(user, session),
-        rules_by_id=rules_by_id,
-    )
 
 
 
@@ -691,116 +515,6 @@ def rules_delete(session, user, rule_id):
         return jsonify({"error": "Could not delete the rule. Please try again."}), 500
     spending_mod.invalidate_cache(user.id)
     return jsonify({"ok": True})
-
-
-@app.route("/income")
-@with_user
-def income_view(session, user):
-    source = request.args.get("source") or None
-    month = request.args.get("month") or None
-    month_options = _month_options(12)
-
-    if user is None:
-        pfc_data = _pfc_dropdown_data(side="income")
-        return render_template(
-            "income.html", active_page="income", no_user=True, linked=False,
-            total=0.0, count=0, payers=[], transactions=[],
-            sources=[], source_logos={}, current_source=None,
-            month_options=month_options,
-            current_month=month_options[0]["value"],
-            month_label=month_options[0]["label"],
-            daily_avg=0.0, prev_month_change_pct=None,
-            primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
-            rule_match_options={"merchant": [], "category": [], "item": [], "source": []},
-            rules_by_id={},
-        )
-
-    sources = spending_mod.available_sources(user)
-    if source and source not in sources:
-        source = None
-    data = income_mod.fetch_last_month(
-        user, month=month, source=source, session=session,
-    )
-    month_options = income_mod.available_months(user, session, source=source)
-    pfc_data = _pfc_dropdown_data(side="income")
-    rule_match_options = _build_rule_match_options(user, session, side="income")
-    visible_rule_ids = sorted({
-        tx["rule_id"] for tx in data["transactions"] if tx.get("rule_id")
-    })
-    rules_by_id = rules_mod.rules_by_id_dict(user.id, session, visible_rule_ids)
-    return render_template(
-        "income.html",
-        active_page="income",
-        no_user=False,
-        linked=bool(user.items),
-        total=data["total"],
-        count=data["count"],
-        payers=data["payers"],
-        transactions=data["transactions"],
-        sources=sources,
-        source_logos=providers.source_avatars(user),
-        current_source=source,
-        month_options=month_options,
-        current_month=data["month"],
-        month_label=data["month_label"],
-        daily_avg=data["daily_avg"],
-        prev_month_change_pct=data["prev_month_change_pct"],
-        primaries=pfc_data["primaries"], taxonomy=pfc_data["taxonomy"],
-        rule_match_options=rule_match_options,
-        rules_by_id=rules_by_id,
-    )
-
-
-@app.route("/planning")
-@with_user
-def planning_view(session, user):
-    if user is None:
-        return render_template(
-            "planning.html", active_page="planning", no_user=True, linked=False,
-            accounts=[], rates={},
-        )
-    data = providers.fetch_all(user)
-    accounts: list[dict] = []
-    for bucket, sign in (("cash", 1), ("investment", 1), ("credit", -1), ("other", 1)):
-        for acct in data[bucket]:
-            if acct.get("balance") is None:
-                continue
-            accounts.append({
-                "id": acct["plaid_account_id"],
-                "institution": acct["institution"],
-                "logo": acct.get("logo"),
-                "primary_color": acct.get("primary_color"),
-                "name": acct["name"],
-                "type": acct["type"],
-                "balance": acct["balance"],
-                "bucket": bucket,
-                "sign": sign,
-            })
-    rates = planning_mod.get_rates(user, session)
-    contributions = planning_mod.get_contributions(user, session)
-
-    cashflow = spending_mod.monthly_cashflow(user, session, n_months=6)
-    non_empty = [m for m in cashflow if m["spend"] > 0 or m["income"] > 0]
-    if non_empty:
-        avg_monthly_income = sum(m["income"] for m in non_empty) / len(non_empty)
-        avg_monthly_spend = sum(m["spend"] for m in non_empty) / len(non_empty)
-    else:
-        avg_monthly_income = 0.0
-        avg_monthly_spend = 0.0
-
-    return render_template(
-        "planning.html",
-        active_page="planning",
-        no_user=False,
-        linked=bool(user.items),
-        accounts=accounts,
-        rates=rates,
-        contributions=contributions,
-        monthly_income=user.monthly_income,
-        monthly_spend=user.monthly_spend,
-        avg_monthly_income=avg_monthly_income,
-        avg_monthly_spend=avg_monthly_spend,
-    )
 
 
 @app.route("/planning/rate/<account_id>", methods=["POST"])
@@ -866,37 +580,6 @@ def planning_cashflow_save(session, user):
     return jsonify({"ok": True, "value": parsed})
 
 
-@app.route("/budget")
-@with_user
-def budget_view(session, user):
-    month_options = _month_options(12)
-    if user is None:
-        return render_template(
-            "budget.html", active_page="budget", no_user=True, groups=[],
-            month_options=month_options,
-            current_month=month_options[0]["value"],
-            month_label=month_options[0]["label"],
-            total_spent=0.0,
-        )
-    budgets = budget_mod.get_budgets(user, session)
-    month_arg = request.args.get("month")
-    spend = spending_mod.fetch_last_month(
-        user, month=month_arg, source=None, session=session,
-    )
-    spent_by_detailed: dict[str, float] = {}
-    for c in spend.get("categories", []):
-        for s in c.get("subitems", []):
-            spent_by_detailed[s["code"]] = s["total"]
-    groups = budget_mod.build_groups(budgets, spent_by_detailed)
-    return render_template(
-        "budget.html", active_page="budget", no_user=False, groups=groups,
-        month_options=month_options,
-        current_month=spend["month"],
-        month_label=spend["month_label"],
-        total_spent=spend["total"],
-    )
-
-
 @app.route("/budget/summary")
 @with_user
 def budget_summary(session, user):
@@ -956,6 +639,292 @@ def sync_route(session, user):
     providers.invalidate_cache(user.id)
     networth_mod.capture(user, session)
     return jsonify({"ok": True, **result})
+
+
+@app.route("/api/csrf-token")
+def api_csrf_token():
+    return jsonify({"token": generate_csrf()})
+
+
+@app.route("/api/overview")
+@with_user_json
+def api_overview(session, user):
+    if user is None:
+        return jsonify({
+            "linked": False, "cash": [], "credit": [], "investment": [], "other": [],
+            "errors": [], "cash_total": 0.0, "credit_total": 0.0,
+            "investment_total": 0.0, "net_total": 0.0,
+            "monthly_cashflow": [], "has_monthly_data": False,
+        })
+    data = providers.fetch_all(user)
+    cash_total = providers.sum_balances(data["cash"])
+    investment_total = providers.sum_balances(data["investment"])
+    credit_total = providers.sum_balances(data["credit"])
+    net_total = cash_total + investment_total - credit_total
+    monthly_combined = spending_mod.monthly_cashflow(user, session, n_months=12)
+    has_monthly_data = any(m["spend"] > 0 or m["income"] > 0 for m in monthly_combined)
+    return jsonify({
+        "linked": bool(user.items),
+        "cash": data["cash"], "credit": data["credit"],
+        "investment": data["investment"], "other": data["other"],
+        "errors": data["errors"],
+        "cash_total": cash_total, "credit_total": credit_total,
+        "investment_total": investment_total, "net_total": net_total,
+        "monthly_cashflow": monthly_combined if has_monthly_data else [],
+        "has_monthly_data": has_monthly_data,
+    })
+
+
+@app.route("/api/spending")
+@with_user_json
+def api_spending(session, user):
+    source = request.args.get("source") or None
+    month = request.args.get("month") or None
+    categories_filter = [
+        c for c in request.args.getlist("category") if pfc.is_valid_primary(c)
+    ]
+    month_options = _month_options(12)
+    pfc_data = _pfc_dropdown_data(side="spending")
+    if user is None:
+        return jsonify({
+            "total": 0.0, "count": 0, "categories": [], "transactions": [],
+            "errors": [],
+            "sources": [], "current_source": None,
+            "categories_filter": [], "category_chips": [],
+            "month_options": month_options,
+            "current_month": month_options[0]["value"],
+            "month_label": month_options[0]["label"],
+            "daily_avg": 0.0, "prev_month_change_pct": None,
+            "primaries": pfc_data["primaries"], "taxonomy": pfc_data["taxonomy"],
+            "rule_match_options": {"merchant": [], "category": [], "item": [], "source": []},
+            "rules_by_id": {},
+        })
+    sources = spending_mod.available_sources(user)
+    if source and source not in sources:
+        source = None
+    data = spending_mod.fetch_last_month(
+        user, month=month, source=source, session=session,
+    )
+    month_options = spending_mod.available_months(user, session, source=source)
+    rule_match_options = _build_rule_match_options(user, session, side="spending")
+    visible_rule_ids = sorted({
+        tx["rule_id"] for tx in data["transactions"] if tx.get("rule_id")
+    })
+    rules_by_id = rules_mod.rules_by_id_dict(user.id, session, visible_rule_ids)
+    chips = [
+        {"code": c, "label": pfc.humanize_primary(c)} for c in categories_filter
+    ]
+    return jsonify({
+        "total": data["total"], "count": data["count"],
+        "categories": data["categories"],
+        "transactions": [
+            {**t, "date": t["date"].isoformat()} for t in data["transactions"]
+        ],
+        "errors": data["errors"],
+        "sources": sources, "current_source": source,
+        "categories_filter": categories_filter, "category_chips": chips,
+        "month_options": month_options,
+        "current_month": data["month"], "month_label": data["month_label"],
+        "daily_avg": data["daily_avg"],
+        "prev_month_change_pct": data["prev_month_change_pct"],
+        "primaries": pfc_data["primaries"], "taxonomy": pfc_data["taxonomy"],
+        "rule_match_options": rule_match_options,
+        "rules_by_id": rules_by_id,
+    })
+
+
+@app.route("/api/income")
+@with_user_json
+def api_income(session, user):
+    source = request.args.get("source") or None
+    month = request.args.get("month") or None
+    month_options = _month_options(12)
+    pfc_data = _pfc_dropdown_data(side="income")
+    if user is None:
+        return jsonify({
+            "total": 0.0, "count": 0, "payers": [], "transactions": [],
+            "sources": [], "current_source": None,
+            "month_options": month_options,
+            "current_month": month_options[0]["value"],
+            "month_label": month_options[0]["label"],
+            "daily_avg": 0.0, "prev_month_change_pct": None,
+            "primaries": pfc_data["primaries"], "taxonomy": pfc_data["taxonomy"],
+            "rule_match_options": {"merchant": [], "category": [], "item": [], "source": []},
+            "rules_by_id": {},
+        })
+    sources = spending_mod.available_sources(user)
+    if source and source not in sources:
+        source = None
+    data = income_mod.fetch_last_month(
+        user, month=month, source=source, session=session,
+    )
+    month_options = income_mod.available_months(user, session, source=source)
+    rule_match_options = _build_rule_match_options(user, session, side="income")
+    visible_rule_ids = sorted({
+        tx["rule_id"] for tx in data["transactions"] if tx.get("rule_id")
+    })
+    rules_by_id = rules_mod.rules_by_id_dict(user.id, session, visible_rule_ids)
+    return jsonify({
+        "total": data["total"], "count": data["count"],
+        "payers": data["payers"],
+        "transactions": [
+            {**t, "date": t["date"].isoformat()} for t in data["transactions"]
+        ],
+        "sources": sources, "current_source": source,
+        "month_options": month_options,
+        "current_month": data["month"], "month_label": data["month_label"],
+        "daily_avg": data["daily_avg"],
+        "prev_month_change_pct": data["prev_month_change_pct"],
+        "primaries": pfc_data["primaries"], "taxonomy": pfc_data["taxonomy"],
+        "rule_match_options": rule_match_options,
+        "rules_by_id": rules_by_id,
+    })
+
+
+@app.route("/api/rules")
+@with_user_json
+def api_rules_list(session, user):
+    valid_tabs = {"spending", "income", "both"}
+    active_tab = request.args.get("tab") or "spending"
+    if active_tab not in valid_tabs:
+        active_tab = "spending"
+    pfc_data = _pfc_dropdown_data()
+    if user is None:
+        return jsonify({
+            "active_tab": active_tab,
+            "tab_rules": [],
+            "has_rules": False,
+            "primaries": pfc_data["primaries"],
+            "taxonomy": pfc_data["taxonomy"],
+            "rule_match_options": {
+                "merchant": [], "category": [], "item": [], "source": [],
+            },
+            "rules_by_id": {},
+        })
+    rule_rows = rules_mod.list_rules(user, session)
+    rules_by_tab: dict[str, list[dict]] = {"spending": [], "income": [], "both": []}
+    for r in rule_rows:
+        d = {
+            "id": r.id,
+            "conditions": rules_mod.condition_labels(r),
+            "conditions_logic": r.conditions_logic,
+            "action_label": rules_mod.action_label(r),
+        }
+        side = rules_mod.rule_side(r)
+        if side == "both":
+            rules_by_tab["both"].append(d)
+        elif side == "spending":
+            rules_by_tab["spending"].append(d)
+        elif side == "income":
+            rules_by_tab["income"].append(d)
+    rules_by_id = rules_mod.rules_by_id_dict(
+        user.id, session, [r.id for r in rule_rows],
+    )
+    return jsonify({
+        "active_tab": active_tab,
+        "tab_rules": rules_by_tab[active_tab],
+        "has_rules": bool(rule_rows),
+        "primaries": pfc_data["primaries"],
+        "taxonomy": pfc_data["taxonomy"],
+        "rule_match_options": _build_rule_match_options(user, session),
+        "rules_by_id": rules_by_id,
+    })
+
+
+@app.route("/api/budget")
+@with_user_json
+def api_budget(session, user):
+    month_options = _month_options(12)
+    if user is None:
+        return jsonify({
+            "groups": [], "month_options": month_options,
+            "current_month": month_options[0]["value"],
+            "month_label": month_options[0]["label"],
+            "total_spent": 0.0,
+        })
+    budgets = budget_mod.get_budgets(user, session)
+    month_arg = request.args.get("month")
+    spend = spending_mod.fetch_last_month(
+        user, month=month_arg, source=None, session=session,
+    )
+    spent_by_detailed: dict[str, float] = {}
+    for c in spend.get("categories", []):
+        for s in c.get("subitems", []):
+            spent_by_detailed[s["code"]] = s["total"]
+    groups = budget_mod.build_groups(budgets, spent_by_detailed)
+    return jsonify({
+        "groups": groups,
+        "month_options": month_options,
+        "current_month": spend["month"],
+        "month_label": spend["month_label"],
+        "total_spent": spend["total"],
+    })
+
+
+@app.route("/api/planning")
+@with_user_json
+def api_planning(session, user):
+    if user is None:
+        return jsonify({
+            "accounts": [], "rates": {}, "contributions": {},
+            "monthly_income": None, "monthly_spend": None,
+            "avg_monthly_income": 0.0, "avg_monthly_spend": 0.0,
+        })
+    data = providers.fetch_all(user)
+    accounts: list[dict] = []
+    for bucket, sign in (("cash", 1), ("investment", 1), ("credit", -1), ("other", 1)):
+        for acct in data[bucket]:
+            if acct.get("balance") is None:
+                continue
+            accounts.append({
+                "id": acct["plaid_account_id"],
+                "institution": acct["institution"],
+                "logo": acct.get("logo"),
+                "primary_color": acct.get("primary_color"),
+                "name": acct["name"],
+                "type": acct["type"],
+                "balance": acct["balance"],
+                "bucket": bucket,
+                "sign": sign,
+            })
+    rates = planning_mod.get_rates(user, session)
+    contributions = planning_mod.get_contributions(user, session)
+    cashflow = spending_mod.monthly_cashflow(user, session, n_months=6)
+    non_empty = [m for m in cashflow if m["spend"] > 0 or m["income"] > 0]
+    if non_empty:
+        avg_monthly_income = sum(m["income"] for m in non_empty) / len(non_empty)
+        avg_monthly_spend = sum(m["spend"] for m in non_empty) / len(non_empty)
+    else:
+        avg_monthly_income = 0.0
+        avg_monthly_spend = 0.0
+    return jsonify({
+        "accounts": accounts,
+        "rates": rates,
+        "contributions": contributions,
+        "monthly_income": user.monthly_income,
+        "monthly_spend": user.monthly_spend,
+        "avg_monthly_income": avg_monthly_income,
+        "avg_monthly_spend": avg_monthly_spend,
+    })
+
+
+@app.route("/assets/<path:filename>")
+def spa_assets(filename):
+    assets_dir = _CLIENT_DIST / "assets"
+    if not assets_dir.is_dir():
+        return ("client/dist/assets missing", 404)
+    return send_from_directory(assets_dir, filename)
+
+
+def _serve_spa_shell():
+    if not (_CLIENT_DIST / "index.html").is_file():
+        return ("client/dist/index.html missing", 404)
+    return send_from_directory(_CLIENT_DIST, "index.html")
+
+
+@app.route("/<path:_path>", methods=["GET"])
+def spa_catch_all(_path):
+    return _serve_spa_shell()
 
 
 if __name__ == "__main__":
