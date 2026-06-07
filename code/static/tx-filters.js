@@ -1,3 +1,8 @@
+window.txCellText = function(row, idx) {
+  var c = row.children[idx];
+  return c ? c.textContent.trim() : '';
+};
+
 window.setupTxFilters = function(config) {
   var filtersSelector = config.filtersSelector || '.tx-filters';
   function getFiltersContainer() { return document.querySelector(filtersSelector); }

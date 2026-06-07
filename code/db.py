@@ -113,11 +113,9 @@ def init_db():
             conn.execute(text("ALTER TABLE users ADD COLUMN monthly_income FLOAT"))
         if user_cols and "monthly_spend" not in user_cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN monthly_spend FLOAT"))
-        if user_cols and "count_transfers_as_transactions" not in user_cols:
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN count_transfers_as_transactions "
-                "BOOLEAN NOT NULL DEFAULT 1"
-            ))
+        # count_transfers_as_transactions is intentionally abandoned: the model no
+        # longer maps it and nothing reads it. Left in existing DBs (SQLite drops
+        # are destructive); never re-added.
 
         tx_cols = {
             row[1] for row in conn.execute(text("PRAGMA table_info(transactions)"))
@@ -190,24 +188,22 @@ def init_db():
                 if legacy in rule_indexes:
                     conn.execute(text(f"DROP INDEX {legacy}"))
 
-        # Migrate single-condition legacy rules into the conditions table.
+        # Idempotent per-rule: conditions are the sole representation now, so a
+        # legacy rule left without condition rows would read as having none.
         cond_exists = conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name='transaction_rule_conditions'"
         )).first()
         if rule_cols and cond_exists:
-            already_migrated = conn.execute(text(
-                "SELECT COUNT(1) FROM transaction_rule_conditions"
-            )).scalar()
-            if not already_migrated:
-                conn.execute(text(
-                    "INSERT INTO transaction_rule_conditions "
-                    "(rule_id, match_field, match_op, match_value) "
-                    "SELECT id, match_field, "
-                    "COALESCE(match_op, 'equals'), match_value "
-                    "FROM transaction_rules "
-                    "WHERE match_field IS NOT NULL AND match_value IS NOT NULL"
-                ))
+            conn.execute(text(
+                "INSERT INTO transaction_rule_conditions "
+                "(rule_id, match_field, match_op, match_value) "
+                "SELECT id, match_field, COALESCE(match_op, 'equals'), match_value "
+                "FROM transaction_rules r "
+                "WHERE match_field IS NOT NULL AND match_value IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM transaction_rule_conditions c "
+                "WHERE c.rule_id = r.id)"
+            ))
 
         # Composite index for (user_id, date) Transaction reads. create_all
         # only adds the index on a fresh DB; this picks up existing DBs.

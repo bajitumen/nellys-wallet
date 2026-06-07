@@ -29,12 +29,6 @@ class User(Base):
     monthly_income: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     monthly_spend: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    # When False, transfers between the user's own accounts (Plaid's
-    # TRANSFER_IN / TRANSFER_OUT) are dropped from spending + income totals.
-    count_transfers_as_transactions: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True,
-    )
-
     items: Mapped[list["PlaidItem"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -100,8 +94,8 @@ class TransactionRule(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    # Legacy single-condition fields. New rules write to `conditions` instead.
-    # Kept nullable for backward compat with rows created before the migration.
+    # Orphaned legacy columns: backfilled into `conditions` on migrate, no
+    # longer read or written. Retained to avoid a destructive column drop.
     match_field: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     match_op: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, default="equals")
     match_value: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, index=True)

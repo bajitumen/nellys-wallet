@@ -34,10 +34,9 @@ _FIELD_SPECIFICITY = {
     "pfc_primary": 1,
 }
 
-INCOME_PRIMARIES = frozenset({"INCOME", "TRANSFER_IN"})
 
 
-class _LegacyCondition:
+class _PayloadCondition:
     __slots__ = ("match_field", "match_op", "match_value")
 
     def __init__(self, field, op, value):
@@ -47,12 +46,7 @@ class _LegacyCondition:
 
 
 def rule_conditions(rule: TransactionRule) -> list:
-    """Conditions list; falls back to the rule's legacy match_* fields if empty."""
-    if rule.conditions:
-        return list(rule.conditions)
-    if rule.match_field and rule.match_value is not None:
-        return [_LegacyCondition(rule.match_field, rule.match_op, rule.match_value)]
-    return []
+    return list(rule.conditions)
 
 
 def _condition_label_field(field: str) -> str:
@@ -147,30 +141,21 @@ def _action_group(action: str) -> str:
     return action
 
 
-def _tx_in_scope(tx: Transaction, scope: str) -> bool:
+def tx_in_scope(tx: Transaction, scope: str) -> bool:
     if scope == "all":
         return True
     if scope == "spending":
-        return (
-            tx.amount is not None
-            and tx.amount > 0
-            and tx.pfc_primary is not None
-            and tx.pfc_primary not in INCOME_PRIMARIES
-        )
+        return tx.amount is not None and tx.amount > 0 and pfc_mod.is_spend_category(tx.pfc_primary)
     if scope == "income":
-        return (
-            tx.amount is not None
-            and tx.amount < 0
-            and tx.pfc_primary in INCOME_PRIMARIES
-        )
+        return tx.amount is not None and tx.amount < 0 and pfc_mod.is_income_category(tx.pfc_primary)
     return False
 
 
-def _build_scope_filter(scope: str):
+def build_scope_filter(scope: str):
     if scope == "spending":
-        return [Transaction.amount > 0, ~Transaction.pfc_primary.in_(INCOME_PRIMARIES)]
+        return [Transaction.amount > 0, ~Transaction.pfc_primary.in_(pfc_mod.INCOME_SIDE_PRIMARIES)]
     if scope == "income":
-        return [Transaction.amount < 0, Transaction.pfc_primary.in_(INCOME_PRIMARIES)]
+        return [Transaction.amount < 0, Transaction.pfc_primary.in_(pfc_mod.INCOME_SIDE_PRIMARIES)]
     return []
 
 
@@ -195,7 +180,7 @@ def _condition_matches_tx(tx: Transaction, cond, item_institutions=None) -> bool
 
 
 def _tx_matches_rule(tx: Transaction, rule: TransactionRule, item_institutions=None) -> bool:
-    if not _tx_in_scope(tx, rule.scope):
+    if not tx_in_scope(tx, rule.scope):
         return False
     conds = rule_conditions(rule)
     if not conds:
@@ -204,19 +189,22 @@ def _tx_matches_rule(tx: Transaction, rule: TransactionRule, item_institutions=N
     return any(matches) if rule.conditions_logic == "any" else all(matches)
 
 
-def _winning_rules(matched: list[TransactionRule]) -> list[TransactionRule]:
+def _rank_key(rule: TransactionRule, specificity: dict[int, int]) -> tuple:
+    # Sorts ascending: most specific first, older id (lower) breaks ties.
+    return (-specificity[rule.id], rule.id if rule.id is not None else 0)
+
+
+def _winning_rules(
+    matched: list[TransactionRule], specificity: dict[int, int],
+) -> list[TransactionRule]:
     """Per action group, keep only the most specific matching rule.
 
     Tie-break is deterministic: on equal specificity the older rule wins
     (lower id). Without this, the result depends on row order from the DB
     and the same tx can flap between rules across syncs.
     """
-    def rank(r: TransactionRule) -> tuple:
-        # Higher specificity sorts first; older id breaks ties.
-        return (-rule_specificity(r), r.id if r.id is not None else 0)
-
     by_group: dict[str, TransactionRule] = {}
-    for r in sorted(matched, key=rank):
+    for r in sorted(matched, key=lambda r: _rank_key(r, specificity)):
         key = _action_group(r.action)
         if key not in by_group:
             by_group[key] = r
@@ -287,30 +275,8 @@ def _build_conditions_filter(conditions, logic: str, user_id: int, session):
     return or_(*clauses) if logic == "any" else and_(*clauses)
 
 
-def _query_txs_for_rule(rule: TransactionRule, session) -> list[Transaction]:
-    conds = rule_conditions(rule)
-    cond_filter = _build_conditions_filter(conds, rule.conditions_logic, rule.user_id, session)
-    if cond_filter is None:
-        return []
-    return (
-        session.query(Transaction)
-        .filter(
-            Transaction.user_id == rule.user_id,
-            cond_filter,
-            *_build_scope_filter(rule.scope),
-        )
-        .all()
-    )
-
-
-def _query_txs_for_payload(
-    user_id: int, conditions: list[dict], logic: str, scope: str, session,
-) -> list[Transaction]:
-    cond_objs = [
-        _LegacyCondition(c["match_field"], c.get("match_op", "equals"), c["match_value"])
-        for c in conditions
-    ]
-    cond_filter = _build_conditions_filter(cond_objs, logic, user_id, session)
+def query_txs(user_id: int, conditions, logic: str, scope: str, session) -> list[Transaction]:
+    cond_filter = _build_conditions_filter(conditions, logic, user_id, session)
     if cond_filter is None:
         return []
     return (
@@ -318,10 +284,24 @@ def _query_txs_for_payload(
         .filter(
             Transaction.user_id == user_id,
             cond_filter,
-            *_build_scope_filter(scope),
+            *build_scope_filter(scope),
         )
         .all()
     )
+
+
+def _query_txs_for_rule(rule: TransactionRule, session) -> list[Transaction]:
+    return query_txs(rule.user_id, rule_conditions(rule), rule.conditions_logic, rule.scope, session)
+
+
+def query_txs_for_payload(
+    user_id: int, conditions: list[dict], logic: str, scope: str, session,
+) -> list[Transaction]:
+    cond_objs = [
+        _PayloadCondition(c["match_field"], c.get("match_op", "equals"), c["match_value"])
+        for c in conditions
+    ]
+    return query_txs(user_id, cond_objs, logic, scope, session)
 
 
 def _recompute_overrides_for_txs(user_id: int, txs: list[Transaction], session) -> int:
@@ -334,6 +314,7 @@ def _recompute_overrides_for_txs(user_id: int, txs: list[Transaction], session) 
         .all()
     )
     institutions = _item_institutions(user_id, session)
+    specificity = {r.id: rule_specificity(r) for r in all_rules}
     tx_ids = [t.plaid_transaction_id for t in txs]
     existing_by_id = {
         o.plaid_transaction_id: o for o in
@@ -350,7 +331,7 @@ def _recompute_overrides_for_txs(user_id: int, txs: list[Transaction], session) 
         if existing is not None and existing.source == "manual":
             continue
         matching_for_tx = [r for r in all_rules if _tx_matches_rule(tx, r, institutions)]
-        winners = _winning_rules(matching_for_tx)
+        winners = _winning_rules(matching_for_tx, specificity)
         if not winners:
             if existing is not None and existing.source == "rule":
                 session.delete(existing)
@@ -386,10 +367,11 @@ def snapshot_rule_txs(rule: TransactionRule, session) -> list[Transaction]:
 def applied_rule_id_by_tx(
     txs: list[Transaction], user_id: int, session,
 ) -> dict[str, int]:
-    """Return {plaid_transaction_id: rule_id} for each tx where a rule currently matches.
+    """Return {plaid_transaction_id: rule_id} for the rule shown on each tx row.
 
-    Picks the most-specific matching rule (older id wins on ties), mirroring
-    `_winning_rules`. Used to render an "Edit rule" affordance on rule-affected rows.
+    Picks the most-specific of the rules that actually set the tx's override
+    (the same winners `_winning_rules` applies), so the "Edit rule" affordance
+    always points at a rule affecting the row.
     """
     if not txs:
         return {}
@@ -402,13 +384,16 @@ def applied_rule_id_by_tx(
     if not rules:
         return {}
     institutions = _item_institutions(user_id, session)
+    specificity = {r.id: rule_specificity(r) for r in rules}
     out: dict[str, int] = {}
     for tx in txs:
         matched = [r for r in rules if _tx_matches_rule(tx, r, institutions)]
-        if not matched:
+        winners = _winning_rules(matched, specificity)
+        if not winners:
             continue
-        winner = sorted(matched, key=lambda r: (-rule_specificity(r), r.id))[0]
-        out[tx.plaid_transaction_id] = winner.id
+        out[tx.plaid_transaction_id] = min(
+            winners, key=lambda r: _rank_key(r, specificity),
+        ).id
     return out
 
 
@@ -469,6 +454,7 @@ def apply_rules_to_new_transactions(
     if not rules:
         return 0
     institutions = _item_institutions(user_id, session)
+    specificity = {r.id: rule_specificity(r) for r in rules}
 
     tx_ids = [t.plaid_transaction_id for t in new_txs]
     existing = {
@@ -487,7 +473,7 @@ def apply_rules_to_new_transactions(
         matched = [r for r in rules if _tx_matches_rule(tx, r, institutions)]
         if not matched:
             continue
-        winners = _winning_rules(matched)
+        winners = _winning_rules(matched, specificity)
         ov = TransactionOverride(
             user_id=user_id,
             plaid_transaction_id=tx.plaid_transaction_id,
@@ -498,23 +484,6 @@ def apply_rules_to_new_transactions(
         session.add(ov)
         created += 1
     return created
-
-
-def _mirror_legacy_fields(rule: TransactionRule, conditions: list[dict]) -> None:
-    """Mirror the first condition into the legacy match_* columns.
-
-    Conditions are authoritative; legacy fields are a back-compat read path for
-    single-condition rules and a placeholder for multi-condition ones.
-    """
-    if conditions:
-        first = conditions[0]
-        rule.match_field = first["match_field"]
-        rule.match_op = first.get("match_op", "equals")
-        rule.match_value = first["match_value"]
-    else:
-        rule.match_field = None
-        rule.match_op = None
-        rule.match_value = None
 
 
 def _canonical_payload_conditions(conditions: list[dict]) -> tuple:
@@ -543,8 +512,13 @@ def _canonical_rule_conditions(rule: TransactionRule) -> tuple:
 def find_equivalent_rule(
     user_id: int, conditions: list[dict], conditions_logic: str,
     action: str, action_value: str | None, scope: str, session,
+    match_action_value: bool = True,
 ) -> TransactionRule | None:
-    """Return an existing rule with the same logical identity, or None."""
+    """Return an existing rule with the same logical identity, or None.
+
+    With match_action_value=False the action_value is excluded from identity,
+    so the match is on trigger alone (used by upsert to update value in place).
+    """
     target = _canonical_payload_conditions(conditions)
     candidates = (
         session.query(TransactionRule)
@@ -557,7 +531,7 @@ def find_equivalent_rule(
         .all()
     )
     for r in candidates:
-        if (r.action_value or None) != (action_value or None):
+        if match_action_value and (r.action_value or None) != (action_value or None):
             continue
         if _canonical_rule_conditions(r) == target:
             return r
@@ -591,7 +565,6 @@ def create_rule(
             match_op=c.get("match_op", "equals"),
             match_value=c["match_value"],
         ))
-    _mirror_legacy_fields(rule, conditions)
     session.add(rule)
     session.flush()
     return rule
@@ -612,7 +585,6 @@ def update_rule(
             match_op=c.get("match_op", "equals"),
             match_value=c["match_value"],
         ))
-    _mirror_legacy_fields(rule, conditions)
     session.flush()
 
 
@@ -623,40 +595,22 @@ def upsert_rule(
 ) -> TransactionRule:
     """Single-condition convenience used by callers and tests.
 
-    Reuses an existing rule with the same identity tuple to keep the previous
-    upsert behavior; otherwise creates a new one with a single condition row.
+    Upsert by trigger: a rule with the same condition/action/scope has its
+    action_value updated in place; otherwise a new rule is created.
     """
-    existing = (
-        session.query(TransactionRule)
-        .filter(
-            TransactionRule.user_id == user_id,
-            TransactionRule.action == action,
-            TransactionRule.scope == scope,
-        )
-        .all()
-    )
-    target_value_lc = match_value.lower()
-    match = None
-    for r in existing:
-        conds = rule_conditions(r)
-        if (
-            len(conds) == 1
-            and conds[0].match_field == match_field
-            and (conds[0].match_op or "equals") == match_op
-            and (conds[0].match_value or "").lower() == target_value_lc
-        ):
-            match = r
-            break
-
     conditions = [{
         "match_field": match_field, "match_op": match_op, "match_value": match_value,
     }]
-    if match is None:
+    existing = find_equivalent_rule(
+        user_id, conditions, "all", action, action_value, scope, session,
+        match_action_value=False,
+    )
+    if existing is None:
         return create_rule(
             user_id, conditions, "all", action, action_value, scope, session,
         )
-    update_rule(match, conditions, "all", action, action_value, scope, session)
-    return match
+    update_rule(existing, conditions, "all", action, action_value, scope, session)
+    return existing
 
 
 def list_rules(user: User, session) -> list[TransactionRule]:

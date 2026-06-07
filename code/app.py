@@ -521,7 +521,7 @@ def rules_preview(session, user):
     fields, err = _parse_rule_payload(data)
     if err:
         return err
-    txs = rules_mod._query_txs_for_payload(
+    txs = rules_mod.query_txs_for_payload(
         user.id, fields["conditions"], fields["conditions_logic"],
         fields["scope"], session,
     )
@@ -659,24 +659,9 @@ def rules_list_view(session, user):
         elif side == "income":
             rules_by_tab["income"].append(d)
 
-    rules_by_id = {
-        str(r.id): {
-            "id": r.id,
-            "conditions": [
-                {
-                    "match_field": c.match_field,
-                    "match_op": c.match_op,
-                    "match_value": c.match_value,
-                }
-                for c in rules_mod.rule_conditions(r)
-            ],
-            "conditions_logic": r.conditions_logic,
-            "action": r.action,
-            "action_value": r.action_value,
-            "scope": r.scope,
-        }
-        for r in rule_rows
-    }
+    rules_by_id = rules_mod.rules_by_id_dict(
+        user.id, session, [r.id for r in rule_rows],
+    )
     return render_template(
         "rules.html", active_page="rules", no_user=False,
         active_tab=active_tab,
@@ -730,7 +715,7 @@ def income_view(session, user):
             rules_by_id={},
         )
 
-    sources = income_mod.available_sources(user)
+    sources = spending_mod.available_sources(user)
     if source and source not in sources:
         source = None
     data = income_mod.fetch_last_month(

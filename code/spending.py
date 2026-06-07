@@ -51,8 +51,7 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         .filter(
             Transaction.user_id == user.id,
             Transaction.item_id.in_(items_by_id),
-            Transaction.amount > 0,
-            ~Transaction.pfc_primary.in_(pfc.EXCLUDED_CATEGORIES),
+            *rules_mod.build_scope_filter("spending"),
             Transaction.is_internal_transfer.is_(False),
         )
         .distinct()
@@ -98,8 +97,12 @@ def previous_month_window(start: date, end: date) -> tuple[date, date]:
 
 
 def _apply_spend_override(tx: Transaction, override: TransactionOverride | None):
-    if override and override.dismissed:
-        return None
+    """Resolve (category, amount, split_percentage, detailed, dismissed) for a tx.
+
+    Returns None only when the tx is not spending after overrides; dismissed
+    rows resolve normally so callers can show them in the restore list.
+    """
+    dismissed = bool(override and override.dismissed)
     category = tx.pfc_primary or "UNKNOWN"
     amount = tx.amount
     split_percentage = None
@@ -111,9 +114,11 @@ def _apply_spend_override(tx: Transaction, override: TransactionOverride | None)
             amount = override.amount_override
         split_percentage = override.split_percentage
         detailed = override.detailed_override
-    if category in pfc.EXCLUDED_CATEGORIES:
+    if detailed is None and tx.pfc_detailed and pfc.primary_of(tx.pfc_detailed) == category:
+        detailed = tx.pfc_detailed
+    if not dismissed and not pfc.is_spend_category(category):
         return None
-    return category, amount, split_percentage, detailed
+    return category, amount, split_percentage, detailed, dismissed
 
 
 def _fetch_raw_transactions(client, item, start: date, end: date) -> dict:
@@ -235,8 +240,7 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
 
     rules_mod.apply_rules_to_new_transactions(user.id, new_inserts, session)
 
-    # After new tx rows land, look for new internal-transfer pairs so the
-    # "Exclude transfers between my accounts" setting can drop them automatically.
+    # Flag new internal-transfer pairs so the spending/income filters drop them.
     import transfers as transfers_mod
     transfers_mod.pair_internal_transfers(user.id, session)
 
@@ -318,7 +322,7 @@ def _fetch_last_month_uncached(
             Transaction.date >= prev_start,
             Transaction.date <= end,
             Transaction.item_id.in_(items_by_id),
-            Transaction.amount > 0,
+            *rules_mod.build_scope_filter("spending"),
             Transaction.is_internal_transfer.is_(False),
         )
         .all()
@@ -337,56 +341,26 @@ def _fetch_last_month_uncached(
     prev_total = 0.0
     for tx in tx_rows:
         override = overrides_by_tx.get(tx.plaid_transaction_id)
+        resolved = _apply_spend_override(tx, override)
+        if resolved is None:
+            continue
+        category, amount, split_percentage, detailed, dismissed = resolved
 
-        # Dismissed: shown for restoring, excluded from aggregates.
-        if override and override.dismissed:
+        if dismissed:
             if not (start <= tx.date <= end):
                 continue
-            category = override.category_override or tx.pfc_primary or "UNKNOWN"
-            amount = (
-                override.amount_override if override.amount_override is not None
-                else tx.amount
-            )
-            detailed = override.detailed_override
-            if detailed is None and tx.pfc_detailed and pfc.primary_of(tx.pfc_detailed) == category:
-                detailed = tx.pfc_detailed
-            tx_list.append({
-                "plaid_id": tx.plaid_transaction_id,
-                "date": tx.date,
-                "source": items_by_id[tx.item_id].institution_name or "Unknown",
-                "name": tx.merchant_name or tx.name or "(no description)",
-                "category": pfc.humanize_primary(category),
-                "category_raw": category,
-                "detailed_raw": detailed,
-                "detailed_label": (
-                    pfc.humanize_detailed(detailed, category) if detailed else None
-                ),
-                "amount": amount,
-                "original_amount": tx.amount,
-                "split_percentage": override.split_percentage,
-                "dismissed": True,
-                "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
-            })
-            continue
+        else:
+            if prev_start <= tx.date <= prev_end:
+                prev_total += amount
+                continue
+            if not (start <= tx.date <= end):
+                continue
+            totals[category] += amount
+            counts[category] += 1
+            if detailed:
+                sub_totals[(category, detailed)] += amount
+                sub_counts[(category, detailed)] += 1
 
-        applied = _apply_spend_override(tx, override)
-        if applied is None:
-            continue
-        category, amount, split_percentage, detailed = applied
-        if prev_start <= tx.date <= prev_end:
-            prev_total += amount
-            continue
-        if not (start <= tx.date <= end):
-            continue
-        # Inherit Plaid's detailed only if primary still matches the override.
-        if detailed is None and tx.pfc_detailed and pfc.primary_of(tx.pfc_detailed) == category:
-            detailed = tx.pfc_detailed
-
-        totals[category] += amount
-        counts[category] += 1
-        if detailed:
-            sub_totals[(category, detailed)] += amount
-            sub_counts[(category, detailed)] += 1
         tx_list.append({
             "plaid_id": tx.plaid_transaction_id,
             "date": tx.date,
@@ -401,15 +375,16 @@ def _fetch_last_month_uncached(
             "amount": amount,
             "original_amount": tx.amount,
             "split_percentage": split_percentage,
-            "dismissed": False,
+            "dismissed": dismissed,
             "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
         })
 
     out["total"] = sum(totals.values())
     out["count"] = sum(counts.values())
 
+    budgets_by_detailed = budget_mod.get_budgets(user, session)
     primary_budgets: dict[str, float] = defaultdict(float)
-    for detailed, amount in budget_mod.get_budgets(user, session).items():
+    for detailed, amount in budgets_by_detailed.items():
         primary = pfc.primary_of(detailed)
         if primary:
             primary_budgets[primary] += amount
@@ -418,8 +393,6 @@ def _fetch_last_month_uncached(
     category_keys = set(totals.keys())
     if source is None:
         category_keys.update(pfc.PFC_TAXONOMY.keys())
-
-    budgets_by_detailed = budget_mod.get_budgets(user, session)
 
     def _subitems_for(primary: str) -> list[dict]:
         items = [
@@ -510,9 +483,9 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
             applied = _apply_spend_override(tx, ov)
             if applied is None:
                 continue
-            _, amount, _, _ = applied
+            _, amount, _, _, _ = applied
             spend_by_month[key] += amount
-        elif tx.amount < 0 and tx.pfc_primary in ("INCOME", "TRANSFER_IN"):
+        elif tx.amount < 0 and pfc.is_income_category(tx.pfc_primary):
             amount = -tx.amount
             if ov and ov.amount_override is not None:
                 amount = ov.amount_override

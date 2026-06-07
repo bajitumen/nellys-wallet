@@ -176,9 +176,7 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     var delta = points[points.length - 1].value - start;
     if (delta === 0) { el.textContent = ''; return; }
     var sign = delta > 0 ? '+' : '−';
-    el.textContent = sign + '$' + Math.abs(delta).toLocaleString('en-US', {
-      minimumFractionDigits: 2, maximumFractionDigits: 2,
-    });
+    el.textContent = sign + fmtUsd(Math.abs(delta), 2);
     el.classList.add(delta > 0 ? 'delta-up' : 'delta-down');
   }
 
@@ -208,17 +206,6 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     updateDelta(filtered, geo.hasSynthetic);
   }
 
-  function nearest(svgX) {
-    if (renderedPoints.length === 0) return null;
-    var n = renderedPoints[0];
-    var minDist = Math.abs(n.x - svgX);
-    for (var i = 1; i < renderedPoints.length; i++) {
-      var d = Math.abs(renderedPoints[i].x - svgX);
-      if (d < minDist) { minDist = d; n = renderedPoints[i]; }
-    }
-    return n;
-  }
-
   function syntheticDateLabel(ts) {
     var d = new Date(ts * 1000);
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -243,7 +230,7 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
       var dispTs = Math.max(cursorTs, renderedGeo.rangeStart);
       label = syntheticDateLabel(Math.floor(dispTs));
     } else {
-      var p = nearest(svgX);
+      var p = NWAnimate.nearestX(renderedPoints, svgX);
       if (!p) return;
       isSynthetic = false;
       px = p.x; py = p.y; value = p.value;
@@ -258,9 +245,7 @@ function buildNetworthGeometry(points, width, height, rangeStart, rangeEnd) {
     dot.style.borderColor = renderedGeo.trend === 'up'
       ? 'var(--positive)' : 'var(--negative)';
     showSharedTooltip(
-      label + ': $' + value.toLocaleString('en-US', {
-        minimumFractionDigits: 2, maximumFractionDigits: 2,
-      }),
+      label + ': ' + fmtUsd(value, 2),
       screenX, screenY
     );
   }

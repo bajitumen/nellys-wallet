@@ -2,10 +2,9 @@
 
 A "pair" = one TRANSFER_OUT and one TRANSFER_IN belonging to the same user with
 matching absolute amount and dates within a small window. Both legs get
-`Transaction.is_internal_transfer = True`. The spending/income filters then
-drop only flagged rows when the user opts out of counting internal transfers,
-leaving genuine outflows (Zelle to a friend) and inflows (deposit from work)
-alone — those have no opposite leg on the user's own accounts to pair with.
+`Transaction.is_internal_transfer = True`, which the spending/income filters
+drop, leaving genuine outflows (Zelle to a friend) and inflows (deposit from
+work) alone — those have no opposite leg on the user's own accounts to pair with.
 """
 
 from collections import defaultdict

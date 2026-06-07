@@ -25,14 +25,14 @@
     }) + fmt.suffix;
   }
 
-  function tick(el, from, to) {
+  function tick(el, from, to, formatFn) {
     if (el._tickerRaf) cancelAnimationFrame(el._tickerRaf);
-    var fmt = inferFormat(el.textContent || ('' + to));
+    var fmt = formatFn ? null : inferFormat(el.textContent || ('' + to));
     var start = performance.now();
     function step(now) {
       var t = Math.min(1, (now - start) / TICKER_MS);
       var v = from + (to - from) * easeOut(t);
-      el.textContent = format(fmt, v);
+      el.textContent = formatFn ? formatFn(v) : format(fmt, v);
       if (t < 1) {
         el._tickerRaf = requestAnimationFrame(step);
       } else {
@@ -40,6 +40,17 @@
       }
     }
     el._tickerRaf = requestAnimationFrame(step);
+  }
+
+  function nearestX(points, svgX) {
+    if (!points || points.length === 0) return null;
+    var n = points[0];
+    var minDist = Math.abs(n.x - svgX);
+    for (var i = 1; i < points.length; i++) {
+      var d = Math.abs(points[i].x - svgX);
+      if (d < minDist) { minDist = d; n = points[i]; }
+    }
+    return n;
   }
 
   function snapshotValues(root) {
@@ -143,6 +154,7 @@
 
   window.NWAnimate = {
     tick: tick,
+    nearestX: nearestX,
     parseNumeric: parseNumeric,
     snapshotValues: snapshotValues,
     replayValues: replayValues,

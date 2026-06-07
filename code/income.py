@@ -36,10 +36,6 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-def available_sources(user: User) -> list[str]:
-    return sorted({(it.institution_name or "Unknown") for it in user.items})
-
-
 def available_months(user: User, session, source: str | None = None) -> list[dict]:
     if not user.items:
         return []
@@ -58,8 +54,7 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         .filter(
             Transaction.user_id == user.id,
             Transaction.item_id.in_(items_by_id),
-            Transaction.pfc_primary.in_(("INCOME", "TRANSFER_IN")),
-            Transaction.amount < 0,
+            *rules_mod.build_scope_filter("income"),
             Transaction.is_internal_transfer.is_(False),
         )
         .distinct()
@@ -72,13 +67,13 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
     ]
 
 
-def _apply_income_override(tx: Transaction, override: TransactionOverride | None) -> float | None:
-    if override and override.dismissed:
-        return None
+def _apply_income_override(
+    tx: Transaction, override: TransactionOverride | None,
+) -> tuple[float, bool]:
     amount = -tx.amount  # Plaid: negative=inflow, so flip sign for income.
     if override and override.amount_override is not None:
         amount = override.amount_override
-    return amount
+    return amount, bool(override and override.dismissed)
 
 
 def fetch_last_month(
@@ -127,8 +122,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             Transaction.date >= prev_start,
             Transaction.date <= end,
             Transaction.item_id.in_(items_by_id),
-            Transaction.pfc_primary.in_(("INCOME", "TRANSFER_IN")),
-            Transaction.amount < 0,
+            *rules_mod.build_scope_filter("income"),
             Transaction.is_internal_transfer.is_(False),
         )
         .all()
@@ -145,40 +139,20 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
     prev_total = 0.0
     for tx in tx_rows:
         override = overrides_by_tx.get(tx.plaid_transaction_id)
-        dismissed = bool(override and override.dismissed)
+        amount, dismissed = _apply_income_override(tx, override)
         if dismissed:
             if not (start <= tx.date <= end):
                 continue
-            amount = -tx.amount
-            if override and override.amount_override is not None:
-                amount = override.amount_override
-            payer = (tx.merchant_name or tx.name or "(unknown)").strip() or "(unknown)"
-            tx_list.append({
-                "plaid_id": tx.plaid_transaction_id,
-                "date": tx.date,
-                "source": items_by_id[tx.item_id].institution_name or "Unknown",
-                "payer": payer,
-                "name": tx.merchant_name or tx.name or "(no description)",
-                "amount": amount,
-                "original_amount": -tx.amount,
-                "color": color_for_payer(payer),
-                "dismissed": True,
-                "category_raw": tx.pfc_primary,
-                "detailed_raw": tx.pfc_detailed,
-                "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
-            })
-            continue
-        amount = _apply_income_override(tx, override)
-        if amount is None:
-            continue
-        if prev_start <= tx.date <= prev_end:
-            prev_total += amount
-            continue
-        if not (start <= tx.date <= end):
-            continue
+        else:
+            if prev_start <= tx.date <= prev_end:
+                prev_total += amount
+                continue
+            if not (start <= tx.date <= end):
+                continue
         payer = (tx.merchant_name or tx.name or "(unknown)").strip() or "(unknown)"
-        payer_totals[payer] += amount
-        payer_counts[payer] += 1
+        if not dismissed:
+            payer_totals[payer] += amount
+            payer_counts[payer] += 1
         tx_list.append({
             "plaid_id": tx.plaid_transaction_id,
             "date": tx.date,
@@ -188,7 +162,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             "amount": amount,
             "original_amount": -tx.amount,
             "color": color_for_payer(payer),
-            "dismissed": False,
+            "dismissed": dismissed,
             "category_raw": tx.pfc_primary,
             "detailed_raw": tx.pfc_detailed,
             "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),

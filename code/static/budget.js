@@ -1,30 +1,6 @@
 (function() {
-  function formatUsd(n) {
-    return '$' + n.toLocaleString('en-US', {
-      minimumFractionDigits: 2, maximumFractionDigits: 2,
-    });
-  }
-
-  // 350ms matches the segment animation so ticker + bar arrive together.
-  var TICKER_MS = 350;
-  function easeOut(t) {
-    return 1 - Math.pow(1 - t, 3);
-  }
-  function animateTicker(el, from, to) {
-    if (el._tickerRaf) cancelAnimationFrame(el._tickerRaf);
-    var start = performance.now();
-    function step(now) {
-      var t = Math.min(1, (now - start) / TICKER_MS);
-      var v = from + (to - from) * easeOut(t);
-      el.textContent = formatUsd(v);
-      if (t < 1) {
-        el._tickerRaf = requestAnimationFrame(step);
-      } else {
-        el._tickerRaf = null;
-      }
-    }
-    el._tickerRaf = requestAnimationFrame(step);
-  }
+  function formatUsd(n) { return fmtUsd(n, 2); }
+  function animateTicker(el, from, to) { NWAnimate.tick(el, from, to, formatUsd); }
 
   function readNumeric(el) {
     if (!el) return 0;
@@ -154,12 +130,11 @@
       var payload = input.value === ''
         ? { amount: null }
         : { amount: parseFloat(input.value) };
-      csrfFetch('/budget/' + encodeURIComponent(input.dataset.code), {
+      csrfFetchJson('/budget/' + encodeURIComponent(input.dataset.code), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-        .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
         .then(function(res) {
           if (!res.ok) {
             alert('Failed to save: ' + (res.data.error || 'unknown error'));

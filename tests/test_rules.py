@@ -211,7 +211,25 @@ def test_upsert_dedups_case_insensitively(user_with_item, db_session):
     rules = db_session.query(TransactionRule).all()
     assert len(rules) == 1
     # Latest casing wins for display.
-    assert rules[0].match_value == "VENMO"
+    assert rules_mod.rule_conditions(rules[0])[0].match_value == "VENMO"
+
+
+def test_upsert_same_trigger_updates_action_value_in_place(user_with_item, db_session):
+    """Re-upserting a trigger with a new action_value updates the rule, not a duplicate."""
+    import rules as rules_mod
+    from models import TransactionRule
+    rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo",
+        "split", "50", db_session,
+    )
+    rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "Venmo",
+        "split", "60", db_session,
+    )
+    db_session.commit()
+    rules = db_session.query(TransactionRule).all()
+    assert len(rules) == 1
+    assert rules[0].action_value == "60"
 
 
 def test_invalid_match_value_for_taxonomy_field(client, user_with_item):
@@ -290,9 +308,12 @@ def test_rules_endpoint_creates_and_applies(client, user_with_item, db_session):
 
     rules = db_session.query(TransactionRule).all()
     assert len(rules) == 1
-    assert rules[0].match_field == "merchant_name"
-    assert rules[0].match_op == "equals"
-    assert rules[0].match_value == "Venmo"
+    import rules as rules_mod
+    conds = rules_mod.rule_conditions(rules[0])
+    assert len(conds) == 1
+    assert conds[0].match_field == "merchant_name"
+    assert conds[0].match_op == "equals"
+    assert conds[0].match_value == "Venmo"
     ovs = db_session.query(TransactionOverride).filter_by(dismissed=True).all()
     assert {o.plaid_transaction_id for o in ovs} == {"t1", "t2"}
 
@@ -553,7 +574,7 @@ def test_null_field_does_not_match_not_equals_rule(user_with_item, db_session):
     db_session.commit()
 
     # In-memory matcher: NULL merchant_name should NOT satisfy != "Starbucks".
-    cond = rules_mod._LegacyCondition("merchant_name", "not_equals", "Starbucks")
+    cond = rules_mod._PayloadCondition("merchant_name", "not_equals", "Starbucks")
     tx = db_session.query(Transaction).one()
     assert rules_mod._condition_matches_tx(tx, cond) is False
 

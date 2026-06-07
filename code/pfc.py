@@ -164,10 +164,6 @@ CATEGORY_COLORS: dict[str, str] = {
 DEFAULT_COLOR: str = CATEGORY_COLORS["UNKNOWN"]
 
 
-# Excluded from spending totals but kept as recategorize targets.
-EXCLUDED_CATEGORIES: set[str] = {"INCOME", "TRANSFER_IN"}
-
-
 ALL_PRIMARIES: list[str] = [
     "INCOME",
     "TRANSFER_IN",
@@ -190,9 +186,18 @@ ALL_PRIMARIES: list[str] = [
 # Primaries that make sense on each side. INCOME/TRANSFER_IN are income-side;
 # everything else is spending-side.
 INCOME_SIDE_PRIMARIES: list[str] = ["INCOME", "TRANSFER_IN"]
+_INCOME_SIDE_SET: frozenset[str] = frozenset(INCOME_SIDE_PRIMARIES)
 SPENDING_SIDE_PRIMARIES: list[str] = [
     p for p in ALL_PRIMARIES if p not in INCOME_SIDE_PRIMARIES
 ]
+
+
+def is_income_category(primary: str | None) -> bool:
+    return primary in _INCOME_SIDE_SET
+
+
+def is_spend_category(primary: str | None) -> bool:
+    return primary is not None and primary not in _INCOME_SIDE_SET
 
 
 def primaries_for_side(side: str) -> list[str]:

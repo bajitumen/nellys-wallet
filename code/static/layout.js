@@ -6,6 +6,19 @@ window.csrfFetch = function(url, options) {
   return fetch(url, options);
 };
 
+window.csrfFetchJson = function(url, options) {
+  return csrfFetch(url, options).then(function(r) {
+    return r.json().then(function(d) { return { ok: r.ok, data: d }; });
+  });
+};
+
+window.fmtUsd = function(n, decimals) {
+  decimals = decimals || 0;
+  return '$' + n.toLocaleString('en-US', {
+    minimumFractionDigits: decimals, maximumFractionDigits: decimals,
+  });
+};
+
 (function() {
   if (!document.querySelector('meta[name="needs-daily-sync"]')) return;
   var today = new Date().toISOString().slice(0, 10);
@@ -321,8 +334,7 @@ document.querySelector('.theme-toggle').addEventListener('click', function() {
   btn.addEventListener('click', function() {
     if (btn.classList.contains('busy')) return;
     btn.classList.add('busy');
-    csrfFetch('/sync', { method: 'POST' })
-      .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+    csrfFetchJson('/sync', { method: 'POST' })
       .then(function(res) {
         if (res.ok && res.data.ok) {
           window.location.reload();
@@ -343,8 +355,7 @@ document.querySelector('.theme-toggle').addEventListener('click', function() {
   if (!btn) return;
   btn.addEventListener('click', function() {
     btn.disabled = true;
-    csrfFetch('/link/token', { method: 'POST' })
-      .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+    csrfFetchJson('/link/token', { method: 'POST' })
       .then(function(res) {
         if (!res.ok || !res.data.link_token) {
           alert('Could not start bank link: ' + (res.data.error || 'unknown error'));
@@ -354,12 +365,11 @@ document.querySelector('.theme-toggle').addEventListener('click', function() {
         var handler = Plaid.create({
           token: res.data.link_token,
           onSuccess: function(public_token) {
-            csrfFetch('/link/exchange', {
+            csrfFetchJson('/link/exchange', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ public_token: public_token }),
             })
-              .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
               .then(function(res) {
                 if (!res.ok) {
                   alert('Failed to save account: ' + (res.data.error || 'unknown error'));
@@ -368,8 +378,7 @@ document.querySelector('.theme-toggle').addEventListener('click', function() {
                 }
                 // Pull transactions for the new item so the page reload shows data.
                 // Surface sync errors so the user knows to hit Refresh later.
-                return csrfFetch('/sync', { method: 'POST' })
-                  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+                return csrfFetchJson('/sync', { method: 'POST' })
                   .then(function(syncRes) {
                     if (!syncRes.ok || !syncRes.data.ok) {
                       alert('Account linked, but initial sync failed: '

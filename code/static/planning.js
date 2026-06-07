@@ -223,23 +223,12 @@
       + ' → ' + years + 'y ' + formatUsd(series[series.length - 1]);
   }
 
-  function nearest(svgX) {
-    if (renderedPoints.length === 0) return null;
-    var n = renderedPoints[0];
-    var minDist = Math.abs(n.x - svgX);
-    for (var i = 1; i < renderedPoints.length; i++) {
-      var d = Math.abs(renderedPoints[i].x - svgX);
-      if (d < minDist) { minDist = d; n = renderedPoints[i]; }
-    }
-    return n;
-  }
-
   function handleHoverAt(clientX) {
     if (!renderedPoints.length) return;
     var rect = svg.getBoundingClientRect();
     if (rect.width === 0) return;
     var svgX = (clientX - rect.left) / rect.width * WIDTH;
-    var p = nearest(svgX);
+    var p = NWAnimate.nearestX(renderedPoints, svgX);
     if (!p) return;
 
     var screenX = rect.left + (p.x / WIDTH) * rect.width;
@@ -278,62 +267,16 @@
   svg.addEventListener('touchcancel', hideHover);
   window.addEventListener('scroll', hideHover, { passive: true });
 
-  inputs.forEach(function(input) {
-    var lastValue = input.value;
-    function save() {
-      if (input.value === lastValue) return;
-      lastValue = input.value;
-      var payload = input.value === ''
-        ? { rate: null }
-        : { rate: parseFloat(input.value) };
-      csrfFetch('/planning/rate/' + encodeURIComponent(input.dataset.account), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }).catch(function() {});
-    }
-    input.addEventListener('input', render);
-    input.addEventListener('blur', save);
-    input.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    });
-  });
-
-  contribInputs.forEach(function(input) {
-    var lastValue = input.value;
-    function save() {
-      if (input.value === lastValue) return;
-      lastValue = input.value;
-      var payload = input.value === ''
-        ? { value: null }
-        : { value: parseFloat(input.value) };
-      csrfFetch('/planning/contribution/' + encodeURIComponent(input.dataset.account), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }).catch(function() {});
-    }
-    input.addEventListener('input', render);
-    input.addEventListener('blur', save);
-    input.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    });
-  });
-
-  function wireCashflowInput(input, field) {
+  function wireSaveInput(input, url, buildPayload) {
     if (!input) return;
     var lastValue = input.value;
     function save() {
       if (input.value === lastValue) return;
       lastValue = input.value;
-      var payload = {
-        field: field,
-        value: input.value === '' ? null : parseFloat(input.value),
-      };
-      csrfFetch('/planning/cashflow', {
+      csrfFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(buildPayload(input.value)),
       }).catch(function() {});
     }
     input.addEventListener('input', render);
@@ -342,8 +285,20 @@
       if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
     });
   }
-  wireCashflowInput(incomeInput, 'income');
-  wireCashflowInput(spendInput, 'spend');
+  function numOrNull(v) { return v === '' ? null : parseFloat(v); }
+
+  inputs.forEach(function(input) {
+    wireSaveInput(input, '/planning/rate/' + encodeURIComponent(input.dataset.account),
+      function(v) { return { rate: numOrNull(v) }; });
+  });
+  contribInputs.forEach(function(input) {
+    wireSaveInput(input, '/planning/contribution/' + encodeURIComponent(input.dataset.account),
+      function(v) { return { value: numOrNull(v) }; });
+  });
+  wireSaveInput(incomeInput, '/planning/cashflow',
+    function(v) { return { field: 'income', value: numOrNull(v) }; });
+  wireSaveInput(spendInput, '/planning/cashflow',
+    function(v) { return { field: 'spend', value: numOrNull(v) }; });
 
   horizonFilter.addEventListener('click', function(e) {
     var btn = e.target.closest('.chart-range-btn');
