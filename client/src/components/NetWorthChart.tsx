@@ -55,16 +55,21 @@ function buildChart(
   rangeEnd: number,
 ): ChartGeometry | null {
   if (series.length === 0) return null;
-  const xs = series.map((s) => s.ts);
-  const ys = series.map((s) => s.value);
-  let pathXs = [...xs];
-  let pathYs = [...ys];
-  let hasSyntheticPrefix = false;
-  if (rangeStart !== null && xs[0] > rangeStart) {
-    pathXs = [rangeStart, xs[0], ...xs];
-    pathYs = [0, 0, ...ys];
-    hasSyntheticPrefix = true;
+  const DAY = 86400;
+  const start = rangeStart ?? series[0].ts;
+  const realByDay = new Map<number, number>();
+  for (const s of series) {
+    realByDay.set(Math.floor(s.ts / DAY) * DAY, s.value);
   }
+  const allDays: { ts: number; value: number }[] = [];
+  let carried = 0;
+  for (let t = Math.floor(start / DAY) * DAY; t <= rangeEnd; t += DAY) {
+    const real = realByDay.get(t);
+    if (real !== undefined) carried = real;
+    allDays.push({ ts: t, value: carried });
+  }
+  const pathXs = allDays.map((d) => d.ts);
+  const pathYs = allDays.map((d) => d.value);
   const xMin = rangeStart ?? pathXs[0];
   const xMax = rangeEnd;
   const xSpan = Math.max(1, xMax - xMin);
@@ -87,15 +92,16 @@ function buildChart(
     points.map((p) => `L ${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ") +
     ` L ${points[points.length - 1].x.toFixed(2)},${baselineY.toFixed(2)} Z`;
 
-  const rendered = series.map((s, i) => ({
-    x: toX(xs[i]),
-    y: toY(ys[i]),
-    ts: s.ts,
-    value: s.value,
+  const rendered = pathXs.map((t, i) => ({
+    x: toX(t),
+    y: toY(pathYs[i]),
+    ts: t,
+    value: pathYs[i],
   }));
 
-  const firstValue = hasSyntheticPrefix ? 0 : ys[0];
-  const lastValue = ys[ys.length - 1];
+  const realValues = series.map((s) => s.value);
+  const firstValue = realValues[0];
+  const lastValue = realValues[realValues.length - 1];
   return { linePath, areaPath, rendered, firstValue, lastValue };
 }
 
@@ -108,7 +114,10 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
   const [seriesKey, setSeriesKey] = useState<string>("net");
   const [range, setRange] = useState<typeof RANGES[number]["key"]>("30D");
   const svgRef = useRef<SVGSVGElement>(null);
-  const [hover, setHover] = useState<{ x: number; y: number; ts: number; value: number } | null>(null);
+  const [hover, setHover] = useState<{
+    x: number; y: number; ts: number; value: number;
+    clientX: number; clientY: number;
+  } | null>(null);
 
   const series = seriesData[seriesKey] || [];
   const rangeEnd = useMemo(() => Math.floor(Date.now() / 1000), [seriesKey, range]);
@@ -143,11 +152,18 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
         bestDiff = diff;
       }
     }
-    return best;
+    return { point: best, rect };
   }
   function handleHoverAtClientX(clientX: number) {
-    const p = pickClosestByClientX(clientX);
-    if (p) setHover(p);
+    const result = pickClosestByClientX(clientX);
+    if (!result) return;
+    const { point, rect } = result;
+    const screenX = rect.left + (point.x / WIDTH) * rect.width;
+    const screenY = rect.top + (point.y / HEIGHT) * rect.height;
+    setHover({
+      x: point.x, y: point.y, ts: point.ts, value: point.value,
+      clientX: screenX, clientY: screenY,
+    });
   }
 
   useEffect(() => {
@@ -238,13 +254,38 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
           onMouseLeave={() => setHover(null)}
         >
           <path d={chart.areaPath} className="networth-area" />
-          <path d={chart.linePath} className="networth-line" fill="none" />
-          {hover && <circle className="networth-dot" cx={hover.x} cy={hover.y} r="4" />}
+          <path
+            d={chart.linePath}
+            className="networth-line-real"
+            fill="none"
+            strokeWidth={2.5}
+            vectorEffect="non-scaling-stroke"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
         </svg>
       ) : (
         <p className="muted" style={{ padding: "1rem 0" }}>
           No snapshots in this range yet.
         </p>
+      )}
+      {hover && (
+        <>
+          <div
+            className="networth-dot"
+            style={{ left: `${hover.clientX}px`, top: `${hover.clientY}px` }}
+          />
+          <div
+            className="bar-tooltip visible"
+            style={{ left: `${hover.clientX}px`, top: `${hover.clientY}px` }}
+          >
+            <strong>{formatUsd(hover.value)}</strong>
+            <br />
+            {hoverDate?.toLocaleDateString("en-US", {
+              month: "short", day: "numeric", year: "numeric",
+            })}
+          </div>
+        </>
       )}
       <div className="chart-range-filter" data-chart="networth">
         {RANGES.map((r) => (
@@ -258,11 +299,6 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
           </button>
         ))}
       </div>
-      {hoverDate && (
-        <div className="muted" style={{ fontSize: "0.82rem", marginTop: "0.25rem" }}>
-          {hoverDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-        </div>
-      )}
     </div>
   );
 }

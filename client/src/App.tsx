@@ -10,6 +10,7 @@ import DashboardPage from "./pages/Dashboard";
 import SignInPage from "./pages/SignIn";
 import SignUpPage from "./pages/SignUp";
 import PlaidSetupPage from "./pages/PlaidSetup";
+import PlaidFaqPage from "./pages/PlaidFaq";
 
 export default function App({ clerkEnabled }: { clerkEnabled: boolean }) {
   const guarded = (node: React.ReactNode) =>
@@ -20,6 +21,7 @@ export default function App({ clerkEnabled }: { clerkEnabled: boolean }) {
       <Route path="/sign-in/*" element={<SignInPage />} />
       <Route path="/sign-up/*" element={<SignUpPage />} />
       <Route path="/settings/plaid" element={guarded(<PlaidSetupPage />)} />
+      <Route path="/settings/plaid/faq" element={<PlaidFaqPage />} />
       <Route element={guarded(<Layout />)}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/spending" element={<SpendingPage />} />

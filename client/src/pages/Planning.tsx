@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Page } from "../components/Page";
 import { EmptyState } from "../components/EmptyState";
 import { InstAvatar } from "../components/InstAvatar";
+import { PlanningChart, type ProjectionAccount } from "../components/PlanningChart";
 import { ApiError, getJson, postJson } from "../lib/api";
 
 type Account = {
@@ -64,6 +65,55 @@ export default function PlanningPage() {
 }
 
 function PlanningView({ data }: { data: PlanningData }) {
+  const qc = useQueryClient();
+
+  const [rates, setRates] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      data.accounts.map((a) => [
+        a.id, data.rates[a.id] == null ? "" : data.rates[a.id].toFixed(2),
+      ]),
+    ),
+  );
+  const [contribs, setContribs] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      data.accounts.map((a) => [
+        a.id, data.contributions[a.id] == null ? "" : data.contributions[a.id].toFixed(0),
+      ]),
+    ),
+  );
+  const [income, setIncome] = useState<string>(
+    data.monthly_income == null ? "" : data.monthly_income.toFixed(0),
+  );
+  const [spend, setSpend] = useState<string>(
+    data.monthly_spend == null ? "" : data.monthly_spend.toFixed(0),
+  );
+
+  const saveRate = useMutation({
+    mutationFn: (vars: { id: string; rate: string }) =>
+      postJson(`/planning/rate/${encodeURIComponent(vars.id)}`, { rate: vars.rate }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["planning"] }),
+  });
+  const saveContrib = useMutation({
+    mutationFn: (vars: { id: string; value: string }) =>
+      postJson(`/planning/contribution/${encodeURIComponent(vars.id)}`, { value: vars.value }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["planning"] }),
+  });
+  const saveCashflow = useMutation({
+    mutationFn: (vars: { field: "income" | "spend"; value: string }) =>
+      postJson("/planning/cashflow", vars),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["planning"] }),
+  });
+
+  const projAccounts: ProjectionAccount[] = data.accounts.map((a) => ({
+    id: a.id,
+    label: `${a.institution} · ${a.name}`,
+    balance: a.balance,
+    sign: a.sign,
+    rateAnnual: parseFloat(rates[a.id]) || 0,
+    monthlyContribution: parseFloat(contribs[a.id]) || 0,
+  }));
+  const netFlow = (parseFloat(income) || 0) - (parseFloat(spend) || 0);
+
   return (
     <Page heading="Planning">
       <p className="subtitle">Project balances forward using rates you set per account</p>
@@ -74,173 +124,124 @@ function PlanningView({ data }: { data: PlanningData }) {
         />
       ) : (
         <>
-          <CashflowCard data={data} />
+          <div className="planning-top-row">
+            <PlanningChart accounts={projAccounts} netMonthlyFlow={netFlow} />
+            <div className="chart-card planning-cashflow-card">
+              <h3 className="planning-cashflow-title">Monthly cash flow</h3>
+              <p className="planning-cashflow-help muted">
+                Added to balances each projected month.
+              </p>
+              <label className="planning-cashflow-field">
+                <span className="planning-cashflow-label">Income</span>
+                <span className="planning-cashflow-input-wrap">
+                  <span className="prefix-left">$</span>
+                  <input
+                    type="number"
+                    className="numeric-input"
+                    step="1"
+                    min="0"
+                    placeholder={data.avg_monthly_income ? data.avg_monthly_income.toFixed(0) : "0"}
+                    value={income}
+                    onChange={(e) => setIncome(e.target.value)}
+                    onBlur={() => saveCashflow.mutate({ field: "income", value: income })}
+                  />
+                </span>
+              </label>
+              <label className="planning-cashflow-field">
+                <span className="planning-cashflow-label">Spend</span>
+                <span className="planning-cashflow-input-wrap">
+                  <span className="prefix-left">$</span>
+                  <input
+                    type="number"
+                    className="numeric-input"
+                    step="1"
+                    min="0"
+                    placeholder={data.avg_monthly_spend ? data.avg_monthly_spend.toFixed(0) : "0"}
+                    value={spend}
+                    onChange={(e) => setSpend(e.target.value)}
+                    onBlur={() => saveCashflow.mutate({ field: "spend", value: spend })}
+                  />
+                </span>
+              </label>
+              <div className="planning-cashflow-net">
+                Net:{" "}
+                <span style={{ color: netFlow > 0 ? "var(--positive)" : netFlow < 0 ? "var(--negative)" : undefined }}>
+                  {formatUsd(netFlow)}
+                </span>
+                /mo
+              </div>
+            </div>
+          </div>
+
           <h2>Rates</h2>
-          <RatesTable data={data} />
+          <table className="planning-rates-table">
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th className="num">Balance</th>
+                <th className="num">Interest rate</th>
+                <th className="num">Monthly add</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.accounts.map((a) => (
+                <tr key={a.id}>
+                  <td>
+                    <InstAvatar
+                      name={a.institution}
+                      logo={a.logo}
+                      primaryColor={a.primary_color}
+                    />
+                    <span className="planning-acct-name">
+                      {a.institution} · {a.name}
+                    </span>
+                    <span className="planning-acct-type muted">{a.type}</span>
+                  </td>
+                  <td className="num">{formatUsd(a.balance)}</td>
+                  <td className="num">
+                    <span className="planning-rate-input-wrap">
+                      <input
+                        type="number"
+                        className="planning-rate-input numeric-input"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={rates[a.id] ?? ""}
+                        onChange={(e) =>
+                          setRates((p) => ({ ...p, [a.id]: e.target.value }))
+                        }
+                        onBlur={() =>
+                          saveRate.mutate({ id: a.id, rate: rates[a.id] ?? "" })
+                        }
+                      />
+                      <span className="prefix">%</span>
+                    </span>
+                  </td>
+                  <td className="num">
+                    <span className="planning-contrib-input-wrap">
+                      <span className="prefix-left">$</span>
+                      <input
+                        type="number"
+                        className="planning-contrib-input numeric-input"
+                        step="1"
+                        min="0"
+                        placeholder="0"
+                        value={contribs[a.id] ?? ""}
+                        onChange={(e) =>
+                          setContribs((p) => ({ ...p, [a.id]: e.target.value }))
+                        }
+                        onBlur={() =>
+                          saveContrib.mutate({ id: a.id, value: contribs[a.id] ?? "" })
+                        }
+                      />
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </>
       )}
     </Page>
-  );
-}
-
-function CashflowCard({ data }: { data: PlanningData }) {
-  const qc = useQueryClient();
-  const [income, setIncome] = useState<string>(
-    data.monthly_income == null ? "" : data.monthly_income.toFixed(0),
-  );
-  const [spend, setSpend] = useState<string>(
-    data.monthly_spend == null ? "" : data.monthly_spend.toFixed(0),
-  );
-
-  const save = useMutation({
-    mutationFn: (vars: { field: "income" | "spend"; value: string }) =>
-      postJson<{ ok: boolean; value: number | null }>("/planning/cashflow", vars),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["planning"] }),
-  });
-
-  const incomeNum = parseFloat(income) || 0;
-  const spendNum = parseFloat(spend) || 0;
-  const net = incomeNum - spendNum;
-
-  return (
-    <div className="chart-card planning-cashflow-card">
-      <h3 className="planning-cashflow-title">Monthly cash flow</h3>
-      <p className="planning-cashflow-help muted">
-        Added to balances each projected month.
-      </p>
-      <label className="planning-cashflow-field">
-        <span className="planning-cashflow-label">Income</span>
-        <span className="planning-cashflow-input-wrap">
-          <span className="prefix-left">$</span>
-          <input
-            type="number"
-            className="numeric-input"
-            step="1"
-            min="0"
-            placeholder={data.avg_monthly_income ? data.avg_monthly_income.toFixed(0) : "0"}
-            value={income}
-            onChange={(e) => setIncome(e.target.value)}
-            onBlur={() => save.mutate({ field: "income", value: income })}
-          />
-        </span>
-      </label>
-      <label className="planning-cashflow-field">
-        <span className="planning-cashflow-label">Spend</span>
-        <span className="planning-cashflow-input-wrap">
-          <span className="prefix-left">$</span>
-          <input
-            type="number"
-            className="numeric-input"
-            step="1"
-            min="0"
-            placeholder={data.avg_monthly_spend ? data.avg_monthly_spend.toFixed(0) : "0"}
-            value={spend}
-            onChange={(e) => setSpend(e.target.value)}
-            onBlur={() => save.mutate({ field: "spend", value: spend })}
-          />
-        </span>
-      </label>
-      <div className="planning-cashflow-net">
-        Net: <span>{formatUsd(net)}</span>/mo
-      </div>
-    </div>
-  );
-}
-
-function RatesTable({ data }: { data: PlanningData }) {
-  return (
-    <table className="planning-rates-table">
-      <thead>
-        <tr>
-          <th>Account</th>
-          <th className="num">Balance</th>
-          <th className="num">Interest rate</th>
-          <th className="num">Monthly add</th>
-        </tr>
-      </thead>
-      <tbody>
-        {data.accounts.map((a) => (
-          <RateRow
-            key={a.id}
-            account={a}
-            initialRate={data.rates[a.id]}
-            initialContribution={data.contributions[a.id]}
-          />
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function RateRow({
-  account,
-  initialRate,
-  initialContribution,
-}: {
-  account: Account;
-  initialRate: number | undefined;
-  initialContribution: number | undefined;
-}) {
-  const [rate, setRate] = useState<string>(
-    initialRate == null ? "" : initialRate.toFixed(2),
-  );
-  const [contrib, setContrib] = useState<string>(
-    initialContribution == null ? "" : initialContribution.toFixed(0),
-  );
-
-  const saveRate = useMutation({
-    mutationFn: (v: string) =>
-      postJson(`/planning/rate/${encodeURIComponent(account.id)}`, { rate: v }),
-  });
-  const saveContrib = useMutation({
-    mutationFn: (v: string) =>
-      postJson(`/planning/contribution/${encodeURIComponent(account.id)}`, { value: v }),
-  });
-
-  return (
-    <tr>
-      <td>
-        <InstAvatar
-          name={account.institution}
-          logo={account.logo}
-          primaryColor={account.primary_color}
-        />
-        <span className="planning-acct-name">
-          {account.institution} · {account.name}
-        </span>
-        <span className="planning-acct-type muted">{account.type}</span>
-      </td>
-      <td className="num">{formatUsd(account.balance)}</td>
-      <td className="num">
-        <span className="planning-rate-input-wrap">
-          <input
-            type="number"
-            className="planning-rate-input numeric-input"
-            step="0.01"
-            min="0"
-            placeholder="0.00"
-            value={rate}
-            onChange={(e) => setRate(e.target.value)}
-            onBlur={() => saveRate.mutate(rate)}
-          />
-          <span className="prefix">%</span>
-        </span>
-      </td>
-      <td className="num">
-        <span className="planning-contrib-input-wrap">
-          <span className="prefix-left">$</span>
-          <input
-            type="number"
-            className="planning-contrib-input numeric-input"
-            step="1"
-            min="0"
-            placeholder="0"
-            value={contrib}
-            onChange={(e) => setContrib(e.target.value)}
-            onBlur={() => saveContrib.mutate(contrib)}
-          />
-        </span>
-      </td>
-    </tr>
   );
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { Page } from "../components/Page";
@@ -6,6 +6,7 @@ import { EmptyState } from "../components/EmptyState";
 import { MonthPickerCard, type MonthOption } from "../components/MonthPicker";
 import { KebabMenu, type KebabAction } from "../components/KebabMenu";
 import { FilterChips } from "../components/FilterChips";
+import { SourceFilter } from "../components/SourceFilter";
 import { useSorted } from "../lib/useSorted";
 import {
   RuleModal, type ExistingRule, type Primary, type RuleMatchOptions,
@@ -34,6 +35,7 @@ type IncomeData = {
   transactions: Tx[];
   sources: string[];
   current_source: string | null;
+  source_logos: Record<string, { logo?: string | null; primary_color?: string | null }>;
   month_options: MonthOption[];
   current_month: string;
   month_label: string;
@@ -138,10 +140,9 @@ function IncomeView({ data }: { data: IncomeData }) {
     }
   }
 
-  const sourceOpts = useMemo(() => ["", ...data.sources], [data.sources]);
-
   return (
     <Page heading="Income">
+      <p className="subtitle">Grouped by payer</p>
       <div className="totals" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
         <MonthPickerCard
           label={data.month_label}
@@ -149,8 +150,21 @@ function IncomeView({ data }: { data: IncomeData }) {
           currentValue={data.current_month}
         />
         <div className="card">
-          <div className="label">Total Income</div>
-          <div className="value">{formatUsd(data.total)}</div>
+          <div className="label">Total Earned</div>
+          <div className="value">
+            {formatUsd(data.total)}
+            {data.prev_month_change_pct != null && (
+              <span
+                className={`delta ${
+                  data.prev_month_change_pct > 0 ? "delta-up" : "delta-down"
+                }`}
+              >
+                {" ("}
+                {data.prev_month_change_pct > 0 ? "+" : ""}
+                {data.prev_month_change_pct.toFixed(0)}%{")"}
+              </span>
+            )}
+          </div>
         </div>
         <div className="card">
           <div className="label">Transactions</div>
@@ -163,10 +177,60 @@ function IncomeView({ data }: { data: IncomeData }) {
       </div>
 
       {data.sources.length > 1 && (
-        <p style={{ margin: "1rem 0", color: "var(--text-mid)" }}>
-          Source:{" "}
-          <SourceSelect current={data.current_source} options={sourceOpts} />
-        </p>
+        <SourceFilter
+          sources={data.sources}
+          current={data.current_source}
+          logos={data.source_logos}
+        />
+      )}
+
+      {data.payers.length > 0 && (
+        <>
+          <div className="chart-card budget-summary-card">
+            <div className="label">Payers</div>
+            <div className="stacked-bar" role="img" aria-label="Income by payer">
+              {data.payers.map((p) => (
+                <div
+                  key={p.name}
+                  className="stacked-bar-segment"
+                  style={{ flex: `${p.total} 0 0`, background: p.color }}
+                  data-tooltip={`${p.name}: ${formatUsd(p.total)}`}
+                />
+              ))}
+            </div>
+          </div>
+          <table className="category-table">
+            <thead>
+              <tr>
+                <th>Payer</th>
+                <th className="num col-hide-mobile">Transactions</th>
+                <th className="num col-hide-mobile">% of Total</th>
+                <th className="num">Earned</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.payers.map((p) => {
+                const pct = data.total > 0 ? (p.total / data.total) * 100 : 0;
+                return (
+                  <tr
+                    key={p.name}
+                    className={`category-row${payerFilter.includes(p.name) ? " active" : ""}`}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => togglePayer(p.name)}
+                  >
+                    <td>
+                      <span className="cat-dot" style={{ background: p.color }} />
+                      {p.name}
+                    </td>
+                    <td className="num col-hide-mobile muted">{p.count}</td>
+                    <td className="num col-hide-mobile muted">{pct.toFixed(0)}%</td>
+                    <td className="num">{formatUsd(p.total)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
       )}
 
       {data.payers.length > 1 && (
@@ -180,7 +244,7 @@ function IncomeView({ data }: { data: IncomeData }) {
 
       {visibleTransactions.length === 0 ? (
         <EmptyState
-          headline="No income for this month."
+          headline={`No income in ${data.month_label}.`}
           hint="Click Refresh to sync the latest transactions, or pick a different month."
         />
       ) : (
@@ -260,28 +324,3 @@ function IncomeView({ data }: { data: IncomeData }) {
   );
 }
 
-function SourceSelect({
-  current, options,
-}: {
-  current: string | null;
-  options: string[];
-}) {
-  const [searchParams, setSearchParams] = useSearchParams();
-  return (
-    <select
-      value={current || ""}
-      onChange={(e) => {
-        const p = new URLSearchParams(searchParams);
-        if (e.target.value) p.set("source", e.target.value);
-        else p.delete("source");
-        setSearchParams(p);
-      }}
-    >
-      {options.map((s) => (
-        <option key={s} value={s}>
-          {s || "All sources"}
-        </option>
-      ))}
-    </select>
-  );
-}

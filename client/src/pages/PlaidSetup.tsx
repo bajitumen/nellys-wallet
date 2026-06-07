@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ApiError, getJson, postJson } from "../lib/api";
 
@@ -36,10 +36,11 @@ export default function PlaidSetupPage() {
             ← Back to dashboard
           </button>
         )}
-        <h1 className="plaid-setup-title">Connect your Plaid app</h1>
+        <h1 className="plaid-setup-title">Connect bank</h1>
         <p className="plaid-setup-subtitle">
-          We need your own Plaid API credentials. Each user brings their own
-          (free) Plaid sandbox or development keys.
+          {status.data?.has_creds
+            ? "Update your Plaid Trial credentials."
+            : "Paste your Plaid Trial credentials below. We'll use them to read your account balances and transactions."}
         </p>
         <form
           className="plaid-setup-form"
@@ -79,11 +80,8 @@ export default function PlaidSetupPage() {
           </button>
         </form>
         <div className="plaid-setup-help">
-          Don't have keys yet?{" "}
-          <a href="https://dashboard.plaid.com/signup" target="_blank" rel="noreferrer">
-            Get them from Plaid
-          </a>
-          .
+          Don't have these yet?{" "}
+          <Link to="/settings/plaid/faq">How to set up Plaid →</Link>
         </div>
       </div>
     </div>

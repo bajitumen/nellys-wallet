@@ -1,3 +1,5 @@
+import { useNavigate } from "react-router-dom";
+
 export type MonthRow = {
   month: string;
   label: string;
@@ -17,6 +19,7 @@ const PAD_BOTTOM = 28;
 const PAD_X = 12;
 
 export function CashflowChart({ data }: { data: MonthRow[] }) {
+  const nav = useNavigate();
   if (data.length === 0) return null;
   const maxAbs = Math.max(
     1,
@@ -52,7 +55,11 @@ export function CashflowChart({ data }: { data: MonthRow[] }) {
           const netH = (Math.abs(net) / maxAbs) * halfH;
           const netY = net >= 0 ? zeroY - netH : zeroY;
           return (
-            <g key={row.month}>
+            <g
+              key={row.month}
+              style={{ cursor: "pointer" }}
+              onClick={() => nav(`/spending?month=${row.month}`)}
+            >
               <rect
                 className="bar bar-spend"
                 x={cx - barW * 1.5}
@@ -60,7 +67,7 @@ export function CashflowChart({ data }: { data: MonthRow[] }) {
                 y={zeroY}
                 height={ySpend(row.spend) - zeroY}
               >
-                <title>{`${row.label} spend: ${formatUsd(row.spend)}`}</title>
+                <title>{`${row.label} spend: ${formatUsd(row.spend)} — click to view`}</title>
               </rect>
               <rect
                 className="bar bar-income"

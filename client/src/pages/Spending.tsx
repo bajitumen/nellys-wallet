@@ -6,6 +6,7 @@ import { EmptyState } from "../components/EmptyState";
 import { MonthPickerCard, type MonthOption } from "../components/MonthPicker";
 import { KebabMenu, type KebabAction } from "../components/KebabMenu";
 import { FilterChips } from "../components/FilterChips";
+import { SourceFilter } from "../components/SourceFilter";
 import { useSorted } from "../lib/useSorted";
 import {
   RuleModal, type ExistingRule, type Primary, type RuleMatchOptions,
@@ -42,6 +43,7 @@ type SpendingData = {
   errors: string[];
   sources: string[];
   current_source: string | null;
+  source_logos: Record<string, { logo?: string | null; primary_color?: string | null }>;
   categories_filter: string[];
   month_options: MonthOption[];
   current_month: string;
@@ -120,20 +122,25 @@ function CategoryTable({
       return next;
     });
   }
+  const showBudget = !data.current_source;
   return (
     <table className="category-table">
       <thead>
         <tr>
+          <th />
           <th>Category</th>
+          <th className="num col-hide-mobile">Transactions</th>
+          <th className="num col-hide-mobile">% of Total</th>
+          {showBudget && <th className="num col-hide-mobile">Budget</th>}
           <th className="num">Spent</th>
-          <th className="num col-hide-mobile">Budget</th>
-          <th className="num col-hide-mobile">Remaining</th>
+          {showBudget && <th className="num col-hide-mobile">Difference</th>}
         </tr>
       </thead>
       <tbody>
         {data.categories.map((c) => {
-          const remaining = c.budget - c.total;
-          const overspent = c.budget > 0 && remaining < 0;
+          const pct = data.total > 0 ? (c.total / data.total) * 100 : 0;
+          const diff = c.budget - c.total;
+          const overspent = c.budget > 0 && diff < 0;
           const active = data.categories_filter.includes(c.code);
           const hasSubitems = c.subitems.some((s) => s.total > 0 || s.budget > 0);
           const isExpanded = expanded.has(c.code);
@@ -143,61 +150,79 @@ function CategoryTable({
                 className={`category-row${active ? " active" : ""}`}
                 style={{ cursor: "pointer" }}
               >
-                <td onClick={() => toggleCategoryFilter(c.code)}>
+                <td className="cat-dot-col" onClick={() => toggleCategoryFilter(c.code)}>
                   <span className="cat-dot" style={{ background: c.color }} />
-                  {c.name}
-                  <span className="muted" style={{ marginLeft: "0.5rem" }}>
-                    ({c.count})
-                  </span>
                   {hasSubitems && (
                     <button
                       type="button"
+                      className="subcat-toggle"
                       onClick={(e) => {
                         e.stopPropagation();
                         toggleExpand(c.code);
                       }}
+                      aria-label={isExpanded ? "Collapse" : "Expand"}
+                      aria-expanded={isExpanded}
                       style={{
                         background: "transparent",
                         border: "none",
                         color: "var(--text-mid)",
                         cursor: "pointer",
-                        marginLeft: "0.4rem",
+                        marginLeft: "0.3rem",
                       }}
-                      aria-label={isExpanded ? "Collapse" : "Expand"}
                     >
                       {isExpanded ? "▾" : "▸"}
                     </button>
                   )}
                 </td>
+                <td onClick={() => toggleCategoryFilter(c.code)}>{c.name}</td>
+                <td className="num col-hide-mobile muted">{c.count}</td>
+                <td className="num col-hide-mobile muted">{pct.toFixed(0)}%</td>
+                {showBudget && (
+                  <td className="num col-hide-mobile muted">
+                    {c.budget > 0 ? formatUsd(c.budget) : "—"}
+                  </td>
+                )}
                 <td className="num" onClick={() => toggleCategoryFilter(c.code)}>
                   {formatUsd(c.total)}
                 </td>
-                <td className="num col-hide-mobile muted">
-                  {c.budget > 0 ? formatUsd(c.budget) : "—"}
-                </td>
-                <td
-                  className={`num col-hide-mobile${
-                    overspent ? " spend-bad" : c.budget > 0 ? " spend-good" : ""
-                  }`}
-                >
-                  {c.budget > 0 ? formatUsd(remaining) : "—"}
-                </td>
+                {showBudget && (
+                  <td
+                    className={`num col-hide-mobile${
+                      overspent ? " spend-bad" : c.budget > 0 ? " spend-good" : ""
+                    }`}
+                  >
+                    {c.budget > 0
+                      ? `${diff >= 0 ? "+" : ""}${formatUsd(diff)}`
+                      : "—"}
+                  </td>
+                )}
               </tr>
               {isExpanded &&
                 c.subitems
                   .filter((s) => s.total > 0 || s.budget > 0)
-                  .map((s) => (
-                    <tr key={s.code} className="subcategory-row">
-                      <td className="subcat-label">{s.name}</td>
-                      <td className="num">{s.total > 0 ? formatUsd(s.total) : ""}</td>
-                      <td className="num col-hide-mobile muted">
-                        {s.budget > 0 ? formatUsd(s.budget) : "—"}
-                      </td>
-                      <td className="num col-hide-mobile muted">
-                        {s.budget > 0 ? formatUsd(s.budget - s.total) : "—"}
-                      </td>
-                    </tr>
-                  ))}
+                  .map((s) => {
+                    const subPct = data.total > 0 ? (s.total / data.total) * 100 : 0;
+                    const subDiff = s.budget - s.total;
+                    return (
+                      <tr key={s.code} className="subcategory-row">
+                        <td />
+                        <td className="subcat-label">{s.name}</td>
+                        <td className="num col-hide-mobile muted">{s.count}</td>
+                        <td className="num col-hide-mobile muted">{subPct.toFixed(0)}%</td>
+                        {showBudget && (
+                          <td className="num col-hide-mobile muted">
+                            {s.budget > 0 ? formatUsd(s.budget) : "—"}
+                          </td>
+                        )}
+                        <td className="num">{s.total > 0 ? formatUsd(s.total) : ""}</td>
+                        {showBudget && (
+                          <td className="num col-hide-mobile muted">
+                            {s.budget > 0 ? formatUsd(subDiff) : "—"}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
             </Fragment>
           );
         })}
@@ -260,6 +285,7 @@ function SpendingView({ data }: { data: SpendingData }) {
 
   return (
     <Page heading="Spending">
+      <p className="subtitle">Grouped by category</p>
       <div className="totals" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
         <MonthPickerCard
           label={data.month_label}
@@ -268,7 +294,20 @@ function SpendingView({ data }: { data: SpendingData }) {
         />
         <div className="card">
           <div className="label">Total Spent</div>
-          <div className="value">{formatUsd(data.total)}</div>
+          <div className="value">
+            {formatUsd(data.total)}
+            {data.prev_month_change_pct != null && (
+              <span
+                className={`delta ${
+                  data.prev_month_change_pct > 0 ? "delta-up" : "delta-down"
+                }`}
+              >
+                {" ("}
+                {data.prev_month_change_pct > 0 ? "+" : ""}
+                {data.prev_month_change_pct.toFixed(0)}%{")"}
+              </span>
+            )}
+          </div>
         </div>
         <div className="card">
           <div className="label">Transactions</div>
@@ -280,9 +319,17 @@ function SpendingView({ data }: { data: SpendingData }) {
         </div>
       </div>
 
+      {data.sources.length > 1 && (
+        <SourceFilter
+          sources={data.sources}
+          current={data.current_source}
+          logos={data.source_logos}
+        />
+      )}
+
       {data.categories.length > 0 && (
         <div className="chart-card budget-summary-card">
-          <div className="label">By category</div>
+          <div className="label">Breakdown</div>
           <div className="stacked-bar" role="img" aria-label="Spending by category">
             {data.categories.map((c) => (
               <div
@@ -314,7 +361,7 @@ function SpendingView({ data }: { data: SpendingData }) {
 
       {data.transactions.length === 0 ? (
         <EmptyState
-          headline="No spending for this month."
+          headline={`No spending in ${data.month_label}.`}
           hint="Click Refresh to sync the latest transactions, or pick a different month."
         />
       ) : (

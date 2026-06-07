@@ -83,8 +83,9 @@ function OverviewView({ data }: { data: OverviewData }) {
   }
   return (
     <Page heading="Overview">
+      <p className="subtitle">Live balances from your connected accounts</p>
       <div className="totals" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-        <div className="card">
+        <div className="card net">
           <div className="label">Net Worth</div>
           <div className="value">{formatUsd(data.net_total)}</div>
         </div>
@@ -97,7 +98,7 @@ function OverviewView({ data }: { data: OverviewData }) {
           <div className="value">{formatUsd(data.investment_total)}</div>
         </div>
         <div className="card credit">
-          <div className="label">Credit</div>
+          <div className="label">Credit Owed</div>
           <div className="value">{formatUsd(data.credit_total)}</div>
         </div>
       </div>
@@ -114,9 +115,9 @@ function OverviewView({ data }: { data: OverviewData }) {
         </div>
       )}
 
-      <AccountBucket title="Cash" accounts={data.cash} />
+      <AccountBucket title="Cash" accounts={data.cash} showAvailable />
       <AccountBucket title="Investments" accounts={data.investment} />
-      <AccountBucket title="Credit" accounts={data.credit} negative />
+      <AccountBucket title="Credit" accounts={data.credit} negative showAvailable />
       {data.other.length > 0 && <AccountBucket title="Other" accounts={data.other} />}
 
       {data.errors.length > 0 && (
@@ -133,17 +134,28 @@ function OverviewView({ data }: { data: OverviewData }) {
 }
 
 function AccountBucket({
-  title, accounts, negative = false,
+  title, accounts, negative = false, showAvailable = false,
 }: {
   title: string;
   accounts: Account[];
   negative?: boolean;
+  showAvailable?: boolean;
 }) {
   if (accounts.length === 0) return null;
   return (
     <section className="account-bucket">
-      <h2 className="rules-section-heading">{title}</h2>
+      <h2>{title}</h2>
       <table className="account-table">
+        <thead>
+          <tr>
+            <th>Institution</th>
+            <th>Account</th>
+            <th className="col-hide-mobile">Type</th>
+            <th className="col-hide-mobile">Mask</th>
+            {showAvailable && <th className="num col-hide-mobile">Available</th>}
+            <th className="num">Balance</th>
+          </tr>
+        </thead>
         <tbody>
           {accounts.map((a) => (
             <tr key={a.plaid_account_id}>
@@ -153,11 +165,18 @@ function AccountBucket({
                   logo={a.logo}
                   primaryColor={a.primary_color}
                 />
-                <span className="planning-acct-name">
-                  {a.institution} · {a.name}
-                </span>
-                <span className="planning-acct-type muted">{a.type}</span>
+                {a.institution}
               </td>
+              <td>{a.name}</td>
+              <td className="col-hide-mobile muted">{a.type}</td>
+              <td className="col-hide-mobile muted">
+                {a.mask ? `****${a.mask}` : "—"}
+              </td>
+              {showAvailable && (
+                <td className="num col-hide-mobile muted">
+                  {a.available == null ? "—" : formatUsd(a.available)}
+                </td>
+              )}
               <td className="num">
                 {a.balance == null ? "—" : (negative ? "-" : "") + formatUsd(a.balance)}
               </td>

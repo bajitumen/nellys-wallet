@@ -715,6 +715,7 @@ def api_spending(session, user):
         ],
         "errors": data["errors"],
         "sources": sources, "current_source": source,
+        "source_logos": providers.source_avatars(user),
         "categories_filter": categories_filter, "category_chips": chips,
         "month_options": month_options,
         "current_month": data["month"], "month_label": data["month_label"],
@@ -764,6 +765,7 @@ def api_income(session, user):
             {**t, "date": t["date"].isoformat()} for t in data["transactions"]
         ],
         "sources": sources, "current_source": source,
+        "source_logos": providers.source_avatars(user),
         "month_options": month_options,
         "current_month": data["month"], "month_label": data["month_label"],
         "daily_avg": data["daily_avg"],

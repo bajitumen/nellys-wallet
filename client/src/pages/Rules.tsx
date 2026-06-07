@@ -108,11 +108,11 @@ function RulesView({
     <Page heading="Rules">
       <p className="subtitle">Automatic actions applied to matching transactions on sync</p>
 
-      <nav className="page-tabs" role="tablist">
+      <nav className="page-tabs rules-tabs" role="tablist">
         {TABS.map((t) => (
           <a
             key={t.id}
-            className={`page-tab${activeTab === t.id ? " active" : ""}`}
+            className={`page-tab rules-tab${activeTab === t.id ? " active" : ""}`}
             href={`?tab=${t.id}`}
             role="tab"
             aria-selected={activeTab === t.id}
