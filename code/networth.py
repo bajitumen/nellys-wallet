@@ -95,7 +95,11 @@ def build_series_data(snapshots, account_snaps) -> dict:
     by_inst: dict = defaultdict(lambda: defaultdict(float))
     by_acct: dict = defaultdict(lambda: {})
     for s in account_snaps:
-        if s.bucket == "credit":
+        # Mirror the snapshot's net definition (cash + investments - credit):
+        # the "other" bucket isn't counted in headline net worth, so per-
+        # institution series mustn't include it either or the stacked series
+        # won't sum to the net line.
+        if s.bucket in ("credit", "other"):
             continue
         d = s.taken_at.date()
         inst = s.institution_name or "Unknown"

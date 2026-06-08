@@ -30,9 +30,20 @@ async function fetchCsrfToken(force = false): Promise<string> {
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   const text = await res.text();
-  const body = text ? safeParse(text) : null;
-  if (!res.ok) throw new ApiError(res.status, body ?? text);
-  return body as T;
+  if (!res.ok) {
+    const body = text ? safeParse(text) : null;
+    throw new ApiError(res.status, body ?? text);
+  }
+  if (!text) return null as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    // A 2xx with a body that doesn't parse as JSON means something upstream
+    // (proxy error page, truncated response) intercepted us. Surface as an
+    // ApiError so the page hits its error branch instead of crashing on
+    // data.foo.map(...).
+    throw new ApiError(res.status, "Server returned non-JSON response");
+  }
 }
 
 function safeParse(text: string): unknown {

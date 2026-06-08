@@ -11,6 +11,8 @@ dbs:
   - path: /var/data/finance.db
     replicas:
       - url: ${LITESTREAM_REPLICA_URL}
+        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
         retention: 168h          # keep 7 days of WAL history
         snapshot-interval: 24h   # full snapshot once a day
         sync-interval: 1s        # stream WAL changes near-realtime

@@ -312,6 +312,7 @@ function IncomeView({ data }: { data: IncomeData }) {
       )}
 
       <RuleModal
+        key={modalTx?.plaid_id ?? "closed"}
         open={modalTx !== null}
         options={data.rule_match_options}
         primaries={data.primaries}

@@ -27,9 +27,23 @@ if [[ -n "${LITESTREAM_REPLICA_URL:-}" ]]; then
       echo "No existing replica found — starting with empty DB."
     fi
   fi
-  exec litestream replicate -config /app/litestream.yml -exec \
-    "gunicorn -w 2 --preload -b 0.0.0.0:${PORT:-5001} --chdir /app/code app:app"
+fi
+
+# Run schema migrations exactly once before workers boot. Doing this at app
+# import time raced under multi-worker boot — concurrent ALTERs against the
+# same SQLite file would crash one worker mid-migration.
+echo "Initializing DB schema..."
+python /app/code/cli.py init-db
+
+# One process + threads is the only correct shape for this image: the in-process
+# rule/spending caches and the per-key locks live in Python memory; -w N
+# would let one worker invalidate while another keeps serving stale rows.
+GUNICORN_THREADS="${GUNICORN_THREADS:-8}"
+GUNICORN_CMD="gunicorn -w 1 --threads ${GUNICORN_THREADS} -b 0.0.0.0:${PORT:-5001} --chdir /app/code app:app"
+
+if [[ -n "${LITESTREAM_REPLICA_URL:-}" ]]; then
+  exec litestream replicate -config /app/litestream.yml -exec "${GUNICORN_CMD}"
 else
   echo "LITESTREAM_REPLICA_URL not set — running without backups."
-  exec gunicorn -w 2 --preload -b "0.0.0.0:${PORT:-5001}" --chdir /app/code app:app
+  exec ${GUNICORN_CMD}
 fi

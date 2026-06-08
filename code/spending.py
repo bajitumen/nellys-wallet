@@ -386,7 +386,10 @@ def _fetch_last_month_uncached(
             "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
         })
 
-    out["total"] = sum(totals.values())
+    # Floats accumulated across hundreds of transactions drift in the last
+    # cents; round at the aggregation boundary so the UI never displays e.g.
+    # 1234.5600000001.
+    out["total"] = round(sum(totals.values()), 2)
     out["count"] = sum(counts.values())
 
     budgets_by_detailed = budget_mod.get_budgets(user, session)
@@ -409,7 +412,7 @@ def _fetch_last_month_uncached(
             {
                 "code": detailed,
                 "name": pfc.humanize_detailed(detailed, primary),
-                "total": sub_totals.get((primary, detailed), 0.0),
+                "total": round(sub_totals.get((primary, detailed), 0.0), 2),
                 "count": sub_counts.get((primary, detailed), 0),
                 "budget": budgets_by_detailed.get(detailed, 0.0),
             }
@@ -422,7 +425,7 @@ def _fetch_last_month_uncached(
             {
                 "code": k,
                 "name": pfc.humanize_primary(k),
-                "total": totals.get(k, 0.0),
+                "total": round(totals.get(k, 0.0), 2),
                 "count": counts.get(k, 0),
                 "color": pfc.CATEGORY_COLORS.get(k, pfc.DEFAULT_COLOR),
                 "budget": primary_budgets.get(k, 0.0),
@@ -435,10 +438,10 @@ def _fetch_last_month_uncached(
     out["transactions"] = sorted(tx_list, key=lambda t: t["date"], reverse=True)
 
     days_elapsed = max(1, (end - start).days + 1)
-    out["daily_avg"] = out["total"] / days_elapsed
+    out["daily_avg"] = round(out["total"] / days_elapsed, 2)
 
     if prev_total > 0:
-        out["prev_month_change_pct"] = (out["total"] - prev_total) / prev_total * 100
+        out["prev_month_change_pct"] = round((out["total"] - prev_total) / prev_total * 100, 1)
 
     return out
 
@@ -496,10 +499,8 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
             _, amount, _, _, _ = applied
             spend_by_month[key] += amount
         elif tx.amount < 0 and pfc.is_strict_income(tx.pfc_primary):
-            amount = -tx.amount
-            if ov and ov.amount_override is not None:
-                amount = ov.amount_override
-            income_by_month[key] += amount
+            import income as _income_mod
+            income_by_month[key] += _income_mod.income_amount_with_override(tx.amount, ov)
 
     out = []
     y, m = start.year, start.month
@@ -508,8 +509,8 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
         out.append({
             "month": f"{y:04d}-{m:02d}",
             "label": date(y, m, 1).strftime("%b %Y"),
-            "spend": spend_by_month.get(key, 0.0),
-            "income": income_by_month.get(key, 0.0),
+            "spend": round(spend_by_month.get(key, 0.0), 2),
+            "income": round(income_by_month.get(key, 0.0), 2),
             "ts": int(datetime(y, m, 1).timestamp()),
         })
         m += 1

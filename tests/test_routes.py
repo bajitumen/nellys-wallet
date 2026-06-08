@@ -73,11 +73,36 @@ def test_link_exchange_missing_token(client, user_with_item):
     assert r.status_code == 400
 
 
-def test_override_clear(client, user_with_item, db_session):
+@pytest.fixture
+def tx1(db_session, user_with_item):
+    """Seed a Transaction the override endpoint will accept ownership for."""
+    from datetime import date as _date
+    from models import Transaction
+    tx = Transaction(
+        user_id=user_with_item.id,
+        item_id=user_with_item.items[0].id,
+        plaid_transaction_id="tx1",
+        date=_date.today(),
+        amount=10.0,
+        name="Seed",
+        pfc_primary="FOOD_AND_DRINK",
+    )
+    db_session.add(tx)
+    db_session.commit()
+    return tx
+
+
+def test_override_rejects_foreign_tx(client, user_with_item):
+    """A plaid_transaction_id the user does not own returns 404."""
+    r = client.post("/transactions/not-mine/override", json={"dismiss": True})
+    assert r.status_code == 404
+
+
+def test_override_clear(client, tx1, db_session):
     """POST {clear: true} deletes any existing override."""
     from models import TransactionOverride
     db_session.add(TransactionOverride(
-        user_id=user_with_item.id,
+        user_id=tx1.user_id,
         plaid_transaction_id="tx1",
         category_override="FOOD_AND_DRINK",
     ))
@@ -87,7 +112,7 @@ def test_override_clear(client, user_with_item, db_session):
     assert r.get_json()["cleared"] is True
 
 
-def test_override_set_category(client, user_with_item, db_session):
+def test_override_set_category(client, tx1, db_session):
     """POST with `category` upserts an override and persists it."""
     from models import TransactionOverride
     r = client.post("/transactions/tx1/override", json={"category": "FOOD_AND_DRINK"})
@@ -98,7 +123,7 @@ def test_override_set_category(client, user_with_item, db_session):
     assert ov.category_override == "FOOD_AND_DRINK"
 
 
-def test_override_set_detailed(client, user_with_item, db_session):
+def test_override_set_detailed(client, tx1, db_session):
     """POST with `detailed` stores the PFC detailed code."""
     from models import TransactionOverride
     r = client.post(
@@ -114,7 +139,7 @@ def test_override_set_detailed(client, user_with_item, db_session):
     assert ov.detailed_override == "FOOD_AND_DRINK_COFFEE"
 
 
-def test_override_rejects_invalid_detailed(client, user_with_item):
+def test_override_rejects_invalid_detailed(client, tx1):
     """An unknown detailed code is rejected with 400."""
     r = client.post(
         "/transactions/tx1/override",
@@ -123,7 +148,7 @@ def test_override_rejects_invalid_detailed(client, user_with_item):
     assert r.status_code == 400
 
 
-def test_override_clear_detailed_with_null(client, user_with_item, db_session):
+def test_override_clear_detailed_with_null(client, tx1, db_session):
     """Sending detailed: null clears just that field."""
     from models import TransactionOverride
     client.post(
@@ -139,7 +164,7 @@ def test_override_clear_detailed_with_null(client, user_with_item, db_session):
     assert ov.detailed_override is None
 
 
-def test_override_dismiss_sets_flag(client, user_with_item, db_session):
+def test_override_dismiss_sets_flag(client, tx1, db_session):
     """POST {dismiss: true} flags the override as dismissed."""
     from models import TransactionOverride
     r = client.post("/transactions/tx1/override", json={"dismiss": True})
@@ -152,7 +177,7 @@ def test_override_dismiss_sets_flag(client, user_with_item, db_session):
     assert ov.dismissed is True
 
 
-def test_override_split(client, user_with_item, db_session):
+def test_override_split(client, tx1, db_session):
     """Split override stores amount + split_percentage."""
     r = client.post("/transactions/tx1/override", json={
         "amount": 25.0, "split_percentage": 25.0,

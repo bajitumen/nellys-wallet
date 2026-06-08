@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 type Variant = "error" | "warning" | "success" | "info";
@@ -58,9 +58,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 }
 
 function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) {
-  useEffect(() => {
-    // ensure layout settles before fade-in
-  }, []);
   return (
     <div className={`toast toast-${item.variant}`}>
       <span className="toast-message">{item.message}</span>

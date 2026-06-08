@@ -24,11 +24,18 @@ def verify_session_cookie(token: Optional[str]) -> Optional[str]:
         if config.CLERK_ISSUER:
             decode_kwargs["issuer"] = config.CLERK_ISSUER
             require.append("iss")
+        if config.CLERK_AUTHORIZED_PARTIES:
+            require.append("azp")
         decode_kwargs["options"] = {"verify_aud": False, "require": require}
         claims = jwt.decode(token, config.CLERK_JWT_PUBLIC_KEY, **decode_kwargs)
     except jwt.InvalidTokenError as e:
         log.warning("Clerk session verification failed: %s", e)
         return None
+    if config.CLERK_AUTHORIZED_PARTIES:
+        azp = claims.get("azp")
+        if azp not in config.CLERK_AUTHORIZED_PARTIES:
+            log.warning("Clerk session rejected: azp=%r not in allowlist", azp)
+            return None
     return claims.get("sub")
 
 
@@ -52,15 +59,21 @@ def find_or_create_user(
 
 
 def get_current_user(request, session) -> Optional[User]:
-    if not clerk_enabled():
-        if config.IS_PRODUCTION:
-            log.error(
-                "Refusing to serve request: Clerk is disabled but FLASK_ENV=production. "
-                "CLERK_JWT_PUBLIC_KEY must be set in production."
-            )
+    if clerk_enabled():
+        clerk_user_id = verify_session_cookie(request.cookies.get("__session"))
+        if not clerk_user_id:
             return None
-        return session.query(User).first()
-    clerk_user_id = verify_session_cookie(request.cookies.get("__session"))
-    if not clerk_user_id:
+        return find_or_create_user(clerk_user_id, None, session)
+    # Fail closed: anything other than an explicit dev opt-in refuses to serve.
+    # Inferring "safe to skip auth" from FLASK_ENV ever sneaks back in via a
+    # typo, "Prod", trailing whitespace, etc., and the cost there is leaking
+    # the placeholder user's bank data to anyone who can reach the host.
+    if not config.ALLOW_INSECURE_NO_AUTH:
+        log.error(
+            "Refusing to serve request: Clerk is disabled and "
+            "ALLOW_INSECURE_NO_AUTH is not set. Set CLERK_JWT_PUBLIC_KEY (and "
+            "CLERK_ISSUER / CLERK_AUTHORIZED_PARTIES) in this environment, or "
+            "ALLOW_INSECURE_NO_AUTH=1 to acknowledge serving unauthenticated."
+        )
         return None
-    return find_or_create_user(clerk_user_id, None, session)
+    return session.query(User).first()

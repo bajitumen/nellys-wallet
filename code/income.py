@@ -67,13 +67,22 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
     ]
 
 
+def income_amount_with_override(
+    tx_amount: float, override: TransactionOverride | None,
+) -> float:
+    # Income is reported as a positive inflow. Plaid uses negative-=inflow,
+    # and the override (written by split rules) inherits that sign; treat
+    # both as magnitudes so a 50% split on a -2500 paycheck reads +1250, not
+    # -1250 (which would subtract from the headline income total).
+    if override and override.amount_override is not None:
+        return abs(override.amount_override)
+    return -tx_amount
+
+
 def _apply_income_override(
     tx: Transaction, override: TransactionOverride | None,
 ) -> tuple[float, bool]:
-    amount = -tx.amount  # Plaid: negative=inflow, so flip sign for income.
-    if override and override.amount_override is not None:
-        amount = override.amount_override
-    return amount, bool(override and override.dismissed)
+    return income_amount_with_override(tx.amount, override), bool(override and override.dismissed)
 
 
 def fetch_last_month(
@@ -168,7 +177,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
         })
 
-    out["total"] = sum(payer_totals.values())
+    out["total"] = round(sum(payer_totals.values()), 2)
     # Counts only non-dismissed rows; tx_list also holds dismissed rows for the
     # restore action, so don't unify with len(tx_list).
     out["count"] = sum(payer_counts.values())
@@ -176,7 +185,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
         (
             {
                 "name": p,
-                "total": v,
+                "total": round(v, 2),
                 "count": payer_counts[p],
                 "color": color_for_payer(p),
             }
@@ -187,10 +196,10 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
     out["transactions"] = sorted(tx_list, key=lambda t: t["date"], reverse=True)
 
     days_elapsed = max(1, (end - start).days + 1)
-    out["daily_avg"] = out["total"] / days_elapsed
+    out["daily_avg"] = round(out["total"] / days_elapsed, 2)
 
     if prev_total > 0:
-        out["prev_month_change_pct"] = (out["total"] - prev_total) / prev_total * 100
+        out["prev_month_change_pct"] = round((out["total"] - prev_total) / prev_total * 100, 1)
 
     return out
 

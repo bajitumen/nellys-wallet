@@ -13,7 +13,7 @@ services:
     runtime: docker
     plan: starter   # cheapest plan that allows persistent disks
     region: oregon
-    healthCheckPath: /sign-in
+    healthCheckPath: /healthz
     disk:
       name: data
       mountPath: /var/data
@@ -36,6 +36,8 @@ services:
       - key: CLERK_FRONTEND_API
         sync: false
       - key: CLERK_ISSUER
+        sync: false
+      - key: CLERK_AUTHORIZED_PARTIES
         sync: false
       # Litestream backup target.
       - key: LITESTREAM_REPLICA_URL

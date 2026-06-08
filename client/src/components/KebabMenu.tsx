@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconDotsThree } from "./icons";
 
 export type KebabAction =
@@ -29,7 +29,9 @@ export function KebabMenu({ actions, onPick, ariaLabel = "Transaction actions" }
     return () => document.removeEventListener("click", onDocClick);
   }, [open]);
 
-  useEffect(() => {
+  // useLayoutEffect so we measure + flip before the browser paints the menu.
+  // useEffect ran after paint, producing a visible jump at the viewport edge.
+  useLayoutEffect(() => {
     if (!open || !menuRef.current) return;
     const rect = menuRef.current.getBoundingClientRect();
     setUpward(rect.bottom > window.innerHeight - 8);

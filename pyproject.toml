@@ -7,7 +7,6 @@ dependencies = [
     "flask>=3.1",
     "flask-wtf>=1.2",
     "sqlalchemy>=2.0",
-    "alembic>=1.13",
     "cryptography>=42",
     "python-dotenv>=1.0",
     "plaid-python>=38",
@@ -19,6 +18,9 @@ dependencies = [
 dev = [
     "ruff>=0.6",
     "pytest>=8",
+    # Kept available for ad-hoc schema diffs but not used at runtime; init_db()
+    # in code/db.py runs in-place migrations directly.
+    "alembic>=1.13",
 ]
 prod = [
     "gunicorn>=23",

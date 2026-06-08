@@ -8,18 +8,22 @@
 # - Runs as unprivileged uid 10001 so RCE doesn't get root
 #
 # Required runtime env vars (besides the .env vars the app already reads):
-#   LITESTREAM_REPLICA_URL  e.g. b2://my-bucket/nellys-wallet  (optional;
-#                           skip the replication step if unset)
-#   LITESTREAM_ACCESS_KEY   provider access key
-#   LITESTREAM_SECRET_KEY   provider secret key
+#   LITESTREAM_REPLICA_URL        e.g. s3://my-bucket/nellys-wallet  (optional;
+#                                 skip the replication step if unset)
+#   LITESTREAM_ACCESS_KEY_ID      provider access key id
+#   LITESTREAM_SECRET_ACCESS_KEY  provider secret access key
+# Names must match render.yaml + litestream.yml verbatim; mismatch silently
+# breaks backups (writes succeed, replicate auth fails, restore is empty).
 
 FROM python:3.13-slim AS base
 
 ARG LITESTREAM_VERSION=0.3.13
+ARG LITESTREAM_SHA256=9b05043523c1fb1c4f9800623adf0015683da7fdd55e19b9fe5d28f63fae96b4
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && curl -fsSL "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-v${LITESTREAM_VERSION}-linux-amd64.deb" \
        -o /tmp/litestream.deb \
+    && echo "${LITESTREAM_SHA256}  /tmp/litestream.deb" | sha256sum -c - \
     && dpkg -i /tmp/litestream.deb \
     && rm /tmp/litestream.deb \
     && apt-get purge -y --auto-remove curl \

@@ -19,10 +19,12 @@ import plaid_link
 import providers
 import rules as rules_mod
 import spending as spending_mod
-from db import SessionLocal, init_db
+from db import SessionLocal
 
-# init_db at import time so gunicorn workers see tables on first request.
-init_db()
+# Schema init lives in `python code/cli.py init-db`, called from
+# entrypoint.sh before gunicorn boots. Running it at import time raced
+# under multi-worker boot — two workers could run conflicting in-place
+# ALTERs against the same SQLite file.
 from models import TransactionOverride, User
 
 log = logging.getLogger(__name__)
@@ -165,9 +167,24 @@ def link_exchange(session, user):
 @app.route("/transactions/<tx_id>/override", methods=["POST"])
 @with_user
 def transaction_override(session, user, tx_id):
+    import math
+    from models import Transaction
+
     data = request.get_json(silent=True) or {}
     if user is None:
         return jsonify({"error": "No user"}), 400
+
+    # Ownership: the user must actually have this transaction. Without this
+    # check the user could create override rows for arbitrary plaid_transaction
+    # ids (a slow DB-growing nuisance, and conceptually a cross-tenant write
+    # surface even though it only ever materializes on their own row).
+    owns_tx = session.query(
+        session.query(Transaction)
+        .filter_by(user_id=user.id, plaid_transaction_id=tx_id)
+        .exists()
+    ).scalar()
+    if not owns_tx:
+        return jsonify({"error": "Transaction not found"}), 404
 
     override = (
         session.query(TransactionOverride)
@@ -179,6 +196,7 @@ def transaction_override(session, user, tx_id):
         if override is not None:
             session.delete(override)
             session.commit()
+        spending_mod.invalidate_cache(user.id)
         return jsonify({"ok": True, "cleared": True})
 
     if override is None:
@@ -196,17 +214,38 @@ def transaction_override(session, user, tx_id):
         detailed = data["detailed"] or None
         if detailed and not pfc.is_valid_detailed(detailed):
             return jsonify({"error": "Unknown detailed code"}), 400
+        # A detailed code rooted in a different primary than the resolved
+        # category lands in a (primary, detailed) cell that _subitems_for
+        # never iterates — the amount shows in the primary total but in no
+        # subitem. Match the Plaid-detailed import guard.
+        if detailed and override.category_override:
+            if pfc.primary_of(detailed) != override.category_override:
+                return jsonify({"error": "Detailed code does not belong to chosen category"}), 400
         override.detailed_override = detailed
     if "amount" in data:
-        override.amount_override = (
-            float(data["amount"]) if data["amount"] is not None else None
-        )
+        if data["amount"] is None:
+            override.amount_override = None
+        else:
+            try:
+                amt = float(data["amount"])
+            except (TypeError, ValueError):
+                return jsonify({"error": "amount must be a number"}), 400
+            if not math.isfinite(amt):
+                return jsonify({"error": "amount must be finite"}), 400
+            override.amount_override = amt
     if "dismiss" in data:
         override.dismissed = bool(data["dismiss"])
     if "split_percentage" in data:
-        override.split_percentage = (
-            float(data["split_percentage"]) if data["split_percentage"] is not None else None
-        )
+        if data["split_percentage"] is None:
+            override.split_percentage = None
+        else:
+            try:
+                pct = float(data["split_percentage"])
+            except (TypeError, ValueError):
+                return jsonify({"error": "split_percentage must be a number"}), 400
+            if not math.isfinite(pct) or not (0 < pct <= 100):
+                return jsonify({"error": "split_percentage must be in (0, 100]"}), 400
+            override.split_percentage = pct
     override.source = "manual"
 
     session.commit()
@@ -600,6 +639,18 @@ def api_csrf_token():
     return jsonify({"token": generate_csrf()})
 
 
+@app.route("/healthz")
+def healthz():
+    from sqlalchemy import text
+    try:
+        with SessionLocal() as session:
+            session.execute(text("SELECT 1")).scalar()
+    except Exception:
+        log.exception("/healthz DB probe failed")
+        return jsonify({"ok": False}), 503
+    return jsonify({"ok": True})
+
+
 @app.route("/api/overview")
 @with_user_json
 def api_overview(session, user):
@@ -923,5 +974,13 @@ def spa_catch_all(_path):
 
 
 if __name__ == "__main__":
+    # Refuse to run the Flask dev server outside development — debug=True with
+    # 0.0.0.0 exposes the Werkzeug debugger PIN endpoint to anyone who can
+    # reach the host. Production must boot via gunicorn (entrypoint.sh).
+    if not config.IS_DEVELOPMENT:
+        raise RuntimeError(
+            "app.run() is dev-only. FLASK_ENV must be 'development' to start "
+            "the Flask reloader; boot via gunicorn for any other environment."
+        )
     # 0.0.0.0 so phones on same Wi-Fi can reach the dev server.
-    app.run(host="0.0.0.0", debug=config.FLASK_ENV == "development", port=5001)
+    app.run(host="0.0.0.0", debug=True, port=5001)

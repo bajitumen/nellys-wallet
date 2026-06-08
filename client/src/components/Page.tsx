@@ -27,7 +27,11 @@ export function Page({ heading, children }: Props) {
   });
   const sync = useMutation({
     mutationFn: () => postJson<{ ok: boolean }>("/sync"),
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      for (const key of ["overview", "spending", "income", "budget", "rules", "me"] as const) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
+    },
     onError: (e: Error) => toast.error(`Sync failed: ${e.message}`),
   });
 

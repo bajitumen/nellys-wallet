@@ -76,7 +76,7 @@ def test_b_cannot_delete_a_rule(client, db_session, two_users, acting_as):
     assert surviving.user_id == a.id
 
 
-def test_b_override_on_a_tx_does_not_touch_a_data(client, db_session, two_users, acting_as):
+def test_b_override_on_a_tx_returns_404_and_writes_nothing(client, db_session, two_users, acting_as):
     a, b = two_users
     tx_a, _ = _seed_user_data(db_session, a)
 
@@ -85,22 +85,21 @@ def test_b_override_on_a_tx_does_not_touch_a_data(client, db_session, two_users,
         f"/transactions/{tx_a.plaid_transaction_id}/override",
         json={"dismiss": True},
     )
-    assert resp.status_code == 200
+    # Ownership check rejects B before any override row is created.
+    assert resp.status_code == 404
 
     a_override = (
         db_session.query(TransactionOverride)
         .filter_by(user_id=a.id, plaid_transaction_id=tx_a.plaid_transaction_id)
         .one_or_none()
     )
-    assert a_override is None, "B's override must not have landed on A's row"
-
+    assert a_override is None
     b_override = (
         db_session.query(TransactionOverride)
         .filter_by(user_id=b.id, plaid_transaction_id=tx_a.plaid_transaction_id)
         .one_or_none()
     )
-    assert b_override is not None
-    assert b_override.user_id == b.id
+    assert b_override is None
 
 
 def test_b_api_spending_does_not_leak_a_transactions(client, db_session, two_users, acting_as):

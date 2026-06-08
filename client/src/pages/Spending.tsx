@@ -73,7 +73,7 @@ export default function SpendingPage() {
   const cats = searchParams.getAll("category");
 
   const q = useQuery<SpendingData, ApiError>({
-    queryKey: ["spending", month, source, cats.join(",")],
+    queryKey: ["spending", month, source, cats],
     queryFn: () => {
       const p = new URLSearchParams();
       if (month) p.set("month", month);
@@ -460,6 +460,7 @@ function SpendingView({ data }: { data: SpendingData }) {
       )}
 
       <RuleModal
+        key={modalTx?.plaid_id ?? "closed"}
         open={modalTx !== null}
         options={data.rule_match_options}
         primaries={data.primaries}

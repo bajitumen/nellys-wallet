@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 const PALETTE = [
   "#3b82f6", "#22c55e", "#a855f7", "#ec4899", "#f97316",
   "#14b8a6", "#eab308", "#8b5cf6", "#06b6d4", "#f59e0b",
@@ -21,12 +23,25 @@ type Props = {
 };
 
 export function InstAvatar({ name, logo, primaryColor }: Props) {
-  if (logo) {
-    return <img className="inst-logo" src={`data:image/png;base64,${logo}`} alt="" />;
+  const [imgFailed, setImgFailed] = useState(false);
+  const safeName = name || "?";
+  if (logo && !imgFailed) {
+    return (
+      <img
+        className="inst-logo"
+        src={`data:image/png;base64,${logo}`}
+        alt={`${safeName} logo`}
+        onError={() => setImgFailed(true)}
+      />
+    );
   }
-  const initial = (name || "?")[0].toUpperCase();
+  const initial = safeName[0].toUpperCase();
   return (
-    <span className="inst-letter" style={{ background: letterColor(name, primaryColor) }}>
+    <span
+      className="inst-letter"
+      style={{ background: letterColor(safeName, primaryColor) }}
+      aria-label={safeName}
+    >
       {initial}
     </span>
   );

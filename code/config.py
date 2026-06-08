@@ -17,8 +17,14 @@ def _required(name):
 FERNET_KEY = _required("FERNET_KEY")
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///instance/finance.db")
 FLASK_SECRET_KEY = _required("FLASK_SECRET_KEY")
-FLASK_ENV = os.environ.get("FLASK_ENV", "development")
+FLASK_ENV = (os.environ.get("FLASK_ENV") or "development").strip().lower()
 IS_PRODUCTION = FLASK_ENV == "production"
+IS_DEVELOPMENT = FLASK_ENV == "development"
+# Explicit dev-only opt-in for serving traffic without Clerk. Any other value
+# (typo, unset, accidental "prod") leaves us fail-closed in get_current_user.
+ALLOW_INSECURE_NO_AUTH = (
+    os.environ.get("ALLOW_INSECURE_NO_AUTH", "").strip().lower() in ("1", "true", "yes")
+)
 
 
 def _required_in_prod(name: str) -> str:
@@ -36,6 +42,12 @@ CLERK_SECRET_KEY = _required_in_prod("CLERK_SECRET_KEY")
 CLERK_JWT_PUBLIC_KEY = _required_in_prod("CLERK_JWT_PUBLIC_KEY")
 CLERK_FRONTEND_API = _required_in_prod("CLERK_FRONTEND_API")
 CLERK_ISSUER = _required_in_prod("CLERK_ISSUER")
+# Comma-separated list of origins the Clerk-issued session is allowed to be
+# scoped to (azp claim). Required in prod so a sibling app on the same Clerk
+# instance can't have its tokens accepted here.
+CLERK_AUTHORIZED_PARTIES = tuple(
+    p.strip() for p in _required_in_prod("CLERK_AUTHORIZED_PARTIES").split(",") if p.strip()
+)
 
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 os.makedirs(INSTANCE_DIR, exist_ok=True)

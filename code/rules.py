@@ -228,6 +228,17 @@ def _apply_rule_to_override(
         ov.category_override = rule.action_value
         ov.detailed_override = None
     elif rule.action == "set_detailed":
+        # A detailed code from a different primary than the tx's resolved
+        # category would land in a (primary, detailed) cell _subitems_for
+        # never iterates, leaving the amount in the primary total but in
+        # no subitem. Match the override-endpoint guard.
+        target_primary = ov.category_override or (tx.pfc_primary if tx is not None else None)
+        if (
+            rule.action_value
+            and target_primary
+            and pfc_mod.primary_of(rule.action_value) != target_primary
+        ):
+            return
         ov.detailed_override = rule.action_value
     elif rule.action == "split":
         try:
