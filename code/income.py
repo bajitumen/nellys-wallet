@@ -25,7 +25,7 @@ def color_for_payer(name: str) -> str:
     return PAYER_PALETTE[int(digest, 16) % len(PAYER_PALETTE)]
 
 
-_cache = KeyedCache(ttl_seconds=0.0)
+_cache = KeyedCache(ttl_seconds=60.0)
 
 
 def invalidate_cache(user_id: int) -> None:

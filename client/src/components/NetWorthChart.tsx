@@ -241,7 +241,7 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
             delta > 0 ? "delta-up" : delta < 0 ? "delta-down" : ""
           }`}
         >
-          {formatUsd(hover ? hover.value : lastValue)}
+          {formatUsd(lastValue)}
         </span>
       </div>
       {chart ? (

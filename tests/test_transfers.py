@@ -171,8 +171,10 @@ def test_spending_excludes_paired_transfers(user_with_item, db_session):
     assert "lunch" in ids
 
 
-def test_income_excludes_paired_transfers(user_with_item, db_session):
-    """Paired internal transfers drop from income; standalone TRANSFER_IN stays."""
+def test_income_excludes_paired_transfers_and_unpaired_transfer_in(user_with_item, db_session):
+    """Income surface is strict — only INCOME counts. Both paired internal
+    legs and standalone TRANSFER_IN (Zelle from a friend, loan disbursement)
+    must drop out."""
     import transfers as transfers_mod
     from income import fetch_last_month
     other = _add_second_item(db_session, user_with_item)
@@ -190,7 +192,7 @@ def test_income_excludes_paired_transfers(user_with_item, db_session):
 
     out = fetch_last_month(user_with_item, session=db_session)
     ids = {tx["plaid_id"] for tx in out["transactions"]}
-    assert "in_leg" not in ids  # internal leg dropped
-    assert "venmo_in" in ids  # Zelle/Venmo from friend kept
+    assert "in_leg" not in ids
+    assert "venmo_in" not in ids
     assert "wages" in ids
-    assert out["total"] == 2525.0
+    assert out["total"] == 2500.0

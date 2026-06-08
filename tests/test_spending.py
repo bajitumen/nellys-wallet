@@ -268,13 +268,16 @@ def test_invalid_month_falls_back_to_current(user_with_item, db_session):
     assert out["month"] == f"{today.year:04d}-{today.month:02d}"
 
 
-def test_repeat_call_recomputes(user_with_item, db_session):
-    """Caching disabled for multi-worker safety — each call recomputes."""
+def test_repeat_call_returns_same_total(user_with_item, db_session):
+    """Sequential reads of the same input produce identical totals.
+
+    Note: a 60s TTL means the second call may serve a cached payload — what
+    we care about here is that the user-facing totals stay consistent.
+    """
     from spending import fetch_last_month
     _seed_tx(db_session, user_with_item.items[0], "tx1", 50.0, "FOOD_AND_DRINK")
     first = fetch_last_month(user_with_item, session=db_session)
     second = fetch_last_month(user_with_item, session=db_session)
-    assert first is not second
     assert first["total"] == second["total"]
 
 

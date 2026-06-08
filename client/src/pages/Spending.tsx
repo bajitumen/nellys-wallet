@@ -5,8 +5,10 @@ import { Page } from "../components/Page";
 import { EmptyState } from "../components/EmptyState";
 import { MonthPickerCard, type MonthOption } from "../components/MonthPicker";
 import { KebabMenu, type KebabAction } from "../components/KebabMenu";
-import { FilterChips } from "../components/FilterChips";
+import { StackedBar } from "../components/StackedBar";
 import { SourceFilter } from "../components/SourceFilter";
+import { IconCaretDown } from "../components/icons";
+import { useToast } from "../components/Toast";
 import { useSorted } from "../lib/useSorted";
 import {
   RuleModal, type ExistingRule, type Primary, type RuleMatchOptions,
@@ -150,9 +152,14 @@ function CategoryTable({
                 className={`category-row${active ? " active" : ""}`}
                 style={{ cursor: "pointer" }}
               >
-                <td className="cat-dot-col" onClick={() => toggleCategoryFilter(c.code)}>
-                  <span className="cat-dot" style={{ background: c.color }} />
-                  {hasSubitems && (
+                <td
+                  className="cat-dot-col"
+                  onClick={() => {
+                    if (hasSubitems) toggleExpand(c.code);
+                    else toggleCategoryFilter(c.code);
+                  }}
+                >
+                  {hasSubitems ? (
                     <button
                       type="button"
                       className="subcat-toggle"
@@ -160,19 +167,15 @@ function CategoryTable({
                         e.stopPropagation();
                         toggleExpand(c.code);
                       }}
-                      aria-label={isExpanded ? "Collapse" : "Expand"}
+                      aria-label={`Show ${c.name} subcategories`}
                       aria-expanded={isExpanded}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        color: "var(--text-mid)",
-                        cursor: "pointer",
-                        marginLeft: "0.3rem",
-                      }}
                     >
-                      {isExpanded ? "▾" : "▸"}
+                      <IconCaretDown />
                     </button>
+                  ) : (
+                    <span className="subcat-toggle subcat-toggle-empty" aria-hidden="true" />
                   )}
+                  <span className="cat-dot" style={{ background: c.color }} />
                 </td>
                 <td onClick={() => toggleCategoryFilter(c.code)}>{c.name}</td>
                 <td className="num col-hide-mobile muted">{c.count}</td>
@@ -233,25 +236,28 @@ function CategoryTable({
 
 function SpendingView({ data }: { data: SpendingData }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [modalTx, setModalTx] = useState<Tx | null>(null);
   const [editingRule, setEditingRule] = useState<ExistingRule | null>(null);
 
-  const { sorted: sortedTransactions, sort, toggle } = useSorted<
-    Tx,
-    "date" | "name" | "category" | "amount"
-  >(
+  type SortKey = "date" | "source" | "name" | "category" | "item" | "amount";
+  const { sorted: sortedTransactions, sort, toggle } = useSorted<Tx, SortKey>(
     data.transactions,
     { key: "date", dir: "desc" },
     {
       date: (tx) => tx.date,
+      source: (tx) => tx.source.toLowerCase(),
       name: (tx) => tx.name.toLowerCase(),
       category: (tx) => tx.category.toLowerCase(),
+      item: (tx) => (tx.detailed_label || "").toLowerCase(),
       amount: (tx) => tx.amount,
     },
   );
-  const arrow = (key: "date" | "name" | "category" | "amount") =>
-    sort.key === key ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
+  const sortAttrs = (key: SortKey) => ({
+    "data-sort": "true",
+    "data-dir": sort.key === key ? sort.dir : undefined,
+  });
 
   function toggleCategoryFilter(code: string) {
     const p = new URLSearchParams(searchParams);
@@ -269,7 +275,7 @@ function SpendingView({ data }: { data: SpendingData }) {
     mutationFn: (vars: { txId: string; payload: Record<string, unknown> }) =>
       postJson(`/transactions/${encodeURIComponent(vars.txId)}/override`, vars.payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["spending"] }),
-    onError: (e: Error) => alert(`Override failed: ${e.message}`),
+    onError: (e: Error) => toast.error(`Override failed: ${e.message}`),
   });
 
   function onKebab(tx: Tx, id: KebabAction["id"]) {
@@ -286,6 +292,15 @@ function SpendingView({ data }: { data: SpendingData }) {
   return (
     <Page heading="Spending">
       <p className="subtitle">Grouped by category</p>
+
+      {data.sources.length > 1 && (
+        <SourceFilter
+          sources={data.sources}
+          current={data.current_source}
+          logos={data.source_logos}
+        />
+      )}
+
       <div className="totals" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
         <MonthPickerCard
           label={data.month_label}
@@ -319,37 +334,21 @@ function SpendingView({ data }: { data: SpendingData }) {
         </div>
       </div>
 
-      {data.sources.length > 1 && (
-        <SourceFilter
-          sources={data.sources}
-          current={data.current_source}
-          logos={data.source_logos}
-        />
-      )}
-
       {data.categories.length > 0 && (
         <div className="chart-card budget-summary-card">
           <div className="label">Breakdown</div>
-          <div className="stacked-bar" role="img" aria-label="Spending by category">
-            {data.categories.map((c) => (
-              <div
-                key={c.code}
-                className="stacked-bar-segment"
-                style={{ flex: `${c.total} 0 0`, background: c.color }}
-                data-tooltip={`${c.name}: ${formatUsd(c.total)}`}
-              />
-            ))}
-          </div>
+          <StackedBar
+            ariaLabel="Spending by category"
+            segments={data.categories.map((c) => ({
+              key: c.code,
+              label: c.name,
+              value: c.total,
+              color: c.color,
+              active: data.categories_filter.includes(c.code),
+            }))}
+            onToggle={toggleCategoryFilter}
+          />
         </div>
-      )}
-
-      {data.categories.length > 0 && (
-        <FilterChips
-          ariaLabel="Filter by category"
-          options={data.categories.map((c) => ({ value: c.code, label: c.name }))}
-          selected={data.categories_filter}
-          onToggle={toggleCategoryFilter}
-        />
       )}
 
       {data.categories.length > 0 && (
@@ -358,6 +357,10 @@ function SpendingView({ data }: { data: SpendingData }) {
           toggleCategoryFilter={toggleCategoryFilter}
         />
       )}
+
+      <div className="tx-header" id="transactions">
+        <h2 className="tx-header-title">Transactions</h2>
+      </div>
 
       {data.transactions.length === 0 ? (
         <EmptyState
@@ -368,23 +371,25 @@ function SpendingView({ data }: { data: SpendingData }) {
         <table className="tx-table">
           <thead>
             <tr>
-              <th onClick={() => toggle("date")} style={{ cursor: "pointer" }}>
-                Date{arrow("date")}
-              </th>
-              <th>Source</th>
-              <th onClick={() => toggle("name")} style={{ cursor: "pointer" }}>
-                Description{arrow("name")}
+              <th {...sortAttrs("date")} onClick={() => toggle("date")}>Date</th>
+              <th {...sortAttrs("source")} onClick={() => toggle("source")}>Source</th>
+              <th {...sortAttrs("name")} onClick={() => toggle("name")}>Description</th>
+              <th
+                className="col-hide-mobile"
+                {...sortAttrs("category")}
+                onClick={() => toggle("category")}
+              >
+                Category
               </th>
               <th
                 className="col-hide-mobile"
-                onClick={() => toggle("category")}
-                style={{ cursor: "pointer" }}
+                {...sortAttrs("item")}
+                onClick={() => toggle("item")}
               >
-                Category{arrow("category")}
+                Item
               </th>
-              <th className="col-hide-mobile">Item</th>
-              <th className="num" onClick={() => toggle("amount")} style={{ cursor: "pointer" }}>
-                Amount{arrow("amount")}
+              <th className="num" {...sortAttrs("amount")} onClick={() => toggle("amount")}>
+                Amount
               </th>
               <th />
             </tr>

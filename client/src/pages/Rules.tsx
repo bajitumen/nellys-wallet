@@ -8,6 +8,7 @@ import {
   RuleModal, type ExistingRule, type Primary, type RuleMatchOptions,
 } from "../components/RuleModal";
 import { IconPencil, IconTrash } from "../components/icons";
+import { useToast } from "../components/Toast";
 import { ApiError, deleteJson, getJson } from "../lib/api";
 
 type ConditionLabel = { scope_label: string; op_label: string; match_value: string };
@@ -81,6 +82,7 @@ function RulesView({
   onSelectTab: (t: "spending" | "income" | "both") => void;
 }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ExistingRule | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
@@ -88,7 +90,7 @@ function RulesView({
   const del = useMutation({
     mutationFn: (id: number) => deleteJson(`/rules/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rules"] }),
-    onError: (err: Error) => alert(`Failed to delete rule: ${err.message}`),
+    onError: (err: Error) => toast.error(`Failed to delete rule: ${err.message}`),
   });
 
   function openAdd() {

@@ -17,13 +17,15 @@ def verify_session_cookie(token: Optional[str]) -> Optional[str]:
     if not clerk_enabled() or not token:
         return None
     try:
-        claims = jwt.decode(
-            token,
-            config.CLERK_JWT_PUBLIC_KEY,
-            algorithms=["RS256"],
-            # Clerk aud isn't pinned; signature + expiry is sufficient here.
-            options={"verify_aud": False},
-        )
+        require = ["exp", "sub"]
+        decode_kwargs = {
+            "algorithms": ["RS256"],
+        }
+        if config.CLERK_ISSUER:
+            decode_kwargs["issuer"] = config.CLERK_ISSUER
+            require.append("iss")
+        decode_kwargs["options"] = {"verify_aud": False, "require": require}
+        claims = jwt.decode(token, config.CLERK_JWT_PUBLIC_KEY, **decode_kwargs)
     except jwt.InvalidTokenError as e:
         log.warning("Clerk session verification failed: %s", e)
         return None
@@ -51,6 +53,12 @@ def find_or_create_user(
 
 def get_current_user(request, session) -> Optional[User]:
     if not clerk_enabled():
+        if config.IS_PRODUCTION:
+            log.error(
+                "Refusing to serve request: Clerk is disabled but FLASK_ENV=production. "
+                "CLERK_JWT_PUBLIC_KEY must be set in production."
+            )
+            return None
         return session.query(User).first()
     clerk_user_id = verify_session_cookie(request.cookies.get("__session"))
     if not clerk_user_id:

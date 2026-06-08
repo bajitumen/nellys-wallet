@@ -39,15 +39,19 @@ def test_monthly_income_totals_returns_n_months(user_with_item, db_session):
         assert "ts" in entry and isinstance(entry["ts"], int)
 
 
-def test_monthly_income_totals_includes_transfer_in(user_with_item, db_session):
-    """TRANSFER_IN counts as income (Zelle/Venmo from friends, etc.)."""
+def test_monthly_income_totals_excludes_transfer_in(user_with_item, db_session):
+    """Unpaired TRANSFER_IN (Zelle/loans) must not inflate income totals.
+
+    Income surfaces are strict: only pfc_primary == 'INCOME' counts. Otherwise
+    a friend Venmo-ing back a $500 rent split would read as $500 of income.
+    """
     from income import monthly_income_totals
     item = user_with_item.items[0]
     today = date.today()
     _seed_inflow(db_session, item, "in1", 100.0, "Acme", pfc_primary="INCOME", date_=today)
     _seed_inflow(db_session, item, "in2", 500.0, "Roommate", pfc_primary="TRANSFER_IN", date_=today)
     out = monthly_income_totals(user_with_item, db_session, n_months=1)
-    assert out[0]["total"] == 600.0
+    assert out[0]["total"] == 100.0
 
 
 def test_basic_income_aggregation(user_with_item, db_session):
@@ -63,15 +67,15 @@ def test_basic_income_aggregation(user_with_item, db_session):
     assert out["payers"][0]["name"] == "Acme Corp"  # sorted desc
 
 
-def test_includes_transfer_in(user_with_item, db_session):
-    """TRANSFER_IN counts as income; other non-INCOME/TRANSFER_IN primaries don't."""
+def test_excludes_transfer_in_and_non_income_primaries(user_with_item, db_session):
+    """Only pfc_primary == 'INCOME' counts; TRANSFER_IN and spending primaries don't."""
     from income import fetch_last_month
     item = user_with_item.items[0]
     _seed_inflow(db_session, item, "in1", 100.0, "Acme", pfc_primary="INCOME")
     _seed_inflow(db_session, item, "in2", 200.0, "Friend", pfc_primary="TRANSFER_IN")
     _seed_inflow(db_session, item, "in3", 999.0, "Bogus", pfc_primary="FOOD_AND_DRINK")
     out = fetch_last_month(user_with_item, session=db_session)
-    assert out["total"] == 300.0
+    assert out["total"] == 100.0
 
 
 def test_excludes_positive_amounts(user_with_item, db_session):

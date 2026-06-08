@@ -5,8 +5,9 @@ import { Page } from "../components/Page";
 import { EmptyState } from "../components/EmptyState";
 import { MonthPickerCard, type MonthOption } from "../components/MonthPicker";
 import { KebabMenu, type KebabAction } from "../components/KebabMenu";
-import { FilterChips } from "../components/FilterChips";
+import { StackedBar } from "../components/StackedBar";
 import { SourceFilter } from "../components/SourceFilter";
+import { useToast } from "../components/Toast";
 import { useSorted } from "../lib/useSorted";
 import {
   RuleModal, type ExistingRule, type Primary, type RuleMatchOptions,
@@ -97,6 +98,7 @@ export default function IncomePage() {
 
 function IncomeView({ data }: { data: IncomeData }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [modalTx, setModalTx] = useState<Tx | null>(null);
   const [editingRule, setEditingRule] = useState<ExistingRule | null>(null);
   const [payerFilter, setPayerFilter] = useState<string[]>([]);
@@ -110,23 +112,28 @@ function IncomeView({ data }: { data: IncomeData }) {
   const filtered = payerFilter.length === 0
     ? data.transactions
     : data.transactions.filter((tx) => payerFilter.includes(tx.payer));
-  const { sorted: visibleTransactions, sort, toggle } = useSorted<Tx, "date" | "payer" | "amount">(
+  type SortKey = "date" | "source" | "payer" | "description" | "amount";
+  const { sorted: visibleTransactions, sort, toggle } = useSorted<Tx, SortKey>(
     filtered,
     { key: "date", dir: "desc" },
     {
       date: (tx) => tx.date,
+      source: (tx) => tx.source.toLowerCase(),
       payer: (tx) => tx.payer.toLowerCase(),
+      description: (tx) => tx.name.toLowerCase(),
       amount: (tx) => tx.amount,
     },
   );
-  const arrow = (key: "date" | "payer" | "amount") =>
-    sort.key === key ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
+  const sortAttrs = (key: SortKey) => ({
+    "data-sort": "true",
+    "data-dir": sort.key === key ? sort.dir : undefined,
+  });
 
   const applyOverride = useMutation({
     mutationFn: (vars: { txId: string; payload: Record<string, unknown> }) =>
       postJson(`/transactions/${encodeURIComponent(vars.txId)}/override`, vars.payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["income"] }),
-    onError: (e: Error) => alert(`Override failed: ${e.message}`),
+    onError: (e: Error) => toast.error(`Override failed: ${e.message}`),
   });
 
   function onKebab(tx: Tx, id: KebabAction["id"]) {
@@ -143,6 +150,15 @@ function IncomeView({ data }: { data: IncomeData }) {
   return (
     <Page heading="Income">
       <p className="subtitle">Grouped by payer</p>
+
+      {data.sources.length > 1 && (
+        <SourceFilter
+          sources={data.sources}
+          current={data.current_source}
+          logos={data.source_logos}
+        />
+      )}
+
       <div className="totals" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
         <MonthPickerCard
           label={data.month_label}
@@ -176,32 +192,26 @@ function IncomeView({ data }: { data: IncomeData }) {
         </div>
       </div>
 
-      {data.sources.length > 1 && (
-        <SourceFilter
-          sources={data.sources}
-          current={data.current_source}
-          logos={data.source_logos}
-        />
-      )}
-
       {data.payers.length > 0 && (
         <>
           <div className="chart-card budget-summary-card">
             <div className="label">Payers</div>
-            <div className="stacked-bar" role="img" aria-label="Income by payer">
-              {data.payers.map((p) => (
-                <div
-                  key={p.name}
-                  className="stacked-bar-segment"
-                  style={{ flex: `${p.total} 0 0`, background: p.color }}
-                  data-tooltip={`${p.name}: ${formatUsd(p.total)}`}
-                />
-              ))}
-            </div>
+            <StackedBar
+              ariaLabel="Income by payer"
+              segments={data.payers.map((p) => ({
+                key: p.name,
+                label: p.name,
+                value: p.total,
+                color: p.color,
+                active: payerFilter.includes(p.name),
+              }))}
+              onToggle={togglePayer}
+            />
           </div>
           <table className="category-table">
             <thead>
               <tr>
+                <th className="cat-dot-col" />
                 <th>Payer</th>
                 <th className="num col-hide-mobile">Transactions</th>
                 <th className="num col-hide-mobile">% of Total</th>
@@ -218,10 +228,11 @@ function IncomeView({ data }: { data: IncomeData }) {
                     style={{ cursor: "pointer" }}
                     onClick={() => togglePayer(p.name)}
                   >
-                    <td>
+                    <td className="cat-dot-col">
+                      <span className="subcat-toggle subcat-toggle-empty" aria-hidden="true" />
                       <span className="cat-dot" style={{ background: p.color }} />
-                      {p.name}
                     </td>
+                    <td>{p.name}</td>
                     <td className="num col-hide-mobile muted">{p.count}</td>
                     <td className="num col-hide-mobile muted">{pct.toFixed(0)}%</td>
                     <td className="num">{formatUsd(p.total)}</td>
@@ -233,14 +244,9 @@ function IncomeView({ data }: { data: IncomeData }) {
         </>
       )}
 
-      {data.payers.length > 1 && (
-        <FilterChips
-          ariaLabel="Filter by payer"
-          options={data.payers.map((p) => ({ value: p.name, label: p.name }))}
-          selected={payerFilter}
-          onToggle={togglePayer}
-        />
-      )}
+      <div className="tx-header" id="transactions">
+        <h2 className="tx-header-title">Transactions</h2>
+      </div>
 
       {visibleTransactions.length === 0 ? (
         <EmptyState
@@ -251,16 +257,18 @@ function IncomeView({ data }: { data: IncomeData }) {
         <table className="tx-table">
           <thead>
             <tr>
-              <th onClick={() => toggle("date")} style={{ cursor: "pointer" }}>
-                Date{arrow("date")}
+              <th {...sortAttrs("date")} onClick={() => toggle("date")}>Date</th>
+              <th {...sortAttrs("source")} onClick={() => toggle("source")}>Source</th>
+              <th {...sortAttrs("payer")} onClick={() => toggle("payer")}>Payer</th>
+              <th
+                className="col-hide-mobile"
+                {...sortAttrs("description")}
+                onClick={() => toggle("description")}
+              >
+                Description
               </th>
-              <th>Source</th>
-              <th onClick={() => toggle("payer")} style={{ cursor: "pointer" }}>
-                Payer{arrow("payer")}
-              </th>
-              <th className="col-hide-mobile">Description</th>
-              <th className="num" onClick={() => toggle("amount")} style={{ cursor: "pointer" }}>
-                Amount{arrow("amount")}
+              <th className="num" {...sortAttrs("amount")} onClick={() => toggle("amount")}>
+                Amount
               </th>
               <th />
             </tr>

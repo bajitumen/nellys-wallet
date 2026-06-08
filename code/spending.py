@@ -18,7 +18,7 @@ from providers import plaid_client_for
 
 log = logging.getLogger(__name__)
 
-_cache = KeyedCache(ttl_seconds=0.0)
+_cache = KeyedCache(ttl_seconds=60.0)
 
 
 def invalidate_cache(user_id: int) -> None:
@@ -213,7 +213,14 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
                 out["updated"] += 1
             else:
                 # Carry any user override from pending → posted before insert.
+                # An override may already exist on the posted id from a prior
+                # sync or a manual touch; deleting it first avoids the
+                # uq_override_user_tx collision that would abort the sync.
                 if pending_row is not None:
+                    session.query(TransactionOverride).filter(
+                        TransactionOverride.user_id == user.id,
+                        TransactionOverride.plaid_transaction_id == tx.transaction_id,
+                    ).delete(synchronize_session=False)
                     session.query(TransactionOverride).filter_by(
                         user_id=user.id, plaid_transaction_id=pending_id,
                     ).update(
@@ -488,7 +495,7 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
                 continue
             _, amount, _, _, _ = applied
             spend_by_month[key] += amount
-        elif tx.amount < 0 and pfc.is_income_category(tx.pfc_primary):
+        elif tx.amount < 0 and pfc.is_strict_income(tx.pfc_primary):
             amount = -tx.amount
             if ov and ov.amount_override is not None:
                 amount = ov.amount_override

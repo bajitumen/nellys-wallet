@@ -12,7 +12,6 @@ import {
   IconPie,
   IconSliders,
   IconSun,
-  IconTarget,
 } from "./icons";
 
 type NavItem = { to: string; label: string; Icon: (props: IconProps) => JSX.Element };
@@ -21,7 +20,6 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/spending", label: "Spending", Icon: IconBag },
   { to: "/income", label: "Income", Icon: IconCoin },
   { to: "/budget", label: "Budget", Icon: IconPie },
-  { to: "/planning", label: "Planning", Icon: IconTarget },
   { to: "/rules", label: "Rules", Icon: IconSliders },
 ];
 

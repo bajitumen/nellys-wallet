@@ -133,9 +133,9 @@ def link_token(session, user):
         return jsonify({"error": str(e)}), 400
     try:
         token = plaid_link.create_link_token(client, user)
-    except Exception as e:
+    except Exception:
         log.exception("create_link_token failed for user_id=%s", user.id)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Could not start Plaid Link. Try again in a moment."}), 500
     return jsonify({"link_token": token})
 
 
@@ -153,9 +153,9 @@ def link_exchange(session, user):
         return jsonify({"error": str(e)}), 400
     try:
         item = plaid_link.exchange_and_save(client, session, user, public_token)
-    except Exception as e:
+    except Exception:
         log.exception("link_exchange failed for user_id=%s", user.id)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Could not link this account. Try again in a moment."}), 500
     log.info("link_exchange success user_id=%s institution=%s",
              user.id, item.institution_name)
     providers.invalidate_cache(user.id)

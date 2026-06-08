@@ -3,9 +3,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePlaidLink, type PlaidLinkOnSuccess } from "react-plaid-link";
 import { postJson } from "../lib/api";
 import { IconPlus } from "./icons";
+import { useToast } from "./Toast";
 
 export function AddAccountButton() {
   const qc = useQueryClient();
+  const toast = useToast();
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -14,7 +16,7 @@ export function AddAccountButton() {
     onSuccess: (data) => setLinkToken(data.link_token),
     onError: (e: Error) => {
       setBusy(false);
-      alert(`Could not start Plaid Link: ${e.message}`);
+      toast.error(`Could not start Plaid Link: ${e.message}`);
     },
   });
 
@@ -28,7 +30,7 @@ export function AddAccountButton() {
     },
     onError: (e: Error) => {
       setBusy(false);
-      alert(`Could not link account: ${e.message}`);
+      toast.error(`Could not link account: ${e.message}`);
     },
   });
 

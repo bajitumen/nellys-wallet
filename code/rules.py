@@ -147,7 +147,7 @@ def tx_in_scope(tx: Transaction, scope: str) -> bool:
     if scope == "spending":
         return tx.amount is not None and tx.amount > 0 and pfc_mod.is_spend_category(tx.pfc_primary)
     if scope == "income":
-        return tx.amount is not None and tx.amount < 0 and pfc_mod.is_income_category(tx.pfc_primary)
+        return tx.amount is not None and tx.amount < 0 and pfc_mod.is_strict_income(tx.pfc_primary)
     return False
 
 
@@ -155,7 +155,7 @@ def build_scope_filter(scope: str):
     if scope == "spending":
         return [Transaction.amount > 0, ~Transaction.pfc_primary.in_(pfc_mod.INCOME_SIDE_PRIMARIES)]
     if scope == "income":
-        return [Transaction.amount < 0, Transaction.pfc_primary.in_(pfc_mod.INCOME_SIDE_PRIMARIES)]
+        return [Transaction.amount < 0, Transaction.pfc_primary == "INCOME"]
     return []
 
 

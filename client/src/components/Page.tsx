@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SignedIn, UserButton } from "@clerk/clerk-react";
 import { IconRefresh } from "./icons";
 import { AddAccountButton } from "./AddAccountButton";
+import { useToast } from "./Toast";
 import { getJson, postJson } from "../lib/api";
 import { useClerkEnabled } from "../lib/clerkContext";
 import { useSidebar } from "../lib/sidebarContext";
@@ -15,6 +16,7 @@ type Props = {
 
 export function Page({ heading, children }: Props) {
   const qc = useQueryClient();
+  const toast = useToast();
   const clerkEnabled = useClerkEnabled();
   const { open, setOpen } = useSidebar();
   const me = useQuery<{ last_sync_label: string | null }>({
@@ -26,7 +28,7 @@ export function Page({ heading, children }: Props) {
   const sync = useMutation({
     mutationFn: () => postJson<{ ok: boolean }>("/sync"),
     onSuccess: () => qc.invalidateQueries(),
-    onError: (e: Error) => alert(`Sync failed: ${e.message}`),
+    onError: (e: Error) => toast.error(`Sync failed: ${e.message}`),
   });
 
   useEffect(() => {

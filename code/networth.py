@@ -192,13 +192,14 @@ def build_chart(
     has_synthetic_prefix = (
         range_start_ts is not None and xs[0] > range_start_ts
     )
+    baseline = 0.0 if has_synthetic_prefix else ys[0]
     return {
         "width": width,
         "height": height,
         "line_path": line_path,
         "area_path": area_path,
-        "trend": "down" if ys[-1] < 0 else "up",
-        "first_value": 0.0 if has_synthetic_prefix else ys[0],
+        "trend": "down" if ys[-1] < baseline else "up",
+        "first_value": baseline,
         "last_value": ys[-1],
         "points": point_data,
     }

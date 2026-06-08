@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { AuthGate } from "./components/AuthGate";
-import PlanningPage from "./pages/Planning";
 import BudgetPage from "./pages/Budget";
 import RulesPage from "./pages/Rules";
 import IncomePage from "./pages/Income";
@@ -27,7 +26,6 @@ export default function App({ clerkEnabled }: { clerkEnabled: boolean }) {
         <Route path="/spending" element={<SpendingPage />} />
         <Route path="/income" element={<IncomePage />} />
         <Route path="/budget" element={<BudgetPage />} />
-        <Route path="/planning" element={<PlanningPage />} />
         <Route path="/rules" element={<RulesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

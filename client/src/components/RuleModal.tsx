@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
 import { InlineDropdown, type DropdownOption } from "./InlineDropdown";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { useToast } from "./Toast";
 import { postJson } from "../lib/api";
 
 export type MatchOption = { field: string; value: string; label: string };
@@ -80,6 +81,7 @@ export function RuleModal(props: Props) {
     open, options, primaries, pageScope = "all", editingRule, rowMerchant,
     rowCategoryRaw, rowDetailedRaw, rowSource, onClose, onSaved,
   } = props;
+  const toast = useToast();
 
   function defaultCondition(field: Condition["field"]): Condition {
     const list = options[field] || [];
@@ -178,10 +180,10 @@ export function RuleModal(props: Props) {
     mutationFn: (payload: Record<string, unknown>) =>
       postJson<{ ok: boolean; warning?: string }>("/rules", payload),
     onSuccess: (data) => {
-      if (data.warning) alert(data.warning);
+      if (data.warning) toast.warning(data.warning);
       onSaved();
     },
-    onError: (err: Error) => alert(`Failed to save rule: ${err.message}`),
+    onError: (err: Error) => toast.error(`Failed to save rule: ${err.message}`),
   });
 
   function valueOptsFor(field: Condition["field"]): DropdownOption[] {
@@ -197,7 +199,7 @@ export function RuleModal(props: Props) {
 
   function buildPayload(): Record<string, unknown> | null {
     if (state.conditions.some((c) => !c.value)) {
-      alert("Pick a value for every condition.");
+      toast.error("Pick a value for every condition.");
       return null;
     }
     const payload: Record<string, unknown> = {
@@ -218,7 +220,7 @@ export function RuleModal(props: Props) {
       } else if (state.splitPct !== "") {
         payload.action_value = state.splitPct;
       } else {
-        alert("Enter a percentage or a dollar amount.");
+        toast.error("Enter a percentage or a dollar amount.");
         return null;
       }
     }
@@ -237,7 +239,7 @@ export function RuleModal(props: Props) {
         const preview = await postJson<{ matches: number }>("/rules/preview", payload);
         setPending({ payload, matchCount: preview.matches });
       } catch (e) {
-        alert(`Failed to preview: ${(e as Error).message}`);
+        toast.error(`Failed to preview: ${(e as Error).message}`);
       }
       return;
     }

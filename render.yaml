@@ -35,6 +35,8 @@ services:
         sync: false
       - key: CLERK_FRONTEND_API
         sync: false
+      - key: CLERK_ISSUER
+        sync: false
       # Litestream backup target.
       - key: LITESTREAM_REPLICA_URL
         sync: false

@@ -5,6 +5,7 @@ import { ClerkProvider } from "@clerk/clerk-react";
 
 import App from "./App";
 import { ClerkEnabledContext } from "./lib/clerkContext";
+import { ToastProvider } from "./components/Toast";
 import "./index.css";
 
 const clerkKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
@@ -20,9 +21,11 @@ function Root() {
   const tree = (
     <ClerkEnabledContext.Provider value={enabled}>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <App clerkEnabled={enabled} />
-        </BrowserRouter>
+        <ToastProvider>
+          <BrowserRouter>
+            <App clerkEnabled={enabled} />
+          </BrowserRouter>
+        </ToastProvider>
       </QueryClientProvider>
     </ClerkEnabledContext.Provider>
   );
