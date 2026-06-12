@@ -998,8 +998,9 @@ def _serve_spa_shell():
     return send_from_directory(_CLIENT_DIST, "index.html")
 
 
+@app.route("/", methods=["GET"])
 @app.route("/<path:_path>", methods=["GET"])
-def spa_catch_all(_path):
+def spa_catch_all(_path: str = ""):
     return _serve_spa_shell()
 
 
