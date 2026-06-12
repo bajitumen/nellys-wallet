@@ -36,7 +36,7 @@ FROM python:3.13-slim AS base
 ARG LITESTREAM_VERSION=0.3.13
 ARG LITESTREAM_SHA256=9b05043523c1fb1c4f9800623adf0015683da7fdd55e19b9fe5d28f63fae96b4
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates sqlite3 \
+    && apt-get install -y --no-install-recommends curl ca-certificates sqlite3 gosu \
     && curl -fsSL "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-v${LITESTREAM_VERSION}-linux-amd64.deb" \
        -o /tmp/litestream.deb \
     && echo "${LITESTREAM_SHA256}  /tmp/litestream.deb" | sha256sum -c - \
@@ -68,8 +68,11 @@ ENV DATABASE_URL=sqlite:///var/data/finance.db
 ENV FLASK_ENV=production
 ENV PATH="/app/.venv/bin:$PATH"
 
-USER app
-
+# Container starts as root so entrypoint.sh can chown the runtime-mounted
+# persistent disk (Render's disk mount overlays /var/data at boot, so the
+# build-time chown above does NOT cover files that already exist on the
+# disk from previous deploys). entrypoint.sh then drops to uid 10001 via
+# gosu before any app process runs.
 EXPOSE 5001
 
 CMD ["./entrypoint.sh"]

@@ -10,6 +10,19 @@
 set -euo pipefail
 
 DB_PATH="/var/data/finance.db"
+
+# Render mounts the persistent disk at /var/data at runtime, overlaying
+# whatever was chowned in the Docker build. Files that already exist on
+# the disk (from previous deploys when the container ran as root) keep
+# their old ownership, and the unprivileged app user then can't delete
+# them — surfaces as a loud "permission denied" on every litestream WAL
+# cleanup. Fix it once at startup, then drop privileges via gosu.
+if [[ "$(id -u)" -eq 0 ]]; then
+  mkdir -p "$(dirname "$DB_PATH")"
+  chown -R app:app /var/data
+  exec gosu app "$0" "$@"
+fi
+
 mkdir -p "$(dirname "$DB_PATH")"
 
 db_needs_restore() {
