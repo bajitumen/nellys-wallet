@@ -12,9 +12,26 @@ set -euo pipefail
 DB_PATH="/var/data/finance.db"
 mkdir -p "$(dirname "$DB_PATH")"
 
+db_needs_restore() {
+  # Restore when the file is missing, zero bytes, or fails the SQLite integrity
+  # check. The plain `! -f` guard let a corrupt-but-present file boot the app
+  # on broken data instead of recovering from the replica.
+  [[ ! -s "$DB_PATH" ]] && return 0
+  if command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 "$DB_PATH" "PRAGMA integrity_check;" 2>/dev/null \
+      | grep -q '^ok$' || return 0
+  fi
+  return 1
+}
+
 if [[ -n "${LITESTREAM_REPLICA_URL:-}" ]]; then
-  if [[ ! -f "$DB_PATH" ]]; then
+  if db_needs_restore; then
     echo "Restoring SQLite database from $LITESTREAM_REPLICA_URL"
+    # Move the broken file aside so litestream restore writes a clean one
+    # (otherwise restore refuses to overwrite). Keep it for forensic recovery.
+    if [[ -e "$DB_PATH" ]]; then
+      mv "$DB_PATH" "${DB_PATH}.broken.$(date +%s)" 2>/dev/null || rm -f "$DB_PATH"
+    fi
     # -if-replica-exists exits 0 when no replica is found (legitimate first run);
     # any non-zero exit means the replica IS there but restore failed (bad creds,
     # corrupt snapshot, network error). Bail rather than overwrite the backup
@@ -23,7 +40,7 @@ if [[ -n "${LITESTREAM_REPLICA_URL:-}" ]]; then
       echo "FATAL: litestream restore failed. Check credentials, network, and replica integrity." >&2
       exit 1
     fi
-    if [[ ! -f "$DB_PATH" ]]; then
+    if [[ ! -s "$DB_PATH" ]]; then
       echo "No existing replica found — starting with empty DB."
     fi
   fi

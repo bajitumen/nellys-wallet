@@ -4,7 +4,11 @@ import { useSearchParams } from "react-router-dom";
 import { Page } from "../components/Page";
 import { EmptyState } from "../components/EmptyState";
 import { MonthPickerCard, type MonthOption } from "../components/MonthPicker";
+import { useToast } from "../components/Toast";
+import { AnimatedUsd } from "../components/AnimatedNumber";
+import { StackedBar } from "../components/StackedBar";
 import { ApiError, getJson, postJson } from "../lib/api";
+import { scrollToAnchor } from "../lib/scrollToTransactions";
 
 type Subitem = { code: string; label: string; amount: number; actual: number };
 type Group = {
@@ -75,33 +79,35 @@ function BudgetView({ data }: { data: BudgetData }) {
         />
         <div className="card">
           <div className="label">Total Budget</div>
-          <div className="value">{formatUsd(totalBudget)}</div>
+          <div className="value"><AnimatedUsd value={totalBudget} decimals={2} /></div>
         </div>
         <div className="card">
           <div className="label">Total Spent</div>
-          <div className="value">{formatUsd(data.total_spent)}</div>
+          <div className="value"><AnimatedUsd value={data.total_spent} decimals={2} /></div>
         </div>
         <div className={`card${difference < 0 ? " credit" : difference > 0 ? " net" : ""}`}>
           <div className="label">Difference</div>
-          <div className="value">{formatUsd(difference)}</div>
+          <div className="value"><AnimatedUsd value={difference} decimals={2} /></div>
         </div>
       </div>
 
-      <div className="chart-card budget-summary-card">
-        <div className="label">Budget breakdown</div>
-        <div className="stacked-bar budget-stacked-bar" role="img" aria-label="Budget by category">
-          {data.groups.map((g) => (
-            <a
-              key={g.primary}
-              className="stacked-bar-segment"
-              href={`#budget-group-${g.primary}`}
-              aria-label={`Jump to ${g.primary_label}`}
-              style={{ flex: `${g.total} 0 0`, background: g.color }}
-              data-tooltip={`${g.primary_label}: ${formatUsd(g.total)}`}
-            />
-          ))}
+      {totalBudget > 0 && (
+        <div className="chart-card budget-summary-card">
+          <div className="label">Budget breakdown</div>
+          <StackedBar
+            ariaLabel="Budget by category"
+            segments={data.groups
+              .filter((g) => g.total > 0)
+              .map((g) => ({
+                key: g.primary,
+                label: g.primary_label,
+                value: g.total,
+                color: g.color,
+              }))}
+            onToggle={(primary) => scrollToAnchor(`budget-group-${primary}`)}
+          />
         </div>
-      </div>
+      )}
 
       {data.groups.length === 0 ? (
         <EmptyState headline="No budget categories yet." />
@@ -143,11 +149,13 @@ function BudgetGroup({ group }: { group: Group }) {
 
 function BudgetRow({ sub }: { sub: Subitem }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [value, setValue] = useState<string>(sub.amount ? sub.amount.toFixed(2) : "");
   const save = useMutation({
     mutationFn: (amount: string) =>
       postJson(`/budget/${encodeURIComponent(sub.code)}`, { amount }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["budget"] }),
+    onError: (e: Error) => toast.error(`Could not save budget for ${sub.label}: ${e.message}`),
   });
 
   const actualClass = sub.actual

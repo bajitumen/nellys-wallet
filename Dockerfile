@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 #
 # Production image for Nelly's Wallet.
-# - Python 3.13 slim base
+# - Stage 1 (client): Node builds the React SPA into client/dist.
+# - Stage 2 (base):   Python 3.13 slim runtime serving Flask + the built SPA.
 # - gunicorn serves Flask
 # - litestream replicates SQLite to S3-compatible storage (Backblaze B2,
 #   Cloudflare R2, AWS S3) and restores from there on startup
@@ -15,12 +16,27 @@
 # Names must match render.yaml + litestream.yml verbatim; mismatch silently
 # breaks backups (writes succeed, replicate auth fails, restore is empty).
 
+# --- Stage 1: build the React SPA ------------------------------------------
+FROM node:22-alpine AS client
+
+WORKDIR /client
+COPY client/package.json client/package-lock.json ./
+RUN npm ci
+
+COPY client/ ./
+# Surface the Clerk publishable key at build time so Vite can embed it; the
+# rest of Clerk's auth happens server-side and reads runtime env.
+ARG VITE_CLERK_PUBLISHABLE_KEY=""
+ENV VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
+RUN npm run build
+
+# --- Stage 2: Python runtime -----------------------------------------------
 FROM python:3.13-slim AS base
 
 ARG LITESTREAM_VERSION=0.3.13
 ARG LITESTREAM_SHA256=9b05043523c1fb1c4f9800623adf0015683da7fdd55e19b9fe5d28f63fae96b4
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends curl ca-certificates sqlite3 \
     && curl -fsSL "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-v${LITESTREAM_VERSION}-linux-amd64.deb" \
        -o /tmp/litestream.deb \
     && echo "${LITESTREAM_SHA256}  /tmp/litestream.deb" | sha256sum -c - \
@@ -40,6 +56,9 @@ COPY code/ ./code/
 COPY litestream.yml ./litestream.yml
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
+
+# Built SPA — without this layer Flask's SPA shell route 404s every page.
+COPY --from=client /client/dist ./client/dist
 
 RUN useradd -m -u 10001 -s /usr/sbin/nologin app \
     && mkdir -p /var/data \

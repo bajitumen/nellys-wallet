@@ -4,6 +4,7 @@ import { Page } from "../components/Page";
 import { EmptyState } from "../components/EmptyState";
 import { InstAvatar } from "../components/InstAvatar";
 import { PlanningChart, type ProjectionAccount } from "../components/PlanningChart";
+import { useToast } from "../components/Toast";
 import { ApiError, getJson, postJson } from "../lib/api";
 
 type Account = {
@@ -66,6 +67,7 @@ export default function PlanningPage() {
 
 function PlanningView({ data }: { data: PlanningData }) {
   const qc = useQueryClient();
+  const toast = useToast();
 
   const [rates, setRates] = useState<Record<string, string>>(() =>
     Object.fromEntries(
@@ -92,16 +94,19 @@ function PlanningView({ data }: { data: PlanningData }) {
     mutationFn: (vars: { id: string; rate: string }) =>
       postJson(`/planning/rate/${encodeURIComponent(vars.id)}`, { rate: vars.rate }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["planning"] }),
+    onError: (e: Error) => toast.error(`Could not save rate: ${e.message}`),
   });
   const saveContrib = useMutation({
     mutationFn: (vars: { id: string; value: string }) =>
       postJson(`/planning/contribution/${encodeURIComponent(vars.id)}`, { value: vars.value }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["planning"] }),
+    onError: (e: Error) => toast.error(`Could not save contribution: ${e.message}`),
   });
   const saveCashflow = useMutation({
     mutationFn: (vars: { field: "income" | "spend"; value: string }) =>
       postJson("/planning/cashflow", vars),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["planning"] }),
+    onError: (e: Error) => toast.error(`Could not save cashflow override: ${e.message}`),
   });
 
   const projAccounts: ProjectionAccount[] = data.accounts.map((a) => ({

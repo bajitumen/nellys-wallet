@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 type Variant = "error" | "warning" | "success" | "info";
@@ -33,12 +33,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     }, variant === "error" ? 6000 : 3500);
   }, []);
 
-  const value: Ctx = {
+  // Memoized so consumers don't re-render every time ToastProvider rerenders
+  // (which happens on every push, since `items` changes).
+  const value = useMemo<Ctx>(() => ({
     error: (m) => push("error", m),
     warning: (m) => push("warning", m),
     success: (m) => push("success", m),
     info: (m) => push("info", m),
-  };
+  }), [push]);
 
   return (
     <ToastContext.Provider value={value}>

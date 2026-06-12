@@ -16,18 +16,17 @@
   border-color: var(--text);
 }
 
+.split-dialog-error {
+  color: var(--negative);
+  font-size: 0.85rem;
+  margin-top: 0.2rem;
+}
+
 button.stacked-bar-segment {
   border: none;
   padding: 0;
   cursor: pointer;
   font: inherit;
-}
-.stacked-bar-segment.active {
-  outline: 2px solid var(--text);
-  outline-offset: -2px;
-}
-.stacked-bar:has(.stacked-bar-segment.active) .stacked-bar-segment:not(.active) {
-  opacity: 0.35;
 }
 
 .toast-stack {

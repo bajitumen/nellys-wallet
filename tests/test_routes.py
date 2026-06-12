@@ -177,6 +177,61 @@ def test_override_dismiss_sets_flag(client, tx1, db_session):
     assert ov.dismissed is True
 
 
+def test_override_rejects_nan_amount(client, tx1):
+    r = client.post("/transactions/tx1/override", json={"amount": float("nan")})
+    assert r.status_code == 400
+
+
+def test_override_rejects_inf_amount(client, tx1):
+    r = client.post("/transactions/tx1/override", json={"amount": float("inf")})
+    assert r.status_code == 400
+
+
+def test_override_rejects_non_numeric_amount(client, tx1):
+    r = client.post("/transactions/tx1/override", json={"amount": "not-a-number"})
+    assert r.status_code == 400
+
+
+def test_override_rejects_split_percentage_zero(client, tx1):
+    r = client.post("/transactions/tx1/override", json={"split_percentage": 0})
+    assert r.status_code == 400
+
+
+def test_override_rejects_split_percentage_over_100(client, tx1):
+    r = client.post("/transactions/tx1/override", json={"split_percentage": 150})
+    assert r.status_code == 400
+
+
+def test_override_rejects_split_percentage_negative(client, tx1):
+    r = client.post("/transactions/tx1/override", json={"split_percentage": -10})
+    assert r.status_code == 400
+
+
+def test_override_rejects_split_percentage_nan(client, tx1):
+    r = client.post("/transactions/tx1/override", json={"split_percentage": float("nan")})
+    assert r.status_code == 400
+
+
+def test_override_rejects_unknown_category(client, tx1):
+    r = client.post("/transactions/tx1/override", json={"category": "TOTALLY_BOGUS"})
+    assert r.status_code == 400
+
+
+def test_override_rejects_detailed_not_in_category(client, tx1, db_session):
+    """A detailed code rooted in a different primary than the active category
+    must be rejected — it would land in an unreconciled subtotal."""
+    import pfc
+    cross = next(
+        d for d in pfc._VALID_DETAILED
+        if pfc.primary_of(d) != "FOOD_AND_DRINK"
+    )
+    r = client.post(
+        "/transactions/tx1/override",
+        json={"category": "FOOD_AND_DRINK", "detailed": cross},
+    )
+    assert r.status_code == 400
+
+
 def test_override_split(client, tx1, db_session):
     """Split override stores amount + split_percentage."""
     r = client.post("/transactions/tx1/override", json={
@@ -216,6 +271,39 @@ def test_csrf_rejects_post_without_token(user_with_item):
         bare = flask_app.test_client()
         r = bare.post("/transactions/tx1/override", json={"category": "TRAVEL"})
         assert r.status_code == 400
+    finally:
+        flask_app.config["WTF_CSRF_ENABLED"] = False
+
+
+@pytest.mark.parametrize("method, path, body", [
+    ("POST",   "/transactions/tx1/override",        {"dismiss": True}),
+    ("POST",   "/rules",                            {"action": "dismiss"}),
+    ("DELETE", "/rules/1",                          None),
+    ("POST",   "/link/token",                       {}),
+    ("POST",   "/link/exchange",                    {"public_token": "x"}),
+    ("POST",   "/api/settings/plaid",               {"plaid_client_id": "c", "plaid_secret": "s"}),
+    ("POST",   "/sync",                             {}),
+    ("POST",   "/planning/rate/acct_x",             {"rate": "1"}),
+    ("POST",   "/planning/contribution/acct_x",     {"value": "1"}),
+    ("POST",   "/planning/cashflow",                {"field": "income", "value": "0"}),
+    ("POST",   "/budget/FOOD_AND_DRINK_COFFEE",     {"amount": "10"}),
+    ("POST",   "/rules/preview",                    {"action": "dismiss"}),
+])
+def test_csrf_required_on_mutating_routes(user_with_item, method, path, body):
+    """Every mutating route must reject a tokenless request. CSRFProtect is
+    global so this is one line of guard for the whole app — but a guard that
+    silently turns off (e.g. someone setting CSRF_EXEMPT_VIEWS) wouldn't be
+    caught by any single-route test."""
+    from app import app as flask_app
+    flask_app.config["TESTING"] = True
+    flask_app.config["WTF_CSRF_ENABLED"] = True
+    try:
+        bare = flask_app.test_client()
+        if method == "DELETE":
+            r = bare.delete(path)
+        else:
+            r = bare.post(path, json=body)
+        assert r.status_code == 400, f"{method} {path} should reject tokenless POST"
     finally:
         flask_app.config["WTF_CSRF_ENABLED"] = False
 

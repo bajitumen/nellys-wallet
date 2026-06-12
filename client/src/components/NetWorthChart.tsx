@@ -279,11 +279,10 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
             className="bar-tooltip visible"
             style={{ left: `${hover.clientX}px`, top: `${hover.clientY}px` }}
           >
-            <strong>{formatUsd(hover.value)}</strong>
-            <br />
             {hoverDate?.toLocaleDateString("en-US", {
               month: "short", day: "numeric", year: "numeric",
             })}
+            : {formatUsd(hover.value)}
           </div>
         </>
       )}

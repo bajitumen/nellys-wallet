@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { Page } from "../components/Page";
 import { EmptyState } from "../components/EmptyState";
@@ -8,6 +8,10 @@ import { KebabMenu, type KebabAction } from "../components/KebabMenu";
 import { StackedBar } from "../components/StackedBar";
 import { SourceFilter } from "../components/SourceFilter";
 import { useToast } from "../components/Toast";
+import { TxFilters, applyTxFilters, type FilterColumn } from "../components/TxFilters";
+import { AnimatedCount, AnimatedUsd } from "../components/AnimatedNumber";
+import { SplitDialog } from "../components/SplitDialog";
+import { scrollToTransactions } from "../lib/scrollToTransactions";
 import { useSorted } from "../lib/useSorted";
 import {
   RuleModal, type ExistingRule, type Primary, type RuleMatchOptions,
@@ -70,6 +74,7 @@ export default function IncomePage() {
       return getJson<IncomeData>(`/api/income${qs ? `?${qs}` : ""}`);
     },
     retry: false,
+    placeholderData: keepPreviousData,
   });
 
   if (q.isLoading) {
@@ -96,24 +101,140 @@ export default function IncomePage() {
   return <IncomeView data={q.data} />;
 }
 
+function PayersBlock({
+  data, payerFilter, togglePayer,
+}: {
+  data: IncomeData;
+  payerFilter: string[];
+  togglePayer: (name: string) => void;
+}) {
+  type PayerSortKey = "name" | "count" | "pct" | "total";
+  const { sorted, headerProps: payerHeader } = useSorted<Payer, PayerSortKey>(
+    data.payers,
+    { key: "total", dir: "desc" },
+    {
+      name: (p) => p.name.toLowerCase(),
+      count: (p) => p.count,
+      pct: (p) => (data.total > 0 ? p.total / data.total : 0),
+      total: (p) => p.total,
+    },
+  );
+  return (
+    <>
+      <div className="chart-card budget-summary-card">
+        <div className="label">Payers</div>
+        <StackedBar
+          ariaLabel="Income by payer"
+          segments={data.payers.map((p) => ({
+            key: p.name,
+            label: p.name,
+            value: p.total,
+            color: p.color,
+            active: payerFilter.includes(p.name),
+          }))}
+          onToggle={togglePayer}
+        />
+      </div>
+      <table className="category-table">
+        <thead>
+          <tr>
+            <th className="cat-dot-col" />
+            <th {...payerHeader("name")}>Payer</th>
+            <th className="num col-hide-mobile" {...payerHeader("count")}>Transactions</th>
+            <th className="num col-hide-mobile" {...payerHeader("pct")}>% of Total</th>
+            <th className="num" {...payerHeader("total")}>Earned</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((p) => {
+            const pct = data.total > 0 ? (p.total / data.total) * 100 : 0;
+            return (
+              <tr
+                key={p.name}
+                className={`category-row${payerFilter.includes(p.name) ? " active" : ""}`}
+                style={{ cursor: "pointer" }}
+                tabIndex={0}
+                role="button"
+                aria-pressed={payerFilter.includes(p.name)}
+                onClick={() => togglePayer(p.name)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    togglePayer(p.name);
+                  }
+                }}
+              >
+                <td className="cat-dot-col">
+                  <span className="subcat-toggle subcat-toggle-empty" aria-hidden="true" />
+                  <span className="cat-dot" style={{ background: p.color }} />
+                </td>
+                <td>{p.name}</td>
+                <td className="num col-hide-mobile muted">{p.count}</td>
+                <td className="num col-hide-mobile muted">{pct.toFixed(0)}%</td>
+                <td className="num">{formatUsd(p.total)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
 function IncomeView({ data }: { data: IncomeData }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [modalTx, setModalTx] = useState<Tx | null>(null);
   const [editingRule, setEditingRule] = useState<ExistingRule | null>(null);
-  const [payerFilter, setPayerFilter] = useState<string[]>([]);
+  const [splitTx, setSplitTx] = useState<Tx | null>(null);
+
+  // Multi-column filter mirroring the original tx-filters.js on the income
+  // page. Payer + Source + Date + Description, all URL-backed; chips render
+  // above the table via TxFilters.
+  const filterColumns: FilterColumn<Tx>[] = [
+    {
+      key: "date", label: "Date", urlParam: "f_date",
+      getValue: (tx) => tx.date,
+      getLabel: (tx) => shortDate(tx.date),
+    },
+    {
+      key: "source", label: "Source", urlParam: "f_source",
+      getValue: (tx) => tx.source,
+    },
+    {
+      key: "payer", label: "Payer", urlParam: "payer",
+      getValue: (tx) => tx.payer,
+    },
+    {
+      key: "description", label: "Description", urlParam: "f_description",
+      getValue: (tx) => tx.name,
+    },
+  ];
+  const payerFilter = searchParams.getAll("payer");
 
   function togglePayer(name: string) {
-    setPayerFilter((prev) =>
-      prev.includes(name) ? prev.filter((p) => p !== name) : [...prev, name],
-    );
+    // replaceFilter semantics: a payer click clears all active chips and
+    // sets just this one (or clears it if it was the only filter).
+    const p = new URLSearchParams(searchParams);
+    const isOnlyActive =
+      p.getAll("payer").length === 1
+      && p.get("payer") === name
+      && filterColumns.every((c) => c.urlParam === "payer" || p.getAll(c.urlParam).length === 0);
+    for (const c of filterColumns) p.delete(c.urlParam);
+    if (!isOnlyActive) p.append("payer", name);
+    setSearchParams(p);
+    scrollToTransactions();
   }
 
-  const filtered = payerFilter.length === 0
-    ? data.transactions
-    : data.transactions.filter((tx) => payerFilter.includes(tx.payer));
+  const filtered = applyTxFilters(data.transactions, filterColumns, searchParams);
+  // Filtered totals so the cards reflect the active chip set instead of
+  // disagreeing with the table below.
+  const filteredTotal = filtered.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const filteredCount = filtered.length;
+  const isFiltered = filterColumns.some((c) => searchParams.getAll(c.urlParam).length > 0);
   type SortKey = "date" | "source" | "payer" | "description" | "amount";
-  const { sorted: visibleTransactions, sort, toggle } = useSorted<Tx, SortKey>(
+  const { sorted: visibleTransactions, headerProps: txHeader } = useSorted<Tx, SortKey>(
     filtered,
     { key: "date", dir: "desc" },
     {
@@ -124,10 +245,6 @@ function IncomeView({ data }: { data: IncomeData }) {
       amount: (tx) => tx.amount,
     },
   );
-  const sortAttrs = (key: SortKey) => ({
-    "data-sort": "true",
-    "data-dir": sort.key === key ? sort.dir : undefined,
-  });
 
   const applyOverride = useMutation({
     mutationFn: (vars: { txId: string; payload: Record<string, unknown> }) =>
@@ -140,6 +257,7 @@ function IncomeView({ data }: { data: IncomeData }) {
     if (id === "dismiss") applyOverride.mutate({ txId: tx.plaid_id, payload: { dismiss: true } });
     else if (id === "restore") applyOverride.mutate({ txId: tx.plaid_id, payload: { dismiss: false } });
     else if (id === "reset") applyOverride.mutate({ txId: tx.plaid_id, payload: { clear: true } });
+    else if (id === "split") setSplitTx(tx);
     else if (id === "set-rule") {
       const existing = tx.rule_id ? data.rules_by_id[String(tx.rule_id)] || null : null;
       setEditingRule(existing);
@@ -166,13 +284,13 @@ function IncomeView({ data }: { data: IncomeData }) {
           currentValue={data.current_month}
         />
         <div className="card">
-          <div className="label">Total Earned</div>
+          <div className="label">{isFiltered ? "Filtered Earned" : "Total Earned"}</div>
           <div className="value">
-            {formatUsd(data.total)}
-            {data.prev_month_change_pct != null && (
+            <AnimatedUsd value={isFiltered ? filteredTotal : data.total} decimals={2} />
+            {!isFiltered && data.prev_month_change_pct != null && (
               <span
                 className={`delta ${
-                  data.prev_month_change_pct > 0 ? "delta-up" : "delta-down"
+                  data.prev_month_change_pct > 0 ? "delta-good" : "delta-bad"
                 }`}
               >
                 {" ("}
@@ -184,92 +302,42 @@ function IncomeView({ data }: { data: IncomeData }) {
         </div>
         <div className="card">
           <div className="label">Transactions</div>
-          <div className="value">{data.count}</div>
+          <div className="value"><AnimatedCount value={isFiltered ? filteredCount : data.count} /></div>
         </div>
         <div className="card">
           <div className="label">Daily Avg</div>
-          <div className="value">{formatUsd(data.daily_avg)}</div>
+          <div className="value"><AnimatedUsd value={data.daily_avg} decimals={2} /></div>
         </div>
       </div>
 
-      {data.payers.length > 0 && (
-        <>
-          <div className="chart-card budget-summary-card">
-            <div className="label">Payers</div>
-            <StackedBar
-              ariaLabel="Income by payer"
-              segments={data.payers.map((p) => ({
-                key: p.name,
-                label: p.name,
-                value: p.total,
-                color: p.color,
-                active: payerFilter.includes(p.name),
-              }))}
-              onToggle={togglePayer}
-            />
-          </div>
-          <table className="category-table">
-            <thead>
-              <tr>
-                <th className="cat-dot-col" />
-                <th>Payer</th>
-                <th className="num col-hide-mobile">Transactions</th>
-                <th className="num col-hide-mobile">% of Total</th>
-                <th className="num">Earned</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.payers.map((p) => {
-                const pct = data.total > 0 ? (p.total / data.total) * 100 : 0;
-                return (
-                  <tr
-                    key={p.name}
-                    className={`category-row${payerFilter.includes(p.name) ? " active" : ""}`}
-                    style={{ cursor: "pointer" }}
-                    onClick={() => togglePayer(p.name)}
-                  >
-                    <td className="cat-dot-col">
-                      <span className="subcat-toggle subcat-toggle-empty" aria-hidden="true" />
-                      <span className="cat-dot" style={{ background: p.color }} />
-                    </td>
-                    <td>{p.name}</td>
-                    <td className="num col-hide-mobile muted">{p.count}</td>
-                    <td className="num col-hide-mobile muted">{pct.toFixed(0)}%</td>
-                    <td className="num">{formatUsd(p.total)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </>
+      {data.total > 0 && (
+        <PayersBlock data={data} payerFilter={payerFilter} togglePayer={togglePayer} />
       )}
 
-      <div className="tx-header" id="transactions">
-        <h2 className="tx-header-title">Transactions</h2>
-      </div>
+      <TxFilters rows={data.transactions} columns={filterColumns} />
 
       {visibleTransactions.length === 0 ? (
         <EmptyState
-          headline={`No income in ${data.month_label}.`}
-          hint="Click Refresh to sync the latest transactions, or pick a different month."
+          headline={
+            filtered.length === 0 && data.transactions.length > 0
+              ? "No transactions match the selected filters."
+              : `No income in ${data.month_label}.`
+          }
+          hint={
+            filtered.length === 0 && data.transactions.length > 0
+              ? "Remove a chip above to broaden the view."
+              : "Click Refresh to sync the latest transactions, or pick a different month."
+          }
         />
       ) : (
         <table className="tx-table">
           <thead>
             <tr>
-              <th {...sortAttrs("date")} onClick={() => toggle("date")}>Date</th>
-              <th {...sortAttrs("source")} onClick={() => toggle("source")}>Source</th>
-              <th {...sortAttrs("payer")} onClick={() => toggle("payer")}>Payer</th>
-              <th
-                className="col-hide-mobile"
-                {...sortAttrs("description")}
-                onClick={() => toggle("description")}
-              >
-                Description
-              </th>
-              <th className="num" {...sortAttrs("amount")} onClick={() => toggle("amount")}>
-                Amount
-              </th>
+              <th {...txHeader("date")}>Date</th>
+              <th {...txHeader("source")}>Source</th>
+              <th {...txHeader("payer")}>Payer</th>
+              <th className="col-hide-mobile" {...txHeader("description")}>Description</th>
+              <th className="num" {...txHeader("amount")}>Amount</th>
               <th />
             </tr>
           </thead>
@@ -282,10 +350,7 @@ function IncomeView({ data }: { data: IncomeData }) {
               >
                 <td className="muted">{shortDate(tx.date)}</td>
                 <td className="muted col-hide-mobile">{tx.source}</td>
-                <td>
-                  <span className="cat-dot" style={{ background: tx.color }} />
-                  {tx.payer}
-                </td>
+                <td>{tx.payer}</td>
                 <td className="muted col-hide-mobile">{tx.name}</td>
                 <td className="num">{formatUsd(tx.amount)}</td>
                 <td className="tx-actions">
@@ -297,6 +362,7 @@ function IncomeView({ data }: { data: IncomeData }) {
                             { id: "set-rule", label: tx.rule_id ? "Edit rule" : "Set rule" },
                           ]
                         : [
+                            { id: "split", label: "Split" },
                             { id: "dismiss", label: "Dismiss" },
                             { id: "set-rule", label: tx.rule_id ? "Edit rule" : "Set rule" },
                             { id: "reset", label: "Reset to original" },
@@ -327,6 +393,20 @@ function IncomeView({ data }: { data: IncomeData }) {
           setModalTx(null);
           setEditingRule(null);
           qc.invalidateQueries({ queryKey: ["income"] });
+        }}
+      />
+
+      <SplitDialog
+        open={splitTx !== null}
+        amount={splitTx?.original_amount ?? 0}
+        onClose={() => setSplitTx(null)}
+        onSave={(amount, split_percentage) => {
+          if (!splitTx) return;
+          applyOverride.mutate({
+            txId: splitTx.plaid_id,
+            payload: { amount, split_percentage },
+          });
+          setSplitTx(null);
         }}
       />
     </Page>

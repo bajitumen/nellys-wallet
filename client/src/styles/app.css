@@ -1133,16 +1133,25 @@
     margin-top: 0;
     margin-bottom: 6px;
   }
-  .filter-menu a {
+  .filter-menu a,
+  .filter-menu button.filter-menu-col,
+  .filter-menu button.filter-menu-val {
     display: flex;
+    width: 100%;
     align-items: center;
     gap: 0.55rem;
     padding: 0.5rem 0.8rem;
     color: var(--text);
     text-decoration: none;
     font-size: 0.9rem;
+    background: transparent;
+    border: none;
+    text-align: left;
+    font: inherit;
   }
-  .filter-menu a:hover { background: var(--bg); }
+  .filter-menu a:hover,
+  .filter-menu button.filter-menu-col:hover,
+  .filter-menu button.filter-menu-val:hover { background: var(--bg); }
   .filter-menu .cat-dot { margin: 0; }
   .filter-menu-col,
   .filter-menu-val { cursor: pointer; }

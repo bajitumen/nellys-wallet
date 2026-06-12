@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { Page } from "../components/Page";
 import { EmptyState } from "../components/EmptyState";
@@ -9,6 +9,10 @@ import { StackedBar } from "../components/StackedBar";
 import { SourceFilter } from "../components/SourceFilter";
 import { IconCaretDown } from "../components/icons";
 import { useToast } from "../components/Toast";
+import { TxFilters, applyTxFilters, type FilterColumn } from "../components/TxFilters";
+import { AnimatedCount, AnimatedUsd } from "../components/AnimatedNumber";
+import { SplitDialog } from "../components/SplitDialog";
+import { scrollToTransactions } from "../lib/scrollToTransactions";
 import { useSorted } from "../lib/useSorted";
 import {
   RuleModal, type ExistingRule, type Primary, type RuleMatchOptions,
@@ -73,16 +77,22 @@ export default function SpendingPage() {
   const cats = searchParams.getAll("category");
 
   const q = useQuery<SpendingData, ApiError>({
-    queryKey: ["spending", month, source, cats],
+    queryKey: ["spending", month, source],
     queryFn: () => {
       const p = new URLSearchParams();
       if (month) p.set("month", month);
       if (source) p.set("source", source);
+      // Note: ?category=... is still sent so the server can echo back
+      // categories_filter (used for the breakdown highlight), but the row
+      // filter is applied client-side. Including cats in the queryKey would
+      // refetch the full month's data on every chip click for no payload
+      // difference.
       cats.forEach((c) => p.append("category", c));
       const qs = p.toString();
       return getJson<SpendingData>(`/api/spending${qs ? `?${qs}` : ""}`);
     },
     retry: false,
+    placeholderData: keepPreviousData,
   });
 
   if (q.isLoading) {
@@ -110,10 +120,11 @@ export default function SpendingPage() {
 }
 
 function CategoryTable({
-  data, toggleCategoryFilter,
+  data, toggleCategoryFilter, toggleItemFilter,
 }: {
   data: SpendingData;
   toggleCategoryFilter: (code: string) => void;
+  toggleItemFilter: (code: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   function toggleExpand(code: string) {
@@ -125,40 +136,63 @@ function CategoryTable({
     });
   }
   const showBudget = !data.current_source;
+
+  type CatSortKey = "name" | "count" | "pct" | "budget" | "total" | "diff";
+  const { sorted: sortedCategories, headerProps: catHeader } = useSorted<Category, CatSortKey>(
+    data.categories,
+    { key: "total", dir: "desc" },
+    {
+      name: (c) => c.name.toLowerCase(),
+      count: (c) => c.count,
+      pct: (c) => (data.total > 0 ? c.total / data.total : 0),
+      budget: (c) => c.budget,
+      total: (c) => c.total,
+      diff: (c) => c.budget - c.total,
+    },
+  );
+
   return (
     <table className="category-table">
       <thead>
         <tr>
           <th />
-          <th>Category</th>
-          <th className="num col-hide-mobile">Transactions</th>
-          <th className="num col-hide-mobile">% of Total</th>
-          {showBudget && <th className="num col-hide-mobile">Budget</th>}
-          <th className="num">Spent</th>
-          {showBudget && <th className="num col-hide-mobile">Difference</th>}
+          <th {...catHeader("name")}>Category</th>
+          <th className="num col-hide-mobile" {...catHeader("count")}>Transactions</th>
+          <th className="num col-hide-mobile" {...catHeader("pct")}>% of Total</th>
+          {showBudget && (
+            <th className="num col-hide-mobile" {...catHeader("budget")}>Budget</th>
+          )}
+          <th className="num" {...catHeader("total")}>Spent</th>
+          {showBudget && (
+            <th className="num col-hide-mobile" {...catHeader("diff")}>Difference</th>
+          )}
         </tr>
       </thead>
       <tbody>
-        {data.categories.map((c) => {
+        {sortedCategories.map((c) => {
           const pct = data.total > 0 ? (c.total / data.total) * 100 : 0;
           const diff = c.budget - c.total;
           const overspent = c.budget > 0 && diff < 0;
           const active = data.categories_filter.includes(c.code);
-          const hasSubitems = c.subitems.some((s) => s.total > 0 || s.budget > 0);
+          const hasSubitems = c.subitems.length > 0;
           const isExpanded = expanded.has(c.code);
           return (
             <Fragment key={c.code}>
               <tr
                 className={`category-row${active ? " active" : ""}`}
                 style={{ cursor: "pointer" }}
+                tabIndex={0}
+                role="button"
+                aria-pressed={active}
+                onClick={() => toggleCategoryFilter(c.code)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleCategoryFilter(c.code);
+                  }
+                }}
               >
-                <td
-                  className="cat-dot-col"
-                  onClick={() => {
-                    if (hasSubitems) toggleExpand(c.code);
-                    else toggleCategoryFilter(c.code);
-                  }}
-                >
+                <td className="cat-dot-col">
                   {hasSubitems ? (
                     <button
                       type="button"
@@ -177,7 +211,7 @@ function CategoryTable({
                   )}
                   <span className="cat-dot" style={{ background: c.color }} />
                 </td>
-                <td onClick={() => toggleCategoryFilter(c.code)}>{c.name}</td>
+                <td>{c.name}</td>
                 <td className="num col-hide-mobile muted">{c.count}</td>
                 <td className="num col-hide-mobile muted">{pct.toFixed(0)}%</td>
                 {showBudget && (
@@ -185,9 +219,7 @@ function CategoryTable({
                     {c.budget > 0 ? formatUsd(c.budget) : "—"}
                   </td>
                 )}
-                <td className="num" onClick={() => toggleCategoryFilter(c.code)}>
-                  {formatUsd(c.total)}
-                </td>
+                <td className="num">{formatUsd(c.total)}</td>
                 {showBudget && (
                   <td
                     className={`num col-hide-mobile${
@@ -201,13 +233,24 @@ function CategoryTable({
                 )}
               </tr>
               {isExpanded &&
-                c.subitems
-                  .filter((s) => s.total > 0 || s.budget > 0)
-                  .map((s) => {
+                c.subitems.map((s) => {
                     const subPct = data.total > 0 ? (s.total / data.total) * 100 : 0;
                     const subDiff = s.budget - s.total;
                     return (
-                      <tr key={s.code} className="subcategory-row">
+                      <tr
+                        key={s.code}
+                        className="subcategory-row"
+                        style={{ cursor: "pointer" }}
+                        tabIndex={0}
+                        role="button"
+                        onClick={() => toggleItemFilter(s.code)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            toggleItemFilter(s.code);
+                          }
+                        }}
+                      >
                         <td />
                         <td className="subcat-label">{s.name}</td>
                         <td className="num col-hide-mobile muted">{s.count}</td>
@@ -217,7 +260,7 @@ function CategoryTable({
                             {s.budget > 0 ? formatUsd(s.budget) : "—"}
                           </td>
                         )}
-                        <td className="num">{s.total > 0 ? formatUsd(s.total) : ""}</td>
+                        <td className="num">{formatUsd(s.total)}</td>
                         {showBudget && (
                           <td className="num col-hide-mobile muted">
                             {s.budget > 0 ? formatUsd(subDiff) : "—"}
@@ -240,10 +283,48 @@ function SpendingView({ data }: { data: SpendingData }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [modalTx, setModalTx] = useState<Tx | null>(null);
   const [editingRule, setEditingRule] = useState<ExistingRule | null>(null);
+  const [splitTx, setSplitTx] = useState<Tx | null>(null);
+
+  // Multi-column filter (matches the original tx-filters.js). category/source/
+  // item/date all flow through URL params; chips render via TxFilters above
+  // the table; category_filter mirrors `?category=` for the chart highlight.
+  const filterColumns: FilterColumn<Tx>[] = [
+    {
+      key: "date", label: "Date", urlParam: "f_date",
+      getValue: (tx) => tx.date,
+      getLabel: (tx) => shortDate(tx.date),
+    },
+    {
+      key: "source", label: "Source", urlParam: "f_source",
+      getValue: (tx) => tx.source,
+    },
+    {
+      key: "category", label: "Category", urlParam: "category",
+      getValue: (tx) => tx.category_raw,
+      getLabel: (tx) => tx.category,
+    },
+    {
+      key: "item", label: "Item", urlParam: "f_item",
+      getValue: (tx) => tx.detailed_raw || "",
+      getLabel: (tx) => tx.detailed_label || "(none)",
+    },
+  ];
+  const filteredTransactions = applyTxFilters(data.transactions, filterColumns, searchParams);
+  // Derive the active category set from the URL so the highlight tracks chip
+  // changes without needing the server to re-echo categories_filter (which
+  // would require a refetch).
+  const activeCategoryCodes = searchParams.getAll("category");
+  const dataWithLiveFilter = { ...data, categories_filter: activeCategoryCodes };
+  // Filtered totals so the summary cards reflect the active chip set instead
+  // of disagreeing with the table below.
+  const filteredTotal = filteredTransactions.reduce((s, tx) => s + tx.amount, 0);
+  const filteredCount = filteredTransactions.length;
+  const isFiltered = activeCategoryCodes.length > 0
+    || filterColumns.some((c) => c.urlParam !== "category" && searchParams.getAll(c.urlParam).length > 0);
 
   type SortKey = "date" | "source" | "name" | "category" | "item" | "amount";
-  const { sorted: sortedTransactions, sort, toggle } = useSorted<Tx, SortKey>(
-    data.transactions,
+  const { sorted: sortedTransactions, headerProps: txHeader } = useSorted<Tx, SortKey>(
+    filteredTransactions,
     { key: "date", dir: "desc" },
     {
       date: (tx) => tx.date,
@@ -254,21 +335,27 @@ function SpendingView({ data }: { data: SpendingData }) {
       amount: (tx) => tx.amount,
     },
   );
-  const sortAttrs = (key: SortKey) => ({
-    "data-sort": "true",
-    "data-dir": sort.key === key ? sort.dir : undefined,
-  });
 
-  function toggleCategoryFilter(code: string) {
+  function replaceFilter(urlParam: string, value: string) {
+    // Original replaceFilter semantics: clicking a category row, subcategory
+    // row, or breakdown segment clears every active filter and sets just this
+    // one. Clicking the same value again clears it. Add-without-clearing is
+    // the job of the + button in TxFilters.
     const p = new URLSearchParams(searchParams);
-    const current = p.getAll("category");
-    p.delete("category");
-    if (current.includes(code)) {
-      current.filter((c) => c !== code).forEach((c) => p.append("category", c));
-    } else {
-      [...current, code].forEach((c) => p.append("category", c));
-    }
+    const isOnlyActive =
+      p.getAll(urlParam).length === 1
+      && p.get(urlParam) === value
+      && filterColumns.every((c) => c.urlParam === urlParam || p.getAll(c.urlParam).length === 0);
+    for (const c of filterColumns) p.delete(c.urlParam);
+    if (!isOnlyActive) p.append(urlParam, value);
     setSearchParams(p);
+    scrollToTransactions();
+  }
+  function toggleCategoryFilter(code: string) {
+    replaceFilter("category", code);
+  }
+  function toggleItemFilter(code: string) {
+    replaceFilter("f_item", code);
   }
 
   const applyOverride = useMutation({
@@ -282,6 +369,7 @@ function SpendingView({ data }: { data: SpendingData }) {
     if (id === "dismiss") applyOverride.mutate({ txId: tx.plaid_id, payload: { dismiss: true } });
     else if (id === "restore") applyOverride.mutate({ txId: tx.plaid_id, payload: { dismiss: false } });
     else if (id === "reset") applyOverride.mutate({ txId: tx.plaid_id, payload: { clear: true } });
+    else if (id === "split") setSplitTx(tx);
     else if (id === "set-rule") {
       const existing = tx.rule_id ? data.rules_by_id[String(tx.rule_id)] || null : null;
       setEditingRule(existing);
@@ -308,10 +396,10 @@ function SpendingView({ data }: { data: SpendingData }) {
           currentValue={data.current_month}
         />
         <div className="card">
-          <div className="label">Total Spent</div>
+          <div className="label">{isFiltered ? "Filtered Spent" : "Total Spent"}</div>
           <div className="value">
-            {formatUsd(data.total)}
-            {data.prev_month_change_pct != null && (
+            <AnimatedUsd value={isFiltered ? filteredTotal : data.total} decimals={2} />
+            {!isFiltered && data.prev_month_change_pct != null && (
               <span
                 className={`delta ${
                   data.prev_month_change_pct > 0 ? "delta-up" : "delta-down"
@@ -326,71 +414,66 @@ function SpendingView({ data }: { data: SpendingData }) {
         </div>
         <div className="card">
           <div className="label">Transactions</div>
-          <div className="value">{data.count}</div>
+          <div className="value"><AnimatedCount value={isFiltered ? filteredCount : data.count} /></div>
         </div>
         <div className="card">
           <div className="label">Daily Avg</div>
-          <div className="value">{formatUsd(data.daily_avg)}</div>
+          <div className="value"><AnimatedUsd value={data.daily_avg} decimals={2} /></div>
         </div>
       </div>
 
-      {data.categories.length > 0 && (
+      {data.total > 0 && (
         <div className="chart-card budget-summary-card">
           <div className="label">Breakdown</div>
           <StackedBar
             ariaLabel="Spending by category"
-            segments={data.categories.map((c) => ({
-              key: c.code,
-              label: c.name,
-              value: c.total,
-              color: c.color,
-              active: data.categories_filter.includes(c.code),
-            }))}
+            segments={data.categories
+              .filter((c) => c.total > 0)
+              .map((c) => ({
+                key: c.code,
+                label: c.name,
+                value: c.total,
+                color: c.color,
+                active: activeCategoryCodes.includes(c.code),
+              }))}
             onToggle={toggleCategoryFilter}
           />
         </div>
       )}
 
-      {data.categories.length > 0 && (
+      {data.total > 0 && (
         <CategoryTable
-          data={data}
+          data={dataWithLiveFilter}
           toggleCategoryFilter={toggleCategoryFilter}
+          toggleItemFilter={toggleItemFilter}
         />
       )}
 
-      <div className="tx-header" id="transactions">
-        <h2 className="tx-header-title">Transactions</h2>
-      </div>
+      <TxFilters rows={data.transactions} columns={filterColumns} />
 
-      {data.transactions.length === 0 ? (
+      {filteredTransactions.length === 0 ? (
         <EmptyState
-          headline={`No spending in ${data.month_label}.`}
-          hint="Click Refresh to sync the latest transactions, or pick a different month."
+          headline={
+            data.transactions.length === 0
+              ? `No spending in ${data.month_label}.`
+              : "No transactions match the active filters."
+          }
+          hint={
+            data.transactions.length === 0
+              ? "Try a different month from the dropdown above, or your linked accounts may still be preparing recent transactions."
+              : "Remove a chip above to broaden the view."
+          }
         />
       ) : (
         <table className="tx-table">
           <thead>
             <tr>
-              <th {...sortAttrs("date")} onClick={() => toggle("date")}>Date</th>
-              <th {...sortAttrs("source")} onClick={() => toggle("source")}>Source</th>
-              <th {...sortAttrs("name")} onClick={() => toggle("name")}>Description</th>
-              <th
-                className="col-hide-mobile"
-                {...sortAttrs("category")}
-                onClick={() => toggle("category")}
-              >
-                Category
-              </th>
-              <th
-                className="col-hide-mobile"
-                {...sortAttrs("item")}
-                onClick={() => toggle("item")}
-              >
-                Item
-              </th>
-              <th className="num" {...sortAttrs("amount")} onClick={() => toggle("amount")}>
-                Amount
-              </th>
+              <th {...txHeader("date")}>Date</th>
+              <th {...txHeader("source")}>Source</th>
+              <th {...txHeader("name")}>Description</th>
+              <th className="col-hide-mobile" {...txHeader("category")}>Category</th>
+              <th className="col-hide-mobile" {...txHeader("item")}>Item</th>
+              <th className="num" {...txHeader("amount")}>Amount</th>
               <th />
             </tr>
           </thead>
@@ -445,6 +528,7 @@ function SpendingView({ data }: { data: SpendingData }) {
                             { id: "set-rule", label: tx.rule_id ? "Edit rule" : "Set rule" },
                           ]
                         : [
+                            { id: "split", label: "Split" },
                             { id: "dismiss", label: "Dismiss" },
                             { id: "set-rule", label: tx.rule_id ? "Edit rule" : "Set rule" },
                             { id: "reset", label: "Reset to original" },
@@ -475,6 +559,20 @@ function SpendingView({ data }: { data: SpendingData }) {
           setModalTx(null);
           setEditingRule(null);
           qc.invalidateQueries({ queryKey: ["spending"] });
+        }}
+      />
+
+      <SplitDialog
+        open={splitTx !== null}
+        amount={splitTx?.original_amount ?? 0}
+        onClose={() => setSplitTx(null)}
+        onSave={(amount, split_percentage) => {
+          if (!splitTx) return;
+          applyOverride.mutate({
+            txId: splitTx.plaid_id,
+            payload: { amount, split_percentage },
+          });
+          setSplitTx(null);
         }}
       />
     </Page>

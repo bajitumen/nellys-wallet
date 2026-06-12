@@ -32,5 +32,26 @@ export function useSorted<T, K extends string>(
         : { key, dir: "desc" },
     );
   }
-  return { sorted, sort, toggle };
+
+  // Spread on every sortable <th>. data-sort/data-dir drive the existing CSS
+  // arrows; aria-sort + tabIndex + Enter/Space handler give keyboard users
+  // the same affordance.
+  function headerProps(key: K) {
+    const active = sort.key === key;
+    return {
+      "data-sort": "true" as const,
+      "data-dir": active ? sort.dir : undefined,
+      "aria-sort": (active ? (sort.dir === "asc" ? "ascending" : "descending") : "none") as
+        "ascending" | "descending" | "none",
+      tabIndex: 0,
+      onClick: () => toggle(key),
+      onKeyDown: (e: React.KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggle(key);
+        }
+      },
+    };
+  }
+  return { sorted, sort, toggle, headerProps };
 }

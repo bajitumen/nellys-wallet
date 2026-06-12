@@ -27,6 +27,13 @@ services:
       - key: FLASK_SECRET_KEY
         sync: false
       # Clerk auth.
+      # VITE_CLERK_PUBLISHABLE_KEY is the same value as CLERK_PUBLISHABLE_KEY,
+      # exposed under the VITE_ prefix so Vite inlines it at build time. Render
+      # passes env vars matching a Dockerfile ARG as --build-arg, so this needs
+      # to be set in the dashboard for the production SPA bundle to embed the
+      # Clerk publishable key (non-secret).
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false
       - key: CLERK_PUBLISHABLE_KEY
         sync: false
       - key: CLERK_SECRET_KEY

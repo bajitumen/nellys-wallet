@@ -12,9 +12,13 @@ from sqlalchemy import func
 import budget as budget_mod
 import pfc
 import rules as rules_mod
+import transfers as transfers_mod
 from cache import KeyedCache
 from models import Transaction, TransactionOverride, User
 from providers import plaid_client_for
+
+# income.py imports from spending at module load — keep `import income` local
+# in functions below to break the cycle.
 
 log = logging.getLogger(__name__)
 
@@ -248,7 +252,6 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
     rules_mod.apply_rules_to_new_transactions(user.id, new_inserts, session)
 
     # Flag new internal-transfer pairs so the spending/income filters drop them.
-    import transfers as transfers_mod
     transfers_mod.pair_internal_transfers(user.id, session)
 
     user.last_transactions_sync = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -399,13 +402,14 @@ def _fetch_last_month_uncached(
         if primary:
             primary_budgets[primary] += amount
 
-    # Without a source filter, include un-spent primaries so the budget column has rows.
-    # Income-side primaries (INCOME / TRANSFER_IN) never belong on the spending table.
-    category_keys = {k for k in totals.keys() if pfc.is_spend_category(k)}
-    if source is None:
-        category_keys.update(
-            p for p in pfc.PFC_TAXONOMY.keys() if pfc.is_spend_category(p)
-        )
+    # Always include every spend-side primary so the table renders a row per
+    # category at $0 even when nothing landed in it for this month/source.
+    # Income-side primaries (INCOME / TRANSFER_IN) never belong on the
+    # spending table.
+    category_keys = {
+        p for p in pfc.PFC_TAXONOMY.keys() if pfc.is_spend_category(p)
+    }
+    category_keys.update(k for k in totals.keys() if pfc.is_spend_category(k))
 
     def _subitems_for(primary: str) -> list[dict]:
         items = [
@@ -485,6 +489,7 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
 
     spend_by_month: dict[tuple[int, int], float] = defaultdict(float)
     income_by_month: dict[tuple[int, int], float] = defaultdict(float)
+    import income as _income_mod
     for tx in tx_rows:
         if tx.is_internal_transfer:
             continue
@@ -492,15 +497,21 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
         if ov and ov.dismissed:
             continue
         key = (tx.date.year, tx.date.month)
-        if tx.amount > 0:
+        # Route by the resolved category (override > raw primary), not by raw
+        # sign + raw pfc_primary. A set_category override moving a tx across
+        # the income/spend boundary previously misbucketed (or dropped) it.
+        resolved_category = (
+            (ov.category_override if ov and ov.category_override else None)
+            or tx.pfc_primary
+        )
+        if pfc.is_strict_income(resolved_category):
+            income_by_month[key] += _income_mod.income_amount_with_override(tx.amount, ov)
+        elif pfc.is_spend_category(resolved_category):
             applied = _apply_spend_override(tx, ov)
             if applied is None:
                 continue
             _, amount, _, _, _ = applied
             spend_by_month[key] += amount
-        elif tx.amount < 0 and pfc.is_strict_income(tx.pfc_primary):
-            import income as _income_mod
-            income_by_month[key] += _income_mod.income_amount_with_override(tx.amount, ov)
 
     out = []
     y, m = start.year, start.month

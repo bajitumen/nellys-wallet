@@ -1,4 +1,19 @@
-from models import AccountRate, User
+from models import AccountBalanceSnapshot, AccountRate, User
+
+
+def user_owns_account(user: User, plaid_account_id: str, session) -> bool:
+    """True iff the user has ever snapshot-recorded this account.
+
+    Without this check the /planning rate/contribution endpoints would write
+    an AccountRate row for any string in the URL — scoped to user.id, so not
+    a cross-tenant leak, but a DB-growth surface and inconsistent with the
+    ownership guard on /transactions/<id>/override.
+    """
+    return session.query(
+        session.query(AccountBalanceSnapshot)
+        .filter_by(user_id=user.id, plaid_account_id=plaid_account_id)
+        .exists()
+    ).scalar()
 
 
 def _row(user: User, plaid_account_id: str, session) -> AccountRate | None:

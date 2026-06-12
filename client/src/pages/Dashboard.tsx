@@ -4,6 +4,7 @@ import { EmptyState } from "../components/EmptyState";
 import { InstAvatar } from "../components/InstAvatar";
 import { NetWorthChart, type SeriesPoint, type SeriesOption } from "../components/NetWorthChart";
 import { CashflowChart, type MonthRow } from "../components/CashflowChart";
+import { AnimatedUsd } from "../components/AnimatedNumber";
 import { ApiError, getJson } from "../lib/api";
 
 type Account = {
@@ -87,19 +88,19 @@ function OverviewView({ data }: { data: OverviewData }) {
       <div className="totals" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
         <div className="card net">
           <div className="label">Net Worth</div>
-          <div className="value">{formatUsd(data.net_total)}</div>
+          <div className="value"><AnimatedUsd value={data.net_total} decimals={2} /></div>
         </div>
         <div className="card">
           <div className="label">Cash</div>
-          <div className="value">{formatUsd(data.cash_total)}</div>
+          <div className="value"><AnimatedUsd value={data.cash_total} decimals={2} /></div>
         </div>
         <div className="card">
           <div className="label">Investments</div>
-          <div className="value">{formatUsd(data.investment_total)}</div>
+          <div className="value"><AnimatedUsd value={data.investment_total} decimals={2} /></div>
         </div>
         <div className="card credit">
           <div className="label">Credit Owed</div>
-          <div className="value">{formatUsd(data.credit_total)}</div>
+          <div className="value"><AnimatedUsd value={data.credit_total} decimals={2} /></div>
         </div>
       </div>
 

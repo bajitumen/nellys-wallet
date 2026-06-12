@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 from datetime import date, datetime, timedelta, timezone
 from functools import wraps
@@ -6,7 +7,7 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, request, send_from_directory
 from flask_wtf.csrf import CSRFProtect, generate_csrf
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 import auth
 import budget as budget_mod
@@ -20,12 +21,12 @@ import providers
 import rules as rules_mod
 import spending as spending_mod
 from db import SessionLocal
+from models import Transaction, TransactionOverride, User
 
 # Schema init lives in `python code/cli.py init-db`, called from
 # entrypoint.sh before gunicorn boots. Running it at import time raced
 # under multi-worker boot — two workers could run conflicting in-place
 # ALTERs against the same SQLite file.
-from models import TransactionOverride, User
 
 log = logging.getLogger(__name__)
 
@@ -38,8 +39,11 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     # Secure cookies require HTTPS; dev server is HTTP.
-    SESSION_COOKIE_SECURE=config.FLASK_ENV != "development",
-    WTF_CSRF_TIME_LIMIT=None,
+    SESSION_COOKIE_SECURE=not config.IS_DEVELOPMENT,
+    # The Clerk __session cookie's SameSite/Secure flags are out of our
+    # control, so the CSRF token IS our cross-site defense. Cap it at one
+    # hour; the client retries once on 403 with a fresh token (api.ts).
+    WTF_CSRF_TIME_LIMIT=3600,
 )
 
 csrf = CSRFProtect(app)
@@ -51,6 +55,28 @@ _SECURITY_HEADERS = {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
 }
+
+# Baseline CSP. 'unsafe-inline' on style/script is required for Clerk's SDK
+# injection + the theme bootstrap in index.html; tightening to nonces is a
+# larger refactor. The connect/frame allowlists cover Clerk and Plaid Link.
+_CSP = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://*.clerk.com https://*.plaid.com https://cdn.plaid.com",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://*.plaid.com",
+    "frame-src https://*.clerk.accounts.dev https://*.clerk.com https://*.plaid.com https://cdn.plaid.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+])
+
+if not config.IS_DEVELOPMENT:
+    # 1 year, include subdomains. Only meaningful over HTTPS; dev server is HTTP.
+    _SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+_SECURITY_HEADERS["Content-Security-Policy"] = _CSP
 
 
 def current_user(session):
@@ -167,9 +193,6 @@ def link_exchange(session, user):
 @app.route("/transactions/<tx_id>/override", methods=["POST"])
 @with_user
 def transaction_override(session, user, tx_id):
-    import math
-    from models import Transaction
-
     data = request.get_json(silent=True) or {}
     if user is None:
         return jsonify({"error": "No user"}), 400
@@ -473,6 +496,8 @@ def rules_delete(session, user, rule_id):
 def planning_rate_save(session, user, account_id):
     if user is None:
         return jsonify({"error": "No user"}), 400
+    if not planning_mod.user_owns_account(user, account_id, session):
+        return jsonify({"error": "Account not found"}), 404
     data = request.get_json(silent=True) or {}
     rate = data.get("rate")
     if rate in (None, ""):
@@ -491,6 +516,8 @@ def planning_rate_save(session, user, account_id):
 def planning_contribution_save(session, user, account_id):
     if user is None:
         return jsonify({"error": "No user"}), 400
+    if not planning_mod.user_owns_account(user, account_id, session):
+        return jsonify({"error": "Account not found"}), 404
     data = request.get_json(silent=True) or {}
     value = data.get("value")
     if value in (None, ""):
@@ -600,6 +627,10 @@ def api_plaid_status(session, user):
 
 @app.route("/api/settings/plaid", methods=["POST"])
 def api_plaid_save():
+    # Hand-rolled auth instead of @with_user on purpose: @with_user 409s any
+    # request from a user without Plaid creds, but THIS endpoint is precisely
+    # how the user supplies those creds for the first time. Keep the manual
+    # 401 branch in sync with with_user above when changing auth behavior.
     with SessionLocal() as session:
         user = current_user(session)
         if user is None and auth.clerk_enabled():
@@ -641,7 +672,6 @@ def api_csrf_token():
 
 @app.route("/healthz")
 def healthz():
-    from sqlalchemy import text
     try:
         with SessionLocal() as session:
             session.execute(text("SELECT 1")).scalar()

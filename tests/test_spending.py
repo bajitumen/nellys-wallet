@@ -104,8 +104,10 @@ def test_all_tab_includes_unspent_primaries(user_with_item, db_session):
     assert travel["count"] == 0
 
 
-def test_source_filter_omits_unspent_categories(db_session):
-    """With a source filter, only categories with spending in that source appear."""
+def test_source_filter_includes_unspent_categories(db_session):
+    """The category table renders a row per spend-side primary regardless of
+    source filter — unspent categories show as $0. The sourced one is in there
+    with a non-zero total."""
     from models import PlaidItem, User
     from spending import fetch_last_month
     u = User(clerk_user_id="x", email="x@x")
@@ -118,8 +120,10 @@ def test_source_filter_omits_unspent_categories(db_session):
     db_session.flush()
     _seed_tx(db_session, chase, "tx1", 10.0, "FOOD_AND_DRINK")
     out = fetch_last_month(u, source="Chase", session=db_session)
-    names = {c["name"] for c in out["categories"]}
-    assert names == {"Food and Drink"}
+    by_name = {c["name"]: c["total"] for c in out["categories"]}
+    assert by_name["Food and Drink"] == 10.0
+    assert by_name.get("Travel") == 0.0
+    assert by_name.get("Medical") == 0.0
 
 
 def test_category_carries_per_primary_budget(user_with_item, db_session):

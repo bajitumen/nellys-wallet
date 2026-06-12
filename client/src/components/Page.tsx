@@ -11,10 +11,21 @@ import { useSidebar } from "../lib/sidebarContext";
 
 type Props = {
   heading: ReactNode;
+  title?: string;
   children: ReactNode;
 };
 
-export function Page({ heading, children }: Props) {
+function reactNodeToText(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(reactNodeToText).join("");
+  if (typeof node === "object" && "props" in node) {
+    return reactNodeToText((node as { props: { children?: ReactNode } }).props.children);
+  }
+  return "";
+}
+
+export function Page({ heading, title, children }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const clerkEnabled = useClerkEnabled();
@@ -36,8 +47,9 @@ export function Page({ heading, children }: Props) {
   });
 
   useEffect(() => {
-    if (typeof heading === "string") document.title = `${heading} · Nelly's Wallet`;
-  }, [heading]);
+    const t = title ?? reactNodeToText(heading);
+    if (t) document.title = t;
+  }, [heading, title]);
 
   return (
     <>
