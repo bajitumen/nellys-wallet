@@ -923,6 +923,7 @@
     pointer-events: none;
     z-index: 100;
   }
+  .networth-chart.trend-down .networth-dot { border-color: var(--negative); }
   .networth-waiting { color: var(--text-muted); font-size: 0.92rem; margin-top: 0.4rem; }
   .networth-heading {
     display: flex;

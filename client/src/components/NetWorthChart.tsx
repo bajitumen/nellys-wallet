@@ -99,8 +99,12 @@ function buildChart(
     value: pathYs[i],
   }));
 
+  // Use the leftmost rendered value (which is 0 when the range starts before
+  // any real snapshot — the "synthetic prefix") so the trend matches what the
+  // user actually sees on the graph. lastValue is still the latest real
+  // snapshot — that's what the headline displays.
   const realValues = series.map((s) => s.value);
-  const firstValue = realValues[0];
+  const firstValue = pathYs[0];
   const lastValue = realValues[realValues.length - 1];
   return { linePath, areaPath, rendered, firstValue, lastValue };
 }

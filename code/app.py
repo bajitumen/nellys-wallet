@@ -1001,6 +1001,14 @@ def _serve_spa_shell():
 @app.route("/", methods=["GET"])
 @app.route("/<path:_path>", methods=["GET"])
 def spa_catch_all(_path: str = ""):
+    # Root-level files Vite ships in dist/ (favicon.svg, manifest.json, etc.)
+    # need to be served as their real bytes — falling through to index.html
+    # delivers HTML when the browser asked for an icon and breaks the favicon.
+    # Only consider single-segment paths so the path can't escape dist/.
+    if _path and "/" not in _path:
+        candidate = _CLIENT_DIST / _path
+        if candidate.is_file():
+            return send_from_directory(_CLIENT_DIST, _path)
     return _serve_spa_shell()
 
 
