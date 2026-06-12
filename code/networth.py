@@ -95,7 +95,11 @@ def build_series_data(snapshots, account_snaps) -> dict:
     by_inst: dict = defaultdict(lambda: defaultdict(float))
     by_acct: dict = defaultdict(lambda: {})
     for s in account_snaps:
-        if s.bucket == "credit":
+        # Mirror the snapshot's net definition (cash + investments - credit):
+        # the "other" bucket isn't counted in headline net worth, so per-
+        # institution series mustn't include it either or the stacked series
+        # won't sum to the net line.
+        if s.bucket in ("credit", "other"):
             continue
         d = s.taken_at.date()
         inst = s.institution_name or "Unknown"
@@ -192,13 +196,14 @@ def build_chart(
     has_synthetic_prefix = (
         range_start_ts is not None and xs[0] > range_start_ts
     )
+    baseline = 0.0 if has_synthetic_prefix else ys[0]
     return {
         "width": width,
         "height": height,
         "line_path": line_path,
         "area_path": area_path,
-        "trend": "down" if ys[-1] < 0 else "up",
-        "first_value": 0.0 if has_synthetic_prefix else ys[0],
+        "trend": "down" if ys[-1] < baseline else "up",
+        "first_value": baseline,
         "last_value": ys[-1],
         "points": point_data,
     }

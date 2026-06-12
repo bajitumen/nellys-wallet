@@ -21,6 +21,8 @@ os.environ["CLERK_PUBLISHABLE_KEY"] = ""
 os.environ["CLERK_SECRET_KEY"] = ""
 os.environ["CLERK_JWT_PUBLIC_KEY"] = ""
 os.environ["CLERK_FRONTEND_API"] = ""
+# The Clerk-disabled fallback now refuses to serve unless this is set.
+os.environ["ALLOW_INSECURE_NO_AUTH"] = "1"
 _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp.name}"

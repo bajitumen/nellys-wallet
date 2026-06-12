@@ -1,0 +1,43 @@
+# Keep the build context lean: skip host node_modules (npm ci rebuilds them
+# in the client stage), any stale local dist (Docker stage produces a fresh
+# one), the .git history, local SQLite DBs, secrets, IDE state, and pytest
+# / mypy caches. Otherwise the 88MB+ host modules dir lands in every COPY,
+# busts the Docker cache, and risks a stale dist shadowing the fresh build.
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+
+client/dist
+client/.vite
+client/*.tsbuildinfo
+
+.git
+.gitignore
+.github
+
+instance/*.db
+instance/*.db-*
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+.env
+.env.local
+client/.env.local
+permissions.env
+
+.DS_Store
+.idea
+.vscode
+*.swp
+*.log
+
+# Tests + dev-only configs don't need to be in the image.
+tests/
+docs/
+*.md

@@ -51,6 +51,9 @@ class KeyedCache:
             for k in list(self._entries.keys()):
                 if k and k[0] == user_id:
                     self._entries.pop(k, None)
+            for k in list(self._keylocks.keys()):
+                if k and k[0] == user_id:
+                    self._keylocks.pop(k, None)
 
     def clear(self) -> None:
         with self._lock:

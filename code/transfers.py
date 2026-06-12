@@ -15,6 +15,20 @@ from models import Transaction
 
 DEFAULT_WINDOW_DAYS = 3
 
+# Plaid PFC detailed codes that mean "between my own accounts" rather than
+# "in/out from a third party". Restricting pairing to these prevents false
+# positives like a real Zelle-out coincidentally matching a $X external deposit.
+INTERNAL_OUT_DETAILED = frozenset({
+    "TRANSFER_OUT_ACCOUNT_TRANSFER",
+    "TRANSFER_OUT_SAVINGS",
+    "TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS",
+})
+INTERNAL_IN_DETAILED = frozenset({
+    "TRANSFER_IN_ACCOUNT_TRANSFER",
+    "TRANSFER_IN_SAVINGS",
+    "TRANSFER_IN_INVESTMENT_AND_RETIREMENT_FUNDS",
+})
+
 
 def _amt_key(tx: Transaction) -> float:
     return round(abs(tx.amount or 0), 2)
@@ -23,28 +37,52 @@ def _amt_key(tx: Transaction) -> float:
 def pair_internal_transfers(
     user_id: int, session, window_days: int = DEFAULT_WINDOW_DAYS,
 ) -> int:
-    """Flag unpaired TRANSFER_OUT/TRANSFER_IN pairs as internal transfers.
+    """Flag TRANSFER_OUT/TRANSFER_IN pairs as internal transfers.
 
-    Greedy match by (|amount|, date proximity). Each tx is matched at most once.
+    Greedy match by (|amount|, date proximity), restricted to pairs that live
+    on different PlaidItems for the same user. Each tx is matched at most once.
     Returns the number of newly-flagged transactions (so a fully successful run
     on N pairs returns 2N).
+
+    Idempotency: clears stale is_internal_transfer flags within the candidate
+    window before re-pairing, so that a Plaid recategorization or amount
+    correction on a later sync doesn't leave a phantom pair hidden forever.
     """
-    unpaired = (
+    rows = (
         session.query(Transaction)
         .filter(
             Transaction.user_id == user_id,
-            Transaction.is_internal_transfer.is_(False),
             Transaction.pfc_primary.in_(("TRANSFER_OUT", "TRANSFER_IN")),
         )
         .order_by(Transaction.date.asc(), Transaction.id.asc())
         .all()
     )
-    if not unpaired:
+    if not rows:
         return 0
+
+    # Reset prior pairings on the candidate set so a Plaid recategorization or
+    # amount correction on a later sync doesn't leave a phantom pair hidden.
+    for t in rows:
+        if t.is_internal_transfer:
+            t.is_internal_transfer = False
+    session.flush()
+
+    def is_internal(t: Transaction) -> bool:
+        if t.pfc_primary == "TRANSFER_OUT":
+            return t.pfc_detailed in INTERNAL_OUT_DETAILED
+        if t.pfc_primary == "TRANSFER_IN":
+            return t.pfc_detailed in INTERNAL_IN_DETAILED
+        return False
 
     ins_by_amt: dict[float, list[Transaction]] = defaultdict(list)
     outs: list[Transaction] = []
-    for t in unpaired:
+    for t in rows:
+        # Only pair things Plaid explicitly tagged as account-to-account — a
+        # generic TRANSFER_IN can be a friend's Zelle (real income); a generic
+        # TRANSFER_OUT can be a Zelle to a friend (real spending). Pairing
+        # those by amount alone produces false positives.
+        if not is_internal(t):
+            continue
         if t.pfc_primary == "TRANSFER_IN":
             ins_by_amt[_amt_key(t)].append(t)
         else:

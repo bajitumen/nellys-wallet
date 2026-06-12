@@ -730,19 +730,19 @@ def test_income_scoped_rule_does_not_touch_spending_tx(user_with_item, db_sessio
     db_session.add_all([
         Transaction(
             user_id=item.user_id, item_id=item.id, plaid_transaction_id="out1",
-            date=date.today(), amount=30.0, name="Venmo", merchant_name="Venmo",
-            pfc_primary="TRANSFER_OUT",
+            date=date.today(), amount=30.0, name="Acme Payroll", merchant_name="Acme Payroll",
+            pfc_primary="GENERAL_MERCHANDISE",
         ),
         Transaction(
             user_id=item.user_id, item_id=item.id, plaid_transaction_id="in1",
-            date=date.today(), amount=-500.0, name="Venmo", merchant_name="Venmo",
-            pfc_primary="TRANSFER_IN",
+            date=date.today(), amount=-2500.0, name="Acme Payroll", merchant_name="Acme Payroll",
+            pfc_primary="INCOME",
         ),
     ])
     db_session.commit()
 
     rule = rules_mod.upsert_rule(
-        user_with_item.id, "merchant_name", "Venmo", "dismiss", None, db_session,
+        user_with_item.id, "merchant_name", "Acme Payroll", "dismiss", None, db_session,
         scope="income",
     )
     rules_mod.apply_rule_retroactively(rule, db_session)

@@ -146,30 +146,28 @@ def test_build_chart_trend_up_when_last_exceeds_first():
         assert "x" in p and "y" in p and "label" in p and "ts" in p
 
 
-def test_build_chart_trend_reflects_sign_of_last_value():
-    """Red only when net worth itself is negative — not on a downward trend
-    that stays in the black."""
+def test_build_chart_trend_compares_last_to_first():
+    """Red on a falling balance, green on a rising one — regardless of sign.
+    A positive balance trending down still shows down/red."""
     from models import NetWorthSnapshot
     import networth
     now = _utcnow_naive()
 
-    # Trended down but still positive → "up" (green).
-    snaps_pos = [
+    snaps_down_positive = [
         NetWorthSnapshot(user_id=1, taken_at=now - timedelta(days=2),
                          cash_total=0, investment_total=0, credit_total=0, net_worth=500.0),
         NetWorthSnapshot(user_id=1, taken_at=now,
                          cash_total=0, investment_total=0, credit_total=0, net_worth=300.0),
     ]
-    assert networth.build_chart(snaps_pos)["trend"] == "up"
+    assert networth.build_chart(snaps_down_positive)["trend"] == "down"
 
-    # Last value below zero → "down" (red).
-    snaps_neg = [
+    snaps_up_negative = [
         NetWorthSnapshot(user_id=1, taken_at=now - timedelta(days=2),
                          cash_total=0, investment_total=0, credit_total=0, net_worth=-100.0),
         NetWorthSnapshot(user_id=1, taken_at=now,
                          cash_total=0, investment_total=0, credit_total=0, net_worth=-50.0),
     ]
-    assert networth.build_chart(snaps_neg)["trend"] == "down"
+    assert networth.build_chart(snaps_up_negative)["trend"] == "up"
 
 
 def test_get_snapshots_orders_by_taken_at_asc(user_with_item, db_session):

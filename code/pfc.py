@@ -196,6 +196,12 @@ def is_income_category(primary: str | None) -> bool:
     return primary in _INCOME_SIDE_SET
 
 
+def is_strict_income(primary: str | None) -> bool:
+    # Unpaired TRANSFER_IN (Zelle/loan disbursements) shouldn't inflate income
+    # totals on cashflow or the income surface.
+    return primary == "INCOME"
+
+
 def is_spend_category(primary: str | None) -> bool:
     return primary is not None and primary not in _INCOME_SIDE_SET
 

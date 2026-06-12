@@ -1,0 +1,90 @@
+@import "./styles/app.css";
+
+.tx-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1rem 0;
+}
+.tx-filter-chips .filter-chip {
+  margin-left: 0;
+  cursor: pointer;
+}
+.tx-filter-chips .filter-chip-active {
+  background: var(--text);
+  color: var(--surface);
+  border-color: var(--text);
+}
+
+.split-dialog-error {
+  color: var(--negative);
+  font-size: 0.85rem;
+  margin-top: 0.2rem;
+}
+
+button.stacked-bar-segment {
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.toast-stack {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 9999;
+  max-width: min(420px, calc(100vw - 2rem));
+}
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  font-size: 0.92rem;
+  line-height: 1.35;
+  animation: toast-in 0.18s ease-out;
+}
+.toast-message { flex: 1; word-break: break-word; }
+.toast-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+}
+.toast-dismiss:hover { color: var(--text); }
+.toast-error { border-left: 3px solid var(--negative); }
+.toast-warning { border-left: 3px solid var(--warning, #d4a02a); }
+.toast-success { border-left: 3px solid var(--positive); }
+.toast-info { border-left: 3px solid var(--text-muted); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.networth-heading .inline-dropdown-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 1rem;
+  background: var(--bg);
+}

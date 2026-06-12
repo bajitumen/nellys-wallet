@@ -1,12 +1,33 @@
 """Planning page: per-account rate persistence + /planning routes."""
 
+from datetime import datetime
 from unittest.mock import patch
+
+import pytest
 
 
 def _empty_fetch_all():
     return {
         "cash": [], "credit": [], "investment": [], "other": [], "errors": [],
     }
+
+
+@pytest.fixture
+def owned_account(db_session, user_with_item):
+    """Seed an AccountBalanceSnapshot so the ownership check passes for acct_cash."""
+    from models import AccountBalanceSnapshot
+    db_session.add(AccountBalanceSnapshot(
+        user_id=user_with_item.id,
+        item_id=user_with_item.items[0].id,
+        plaid_account_id="acct_cash",
+        account_name="Checking",
+        institution_name="TestBank",
+        bucket="cash",
+        balance=100.0,
+        taken_at=datetime.utcnow(),
+    ))
+    db_session.commit()
+    return "acct_cash"
 
 
 # ---------------------------------------------------------------------------
@@ -43,14 +64,14 @@ def test_clear_rate_removes_row(user, db_session):
 # routes
 # ---------------------------------------------------------------------------
 
-def test_planning_view_no_user(client):
-    r = client.get("/planning")
+def test_api_planning_no_user(client):
+    r = client.get("/api/planning")
     assert r.status_code == 200
-    assert b"No user provisioned" in r.data
+    assert r.get_json()["accounts"] == []
 
 
-def test_planning_view_renders_accounts(client, user_with_item):
-    """Accounts from fetch_all show up in the rates table."""
+def test_api_planning_returns_accounts(client, user_with_item):
+    """Accounts from fetch_all are surfaced by the JSON endpoint."""
     fetch_data = {
         "cash": [{
             "institution": "TestBank", "logo": None, "primary_color": None,
@@ -67,14 +88,13 @@ def test_planning_view_renders_accounts(client, user_with_item):
         "investment": [], "other": [], "errors": [],
     }
     with patch("providers.fetch_all", return_value=fetch_data):
-        r = client.get("/planning")
+        r = client.get("/api/planning")
     assert r.status_code == 200
-    assert b"Total net worth" in r.data
-    assert b"Checking" in r.data
-    assert b"Credit Card" in r.data
+    names = {a["name"] for a in r.get_json()["accounts"]}
+    assert names == {"Checking", "Credit Card"}
 
 
-def test_planning_rate_save_creates(client, user_with_item, db_session):
+def test_planning_rate_save_creates(client, owned_account, db_session):
     from models import AccountRate
     r = client.post("/planning/rate/acct_cash", json={"rate": 4.5})
     assert r.status_code == 200
@@ -84,7 +104,7 @@ def test_planning_rate_save_creates(client, user_with_item, db_session):
     assert row.rate == 4.5
 
 
-def test_planning_rate_save_updates(client, user_with_item, db_session):
+def test_planning_rate_save_updates(client, owned_account, db_session):
     from models import AccountRate
     client.post("/planning/rate/acct_cash", json={"rate": 4.5})
     client.post("/planning/rate/acct_cash", json={"rate": 5.5})
@@ -93,7 +113,7 @@ def test_planning_rate_save_updates(client, user_with_item, db_session):
     assert rows[0].rate == 5.5
 
 
-def test_planning_rate_save_null_clears(client, user_with_item, db_session):
+def test_planning_rate_save_null_clears(client, owned_account, db_session):
     from models import AccountRate
     client.post("/planning/rate/acct_cash", json={"rate": 4.5})
     r = client.post("/planning/rate/acct_cash", json={"rate": None})
@@ -101,6 +121,17 @@ def test_planning_rate_save_null_clears(client, user_with_item, db_session):
     assert db_session.query(AccountRate).count() == 0
 
 
-def test_planning_rate_save_rejects_non_numeric(client, user_with_item):
+def test_planning_rate_save_rejects_non_numeric(client, owned_account):
     r = client.post("/planning/rate/acct_cash", json={"rate": "not-a-number"})
     assert r.status_code == 400
+
+
+def test_planning_rate_save_rejects_foreign_account(client, user_with_item, db_session):
+    """No snapshot for this account → 404, regardless of payload."""
+    r = client.post("/planning/rate/not_my_account", json={"rate": 4.5})
+    assert r.status_code == 404
+
+
+def test_planning_contribution_save_rejects_foreign_account(client, user_with_item):
+    r = client.post("/planning/contribution/not_my_account", json={"value": 100})
+    assert r.status_code == 404

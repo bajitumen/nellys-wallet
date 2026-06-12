@@ -67,6 +67,22 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def init_db():
+    """Bring the SQLite schema up to date at boot.
+
+    History note: alembic is in pyproject.toml but intentionally unused. We
+    run a single-file SQLite DB on a small-N user base, so a hand-rolled
+    migration block that is idempotent on each boot has been simpler to reason
+    about than a generated migration chain.
+
+    Constraints to preserve if you swap this for alembic later:
+      * SQLite ALTER TABLE is limited (no DROP COLUMN before 3.35, no
+        rename-with-FK, no constraint-changes-in-place). Several of the
+        migrations below work around exactly those gaps.
+      * The block must remain idempotent — gunicorn boots N workers in
+        parallel and each will call init_db on import.
+      * Schema changes affecting only NEW tables can lean on create_all
+        below; only existing tables need an explicit ALTER block.
+    """
     from sqlalchemy import text
     import models  # noqa: F401 — register models with Base.metadata
     Base.metadata.create_all(engine)

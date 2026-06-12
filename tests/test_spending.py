@@ -104,8 +104,10 @@ def test_all_tab_includes_unspent_primaries(user_with_item, db_session):
     assert travel["count"] == 0
 
 
-def test_source_filter_omits_unspent_categories(db_session):
-    """With a source filter, only categories with spending in that source appear."""
+def test_source_filter_includes_unspent_categories(db_session):
+    """The category table renders a row per spend-side primary regardless of
+    source filter — unspent categories show as $0. The sourced one is in there
+    with a non-zero total."""
     from models import PlaidItem, User
     from spending import fetch_last_month
     u = User(clerk_user_id="x", email="x@x")
@@ -118,8 +120,10 @@ def test_source_filter_omits_unspent_categories(db_session):
     db_session.flush()
     _seed_tx(db_session, chase, "tx1", 10.0, "FOOD_AND_DRINK")
     out = fetch_last_month(u, source="Chase", session=db_session)
-    names = {c["name"] for c in out["categories"]}
-    assert names == {"Food and Drink"}
+    by_name = {c["name"]: c["total"] for c in out["categories"]}
+    assert by_name["Food and Drink"] == 10.0
+    assert by_name.get("Travel") == 0.0
+    assert by_name.get("Medical") == 0.0
 
 
 def test_category_carries_per_primary_budget(user_with_item, db_session):
@@ -268,13 +272,16 @@ def test_invalid_month_falls_back_to_current(user_with_item, db_session):
     assert out["month"] == f"{today.year:04d}-{today.month:02d}"
 
 
-def test_repeat_call_recomputes(user_with_item, db_session):
-    """Caching disabled for multi-worker safety — each call recomputes."""
+def test_repeat_call_returns_same_total(user_with_item, db_session):
+    """Sequential reads of the same input produce identical totals.
+
+    Note: a 60s TTL means the second call may serve a cached payload — what
+    we care about here is that the user-facing totals stay consistent.
+    """
     from spending import fetch_last_month
     _seed_tx(db_session, user_with_item.items[0], "tx1", 50.0, "FOOD_AND_DRINK")
     first = fetch_last_month(user_with_item, session=db_session)
     second = fetch_last_month(user_with_item, session=db_session)
-    assert first is not second
     assert first["total"] == second["total"]
 
 

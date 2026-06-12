@@ -98,7 +98,9 @@ def _fetch_one(client: plaid_api.PlaidApi, item: PlaidItem) -> dict:
     except plaid.ApiException as e:
         body = getattr(e, "body", str(e))
         log.warning("accounts_get failed for %s: %s", institution, body[:500])
-        result["errors"].append(f"{institution} accounts: {body[:200]}")
+        # Generic to the client — Plaid error bodies can leak request IDs and
+        # the access path; full detail stays in server logs.
+        result["errors"].append(f"{institution}: temporarily unavailable.")
         return result
 
     for acct in resp.accounts:

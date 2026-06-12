@@ -147,7 +147,7 @@ def tx_in_scope(tx: Transaction, scope: str) -> bool:
     if scope == "spending":
         return tx.amount is not None and tx.amount > 0 and pfc_mod.is_spend_category(tx.pfc_primary)
     if scope == "income":
-        return tx.amount is not None and tx.amount < 0 and pfc_mod.is_income_category(tx.pfc_primary)
+        return tx.amount is not None and tx.amount < 0 and pfc_mod.is_strict_income(tx.pfc_primary)
     return False
 
 
@@ -155,7 +155,7 @@ def build_scope_filter(scope: str):
     if scope == "spending":
         return [Transaction.amount > 0, ~Transaction.pfc_primary.in_(pfc_mod.INCOME_SIDE_PRIMARIES)]
     if scope == "income":
-        return [Transaction.amount < 0, Transaction.pfc_primary.in_(pfc_mod.INCOME_SIDE_PRIMARIES)]
+        return [Transaction.amount < 0, Transaction.pfc_primary == "INCOME"]
     return []
 
 
@@ -228,6 +228,17 @@ def _apply_rule_to_override(
         ov.category_override = rule.action_value
         ov.detailed_override = None
     elif rule.action == "set_detailed":
+        # A detailed code from a different primary than the tx's resolved
+        # category would land in a (primary, detailed) cell _subitems_for
+        # never iterates, leaving the amount in the primary total but in
+        # no subitem. Match the override-endpoint guard.
+        target_primary = ov.category_override or (tx.pfc_primary if tx is not None else None)
+        if (
+            rule.action_value
+            and target_primary
+            and pfc_mod.primary_of(rule.action_value) != target_primary
+        ):
+            return
         ov.detailed_override = rule.action_value
     elif rule.action == "split":
         try:

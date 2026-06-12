@@ -3,13 +3,26 @@
 from datetime import date, timedelta
 
 
-def _seed_tx(session, item, plaid_id, amount, name, pfc, date_=None):
+_INTERNAL_DETAILED = {
+    "TRANSFER_OUT": "TRANSFER_OUT_ACCOUNT_TRANSFER",
+    "TRANSFER_IN": "TRANSFER_IN_ACCOUNT_TRANSFER",
+}
+
+
+def _seed_tx(session, item, plaid_id, amount, name, pfc, date_=None, detailed=None):
     from models import Transaction
+    # Default to the internal-transfer detailed code so pre-existing pair tests
+    # remain valid — pair_internal_transfers now requires the detailed code to
+    # mark a transfer as own-account. Tests that intentionally seed an
+    # external transfer (Zelle to a friend) pass detailed="" or a non-internal code.
+    if detailed is None and pfc in _INTERNAL_DETAILED:
+        detailed = _INTERNAL_DETAILED[pfc]
     session.add(Transaction(
         user_id=item.user_id, item_id=item.id, plaid_transaction_id=plaid_id,
         date=date_ or date.today(),
         amount=amount, name=name, merchant_name=name,
         pfc_primary=pfc,
+        pfc_detailed=detailed,
     ))
     session.commit()
 
@@ -136,15 +149,65 @@ def test_each_tx_pairs_at_most_once(user_with_item, db_session):
     assert ("out1" in paired) != ("out2" in paired)  # exactly one OUT
 
 
-def test_pair_idempotent(user_with_item, db_session):
-    """Re-running on already-paired data is a no-op."""
+def test_pair_idempotent_outcome(user_with_item, db_session):
+    """Re-running rebuilds the pair from scratch but the final flags don't change.
+
+    (We no longer return 0 on a re-run — the matcher clears stale flags first so
+    a Plaid recategorization on a later sync can't leave a phantom pair stuck.
+    What matters is that the post-state is identical.)
+    """
     import transfers as transfers_mod
+    from models import Transaction
     other = _add_second_item(db_session, user_with_item)
     today = date.today()
     _seed_tx(db_session, user_with_item.items[0], "out1", 30.0, "Out", "TRANSFER_OUT", today)
     _seed_tx(db_session, other, "in1", -30.0, "In", "TRANSFER_IN", today)
     transfers_mod.pair_internal_transfers(user_with_item.id, db_session)
-    assert transfers_mod.pair_internal_transfers(user_with_item.id, db_session) == 0
+    transfers_mod.pair_internal_transfers(user_with_item.id, db_session)
+    flags = {t.plaid_transaction_id: t.is_internal_transfer
+             for t in db_session.query(Transaction).all()}
+    assert flags == {"out1": True, "in1": True}
+
+
+def test_pair_clears_stale_flag_on_recategorization(user_with_item, db_session):
+    """If a tx gets a new pfc_detailed on a later sync that's no longer an
+    internal-transfer code, its prior is_internal_transfer=True must drop."""
+    import transfers as transfers_mod
+    from models import Transaction
+    other = _add_second_item(db_session, user_with_item)
+    today = date.today()
+    _seed_tx(db_session, user_with_item.items[0], "out1", 30.0, "Out", "TRANSFER_OUT", today)
+    _seed_tx(db_session, other, "in1", -30.0, "In", "TRANSFER_IN", today)
+    transfers_mod.pair_internal_transfers(user_with_item.id, db_session)
+    # Simulate Plaid recategorizing the IN leg as an external deposit.
+    in_row = db_session.query(Transaction).filter_by(plaid_transaction_id="in1").one()
+    in_row.pfc_detailed = "TRANSFER_IN_DEPOSIT"
+    db_session.flush()
+    transfers_mod.pair_internal_transfers(user_with_item.id, db_session)
+    flags = {t.plaid_transaction_id: t.is_internal_transfer
+             for t in db_session.query(Transaction).all()}
+    assert flags == {"out1": False, "in1": False}
+
+
+def test_pair_skips_external_transfer_with_matching_amount(user_with_item, db_session):
+    """A Zelle-out + a same-amount external deposit on the same day must NOT pair.
+
+    Without the detailed-code constraint, two unrelated $100 movements get
+    falsely paired and both vanish from spending and income.
+    """
+    import transfers as transfers_mod
+    from models import Transaction
+    today = date.today()
+    _seed_tx(db_session, user_with_item.items[0], "zelle_out",
+             100.0, "Zelle to Alice", "TRANSFER_OUT", today,
+             detailed="TRANSFER_OUT_OTHER_TRANSFER_OUT")
+    _seed_tx(db_session, user_with_item.items[0], "ext_in",
+             -100.0, "Refund", "TRANSFER_IN", today,
+             detailed="TRANSFER_IN_DEPOSIT")
+    transfers_mod.pair_internal_transfers(user_with_item.id, db_session)
+    flags = {t.plaid_transaction_id: t.is_internal_transfer
+             for t in db_session.query(Transaction).all()}
+    assert flags == {"zelle_out": False, "ext_in": False}
 
 
 def test_spending_excludes_paired_transfers(user_with_item, db_session):
@@ -171,8 +234,10 @@ def test_spending_excludes_paired_transfers(user_with_item, db_session):
     assert "lunch" in ids
 
 
-def test_income_excludes_paired_transfers(user_with_item, db_session):
-    """Paired internal transfers drop from income; standalone TRANSFER_IN stays."""
+def test_income_excludes_paired_transfers_and_unpaired_transfer_in(user_with_item, db_session):
+    """Income surface is strict — only INCOME counts. Both paired internal
+    legs and standalone TRANSFER_IN (Zelle from a friend, loan disbursement)
+    must drop out."""
     import transfers as transfers_mod
     from income import fetch_last_month
     other = _add_second_item(db_session, user_with_item)
@@ -190,7 +255,7 @@ def test_income_excludes_paired_transfers(user_with_item, db_session):
 
     out = fetch_last_month(user_with_item, session=db_session)
     ids = {tx["plaid_id"] for tx in out["transactions"]}
-    assert "in_leg" not in ids  # internal leg dropped
-    assert "venmo_in" in ids  # Zelle/Venmo from friend kept
+    assert "in_leg" not in ids
+    assert "venmo_in" not in ids
     assert "wages" in ids
-    assert out["total"] == 2525.0
+    assert out["total"] == 2500.0

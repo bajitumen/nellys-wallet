@@ -68,6 +68,78 @@ def test_verify_session_rejects_expired_token(monkeypatch, rsa_keypair):
     assert auth.verify_session_cookie(token) is None
 
 
+def test_verify_session_rejects_alg_none(monkeypatch, rsa_keypair):
+    """An attacker who flips alg to 'none' must not be able to forge sessions."""
+    import auth
+    monkeypatch.setattr(auth.config, "CLERK_JWT_PUBLIC_KEY", rsa_keypair[1])
+    now = int(time.time())
+    forged = jwt.encode(
+        {"sub": "user_attacker", "iat": now, "exp": now + 60},
+        key="",
+        algorithm="none",
+    )
+    assert auth.verify_session_cookie(forged) is None
+
+
+def test_verify_session_rejects_hs256_with_public_key_as_secret(monkeypatch, rsa_keypair):
+    """Classic HS256/RS256 confusion: an attacker hand-crafts a JWT whose alg
+    header is HS256 and signs it with the configured RSA public key bytes as
+    the HMAC secret. PyJWT refuses to *mint* such a token, but a raw attacker
+    payload arriving over the wire must be rejected at decode time too."""
+    import base64
+    import hashlib
+    import hmac
+    import json as _json
+
+    import auth
+    _, public_pem = rsa_keypair
+    monkeypatch.setattr(auth.config, "CLERK_JWT_PUBLIC_KEY", public_pem)
+    now = int(time.time())
+
+    def b64(b: bytes) -> bytes:
+        return base64.urlsafe_b64encode(b).rstrip(b"=")
+
+    header = b64(_json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    payload = b64(_json.dumps({"sub": "u", "iat": now, "exp": now + 60}).encode())
+    signing_input = header + b"." + payload
+    sig = b64(hmac.new(public_pem.encode(), signing_input, hashlib.sha256).digest())
+    forged = (signing_input + b"." + sig).decode()
+    assert auth.verify_session_cookie(forged) is None
+
+
+def test_verify_session_requires_exp(monkeypatch, rsa_keypair):
+    """A token with no exp claim must be rejected, not treated as eternal."""
+    import auth
+    private_pem, public_pem = rsa_keypair
+    monkeypatch.setattr(auth.config, "CLERK_JWT_PUBLIC_KEY", public_pem)
+    token = jwt.encode(
+        {"sub": "user_alice", "iat": int(time.time())},
+        private_pem, algorithm="RS256",
+    )
+    assert auth.verify_session_cookie(token) is None
+
+
+def test_verify_session_pins_issuer(monkeypatch, rsa_keypair):
+    """When CLERK_ISSUER is set, tokens from a different issuer must fail."""
+    import auth
+    private_pem, public_pem = rsa_keypair
+    monkeypatch.setattr(auth.config, "CLERK_JWT_PUBLIC_KEY", public_pem)
+    monkeypatch.setattr(auth.config, "CLERK_ISSUER", "https://expected.example")
+
+    now = int(time.time())
+    wrong = jwt.encode(
+        {"sub": "u", "iat": now, "exp": now + 60, "iss": "https://attacker.example"},
+        private_pem, algorithm="RS256",
+    )
+    assert auth.verify_session_cookie(wrong) is None
+
+    correct = jwt.encode(
+        {"sub": "u", "iat": now, "exp": now + 60, "iss": "https://expected.example"},
+        private_pem, algorithm="RS256",
+    )
+    assert auth.verify_session_cookie(correct) == "u"
+
+
 def test_verify_session_rejects_wrong_signature(monkeypatch, rsa_keypair):
     """Signed by a different key than what's configured."""
     import auth

@@ -12,13 +12,17 @@ from sqlalchemy import func
 import budget as budget_mod
 import pfc
 import rules as rules_mod
+import transfers as transfers_mod
 from cache import KeyedCache
 from models import Transaction, TransactionOverride, User
 from providers import plaid_client_for
 
+# income.py imports from spending at module load — keep `import income` local
+# in functions below to break the cycle.
+
 log = logging.getLogger(__name__)
 
-_cache = KeyedCache(ttl_seconds=0.0)
+_cache = KeyedCache(ttl_seconds=60.0)
 
 
 def invalidate_cache(user_id: int) -> None:
@@ -213,7 +217,14 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
                 out["updated"] += 1
             else:
                 # Carry any user override from pending → posted before insert.
+                # An override may already exist on the posted id from a prior
+                # sync or a manual touch; deleting it first avoids the
+                # uq_override_user_tx collision that would abort the sync.
                 if pending_row is not None:
+                    session.query(TransactionOverride).filter(
+                        TransactionOverride.user_id == user.id,
+                        TransactionOverride.plaid_transaction_id == tx.transaction_id,
+                    ).delete(synchronize_session=False)
                     session.query(TransactionOverride).filter_by(
                         user_id=user.id, plaid_transaction_id=pending_id,
                     ).update(
@@ -241,7 +252,6 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
     rules_mod.apply_rules_to_new_transactions(user.id, new_inserts, session)
 
     # Flag new internal-transfer pairs so the spending/income filters drop them.
-    import transfers as transfers_mod
     transfers_mod.pair_internal_transfers(user.id, session)
 
     user.last_transactions_sync = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -379,7 +389,10 @@ def _fetch_last_month_uncached(
             "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
         })
 
-    out["total"] = sum(totals.values())
+    # Floats accumulated across hundreds of transactions drift in the last
+    # cents; round at the aggregation boundary so the UI never displays e.g.
+    # 1234.5600000001.
+    out["total"] = round(sum(totals.values()), 2)
     out["count"] = sum(counts.values())
 
     budgets_by_detailed = budget_mod.get_budgets(user, session)
@@ -389,20 +402,21 @@ def _fetch_last_month_uncached(
         if primary:
             primary_budgets[primary] += amount
 
-    # Without a source filter, include un-spent primaries so the budget column has rows.
-    # Income-side primaries (INCOME / TRANSFER_IN) never belong on the spending table.
-    category_keys = {k for k in totals.keys() if pfc.is_spend_category(k)}
-    if source is None:
-        category_keys.update(
-            p for p in pfc.PFC_TAXONOMY.keys() if pfc.is_spend_category(p)
-        )
+    # Always include every spend-side primary so the table renders a row per
+    # category at $0 even when nothing landed in it for this month/source.
+    # Income-side primaries (INCOME / TRANSFER_IN) never belong on the
+    # spending table.
+    category_keys = {
+        p for p in pfc.PFC_TAXONOMY.keys() if pfc.is_spend_category(p)
+    }
+    category_keys.update(k for k in totals.keys() if pfc.is_spend_category(k))
 
     def _subitems_for(primary: str) -> list[dict]:
         items = [
             {
                 "code": detailed,
                 "name": pfc.humanize_detailed(detailed, primary),
-                "total": sub_totals.get((primary, detailed), 0.0),
+                "total": round(sub_totals.get((primary, detailed), 0.0), 2),
                 "count": sub_counts.get((primary, detailed), 0),
                 "budget": budgets_by_detailed.get(detailed, 0.0),
             }
@@ -415,7 +429,7 @@ def _fetch_last_month_uncached(
             {
                 "code": k,
                 "name": pfc.humanize_primary(k),
-                "total": totals.get(k, 0.0),
+                "total": round(totals.get(k, 0.0), 2),
                 "count": counts.get(k, 0),
                 "color": pfc.CATEGORY_COLORS.get(k, pfc.DEFAULT_COLOR),
                 "budget": primary_budgets.get(k, 0.0),
@@ -428,10 +442,10 @@ def _fetch_last_month_uncached(
     out["transactions"] = sorted(tx_list, key=lambda t: t["date"], reverse=True)
 
     days_elapsed = max(1, (end - start).days + 1)
-    out["daily_avg"] = out["total"] / days_elapsed
+    out["daily_avg"] = round(out["total"] / days_elapsed, 2)
 
     if prev_total > 0:
-        out["prev_month_change_pct"] = (out["total"] - prev_total) / prev_total * 100
+        out["prev_month_change_pct"] = round((out["total"] - prev_total) / prev_total * 100, 1)
 
     return out
 
@@ -475,6 +489,7 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
 
     spend_by_month: dict[tuple[int, int], float] = defaultdict(float)
     income_by_month: dict[tuple[int, int], float] = defaultdict(float)
+    import income as _income_mod
     for tx in tx_rows:
         if tx.is_internal_transfer:
             continue
@@ -482,17 +497,21 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
         if ov and ov.dismissed:
             continue
         key = (tx.date.year, tx.date.month)
-        if tx.amount > 0:
+        # Route by the resolved category (override > raw primary), not by raw
+        # sign + raw pfc_primary. A set_category override moving a tx across
+        # the income/spend boundary previously misbucketed (or dropped) it.
+        resolved_category = (
+            (ov.category_override if ov and ov.category_override else None)
+            or tx.pfc_primary
+        )
+        if pfc.is_strict_income(resolved_category):
+            income_by_month[key] += _income_mod.income_amount_with_override(tx.amount, ov)
+        elif pfc.is_spend_category(resolved_category):
             applied = _apply_spend_override(tx, ov)
             if applied is None:
                 continue
             _, amount, _, _, _ = applied
             spend_by_month[key] += amount
-        elif tx.amount < 0 and pfc.is_income_category(tx.pfc_primary):
-            amount = -tx.amount
-            if ov and ov.amount_override is not None:
-                amount = ov.amount_override
-            income_by_month[key] += amount
 
     out = []
     y, m = start.year, start.month
@@ -501,8 +520,8 @@ def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
         out.append({
             "month": f"{y:04d}-{m:02d}",
             "label": date(y, m, 1).strftime("%b %Y"),
-            "spend": spend_by_month.get(key, 0.0),
-            "income": income_by_month.get(key, 0.0),
+            "spend": round(spend_by_month.get(key, 0.0), 2),
+            "income": round(income_by_month.get(key, 0.0), 2),
             "ts": int(datetime(y, m, 1).timestamp()),
         })
         m += 1

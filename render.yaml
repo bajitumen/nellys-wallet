@@ -13,7 +13,7 @@ services:
     runtime: docker
     plan: starter   # cheapest plan that allows persistent disks
     region: oregon
-    healthCheckPath: /sign-in
+    healthCheckPath: /healthz
     disk:
       name: data
       mountPath: /var/data
@@ -27,6 +27,13 @@ services:
       - key: FLASK_SECRET_KEY
         sync: false
       # Clerk auth.
+      # VITE_CLERK_PUBLISHABLE_KEY is the same value as CLERK_PUBLISHABLE_KEY,
+      # exposed under the VITE_ prefix so Vite inlines it at build time. Render
+      # passes env vars matching a Dockerfile ARG as --build-arg, so this needs
+      # to be set in the dashboard for the production SPA bundle to embed the
+      # Clerk publishable key (non-secret).
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false
       - key: CLERK_PUBLISHABLE_KEY
         sync: false
       - key: CLERK_SECRET_KEY
@@ -34,6 +41,10 @@ services:
       - key: CLERK_JWT_PUBLIC_KEY
         sync: false
       - key: CLERK_FRONTEND_API
+        sync: false
+      - key: CLERK_ISSUER
+        sync: false
+      - key: CLERK_AUTHORIZED_PARTIES
         sync: false
       # Litestream backup target.
       - key: LITESTREAM_REPLICA_URL

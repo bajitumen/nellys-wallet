@@ -98,19 +98,23 @@ def test_is_valid_detailed():
 # Route tests
 # ---------------------------------------------------------------------------
 
-def test_budget_view_no_user(client):
-    r = client.get("/budget")
+def test_api_budget_no_user(client):
+    r = client.get("/api/budget")
     assert r.status_code == 200
-    assert b"No user provisioned" in r.data
+    assert r.get_json()["groups"] == []
 
 
-def test_budget_view_renders_groups(client, user_with_item):
-    r = client.get("/budget")
+def test_api_budget_returns_groups(client, user_with_item):
+    r = client.get("/api/budget")
     assert r.status_code == 200
-    assert b"Food and Drink" in r.data
-    assert b"Coffee" in r.data
-    # Primary total starts at $0.00 for a fresh user.
-    assert b"$0.00" in r.data
+    body = r.get_json()
+    labels = {g["primary_label"] for g in body["groups"]}
+    assert "Food and Drink" in labels
+    food = next(g for g in body["groups"] if g["primary_label"] == "Food and Drink")
+    sub_labels = {s["label"] for s in food["subitems"]}
+    assert "Coffee" in sub_labels
+    # Fresh user has no budget rows → every total is 0.
+    assert all(g["total"] == 0.0 for g in body["groups"])
 
 
 def test_budget_save_creates_row(client, user_with_item, db_session):
