@@ -62,6 +62,11 @@ _SECURITY_HEADERS = {
 _CSP = "; ".join([
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://*.clerk.com https://*.plaid.com https://cdn.plaid.com",
+    # Clerk's SDK spawns a Web Worker from a blob: URL for background session
+    # refresh; without this it falls back to script-src (no blob:), the worker
+    # is blocked, and the __session cookie silently goes stale on idle tabs —
+    # the user sees "Sign in" empty state even though Clerk thinks they're in.
+    "worker-src 'self' blob:",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self' data:",
