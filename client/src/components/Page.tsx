@@ -37,10 +37,27 @@ export function Page({ heading, title, children }: Props) {
     staleTime: 60_000,
   });
   const sync = useMutation({
-    mutationFn: () => postJson<{ ok: boolean }>("/sync"),
-    onSuccess: () => {
+    mutationFn: () =>
+      postJson<{ ok: boolean; added?: number; updated?: number; errors?: string[] }>("/sync"),
+    onSuccess: (result) => {
       for (const key of ["overview", "spending", "income", "budget", "rules", "me"] as const) {
         qc.invalidateQueries({ queryKey: [key] });
+      }
+      // Surface what the server actually did — a zero-result sync used to look
+      // identical to a broken one (no toast either way) and silently-failed
+      // per-item Plaid errors came back as ok:true with errors[] in the body.
+      const errs = result.errors ?? [];
+      const added = result.added ?? 0;
+      const updated = result.updated ?? 0;
+      if (errs.length > 0) {
+        toast.warning(`Sync finished with errors: ${errs.join("; ")}`);
+      } else if (added === 0 && updated === 0) {
+        toast.info("Already up to date.");
+      } else {
+        const parts = [];
+        if (added) parts.push(`${added} new`);
+        if (updated) parts.push(`${updated} updated`);
+        toast.success(`Synced: ${parts.join(", ")}`);
       }
     },
     onError: (e: Error) => toast.error(`Sync failed: ${e.message}`),
