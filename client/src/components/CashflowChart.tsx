@@ -22,7 +22,7 @@ function rangeStart(range: Range, dataMinTs: number): number {
   const nowTs = Math.floor(now.getTime() / 1000);
   if (range === "All") return dataMinTs;
   if (range === "YTD") {
-    return Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000);
+    return Math.floor(Date.UTC(now.getUTCFullYear(), 0, 1) / 1000);
   }
   if (range === "30D") return nowTs - 30 * 86400;
   if (range === "3M") {

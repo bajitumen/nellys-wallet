@@ -24,11 +24,6 @@ import spending as spending_mod
 from db import SessionLocal
 from models import Transaction, TransactionOverride, User
 
-# Schema init lives in `python code/cli.py init-db`, called from
-# entrypoint.sh before gunicorn boots. Running it at import time raced
-# under multi-worker boot — two workers could run conflicting in-place
-# ALTERs against the same SQLite file.
-
 log = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,12 +31,8 @@ _CLIENT_DIST = _REPO_ROOT / "client" / "dist"
 
 
 def _invalidate_user_caches(user_id: int) -> None:
-    """Bust every cache keyed on this user. Override / rule / budget mutations
-    can affect both the spending page and the income page (dismiss applies to
-    either side; an income-scoped rule edits income totals; a category-cross
-    override moves a transaction between sides). Previously only the spending
-    cache was invalidated, so dismissed income visibly reappeared on the next
-    refetch for up to 60s."""
+    # Override/rule/budget mutations can affect either side (dismiss applies
+    # to both, set_category crosses the boundary), so invalidate every cache.
     spending_mod.invalidate_cache(user_id)
     income_mod.invalidate_cache(user_id)
     rules_mod.invalidate_cache(user_id)
@@ -51,17 +42,14 @@ app.secret_key = config.FLASK_SECRET_KEY
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    # Secure cookies require HTTPS; dev server is HTTP.
     SESSION_COOKIE_SECURE=not config.IS_DEVELOPMENT,
-    # The Clerk __session cookie's SameSite/Secure flags are out of our
-    # control, so the CSRF token IS our cross-site defense. Cap it at one
-    # hour; the client retries once on 403 with a fresh token (api.ts).
+    # Clerk __session cookie flags aren't ours to set; the CSRF token IS
+    # the cross-site defense. Client retries once on 400/403 with CSRF body.
     WTF_CSRF_TIME_LIMIT=3600,
 )
 
-# Render terminates TLS at its proxy and forwards via plain HTTP; without
-# ProxyFix, request.is_secure is False, request.remote_addr is the proxy IP,
-# and url_for(_external=True) builds http:// URLs. Trust exactly one hop.
+# Render terminates TLS at its proxy; trust exactly one forwarded hop so
+# request.is_secure and url_for(_external=True) work.
 if config.IS_PRODUCTION:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_for=1, x_host=1)
 
@@ -75,13 +63,9 @@ _SECURITY_HEADERS = {
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
 }
 
-# Baseline CSP. 'unsafe-inline' on style/script is required for Clerk's SDK
-# injection + the theme bootstrap in index.html; tightening to nonces is a
-# larger refactor. The connect/frame allowlists cover Clerk and Plaid Link.
-# Production Clerk instances live at clerk.<your-domain> (a CNAME the user
-# sets up in the Clerk dashboard), which doesn't match *.clerk.accounts.dev
-# or *.clerk.com. CLERK_FRONTEND_API holds that host (no protocol) — fold
-# it into the CSP allowlist so a pk_live_ key isn't blocked at runtime.
+# 'unsafe-inline' kept for Clerk's SDK injection + index.html theme bootstrap.
+# Prod Clerk lives at clerk.<domain> (custom CNAME) — fold CLERK_FRONTEND_API
+# into the allowlist or pk_live_ keys get blocked.
 _CLERK_PROD_HOSTS = (
     [f"https://{config.CLERK_FRONTEND_API}"] if config.CLERK_FRONTEND_API else []
 )
@@ -90,19 +74,16 @@ _CLERK_HOSTS = " ".join([
     "https://*.clerk.com",
     *_CLERK_PROD_HOSTS,
 ])
-# Cloudflare Turnstile is Clerk's default bot-protection captcha; without it
-# in script-src + frame-src + connect-src, sign-ups that hit the captcha
-# silently fail to render the challenge.
+# Cloudflare Turnstile = Clerk's bot-protection captcha; missing it on
+# script/frame/connect breaks sign-ups that hit the challenge.
 _TURNSTILE = "https://challenges.cloudflare.com"
 _PLAID_HOSTS = "https://*.plaid.com https://cdn.plaid.com"
 
 _CSP = "; ".join([
     "default-src 'self'",
     f"script-src 'self' 'unsafe-inline' {_CLERK_HOSTS} {_PLAID_HOSTS} {_TURNSTILE}",
-    # Clerk's SDK spawns a Web Worker from a blob: URL for background session
-    # refresh; without this it falls back to script-src (no blob:), the worker
-    # is blocked, and the __session cookie silently goes stale on idle tabs —
-    # the user sees "Sign in" empty state even though Clerk thinks they're in.
+    # Clerk's session-refresh Web Worker is a blob: URL; without this the
+    # __session cookie silently goes stale on idle tabs.
     "worker-src 'self' blob:",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
@@ -115,7 +96,6 @@ _CSP = "; ".join([
 ])
 
 if not config.IS_DEVELOPMENT:
-    # 1 year, include subdomains. Only meaningful over HTTPS; dev server is HTTP.
     _SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
 _SECURITY_HEADERS["Content-Security-Policy"] = _CSP
@@ -187,9 +167,7 @@ def add_response_headers(response):
     for header, value in _SECURITY_HEADERS.items():
         response.headers.setdefault(header, value)
     if request.path.startswith("/assets/"):
-        # Vite ships content-hashed bundles under /assets/, so their bytes
-        # are immutable for the lifetime of that filename. Tell the browser
-        # to skip revalidation entirely.
+        # Vite content-hashes /assets/* — immutable for that filename.
         response.cache_control.public = True
         response.cache_control.max_age = 31536000
         response.cache_control.immutable = True
@@ -246,10 +224,8 @@ def transaction_override(session, user, tx_id):
     if user is None:
         return jsonify({"error": "No user"}), 400
 
-    # Ownership: the user must actually have this transaction. Without this
-    # check the user could create override rows for arbitrary plaid_transaction
-    # ids (a slow DB-growing nuisance, and conceptually a cross-tenant write
-    # surface even though it only ever materializes on their own row).
+    # Ownership check — without it any user could write override rows
+    # keyed by arbitrary plaid_transaction_ids.
     tx_row = (
         session.query(Transaction)
         .filter_by(user_id=user.id, plaid_transaction_id=tx_id)
@@ -268,10 +244,8 @@ def transaction_override(session, user, tx_id):
         if override is not None:
             session.delete(override)
             session.flush()
-        # Re-apply still-matching rules. Without this, a rule-sourced dismiss
-        # that the user "cleared" silently rejoins totals while the UI still
-        # shows the rule badge (applied_rule_id_by_tx reads from rule matching,
-        # not from the override row), so rule state and money state disagree.
+        # Re-apply still-matching rules — otherwise a cleared rule-dismiss
+        # rejoins totals while the badge still shows.
         rules_mod._recompute_overrides_for_txs(user.id, [tx_row], session)
         session.commit()
         _invalidate_user_caches(user.id)
@@ -292,20 +266,15 @@ def transaction_override(session, user, tx_id):
         detailed = data["detailed"] or None
         if detailed and not pfc.is_valid_detailed(detailed):
             return jsonify({"error": "Unknown detailed code"}), 400
-        # A detailed code rooted in a different primary than the resolved
-        # category lands in a (primary, detailed) cell that _subitems_for
-        # never iterates — the amount shows in the primary total but in no
-        # subitem. Validate against the RESOLVED primary, not just the one
-        # in this payload — a "set detailed only" call against a tx whose
-        # primary is FOOD_AND_DRINK must reject a TRAVEL_FLIGHTS detailed.
+        # Validate against the RESOLVED primary — mismatched detailed codes
+        # land in cells _subitems_for never iterates (orphaned amounts).
         resolved_primary = override.category_override or tx_row.pfc_primary
         if detailed and resolved_primary:
             if pfc.primary_of(detailed) != resolved_primary:
                 return jsonify({"error": "Detailed code does not belong to chosen category"}), 400
         override.detailed_override = detailed
-    # If the caller cleared category in this payload AND left a stale detailed
-    # override on the row, drop it — the detailed code is no longer guaranteed
-    # to match the resolved primary.
+    # Drop stale detailed override if category was just cleared and the
+    # remaining detailed code no longer matches the raw primary.
     if "category" in data and override.category_override is None and override.detailed_override:
         if pfc.primary_of(override.detailed_override) != tx_row.pfc_primary:
             override.detailed_override = None
@@ -467,17 +436,15 @@ def rules_create(session, user):
         )
         if existing is None:
             return jsonify({"error": "Rule not found"}), 404
-        # Snapshot the txs the OLD rule definition touched as plain IDs so we
-        # don't depend on ORM object freshness across the transaction.
+        # Snapshot as IDs — ORM objects can detach across the rule edit.
         old_tx_ids = [t.id for t in rules_mod.snapshot_rule_txs(existing, session)]
         rules_mod.update_rule(
             existing, fields["conditions"], fields["conditions_logic"],
             fields["action"], fields["action_value"], fields["scope"], session,
         )
         rule = existing
-        # Atomic: rule edit + override reconciliation in one transaction. If
-        # reapply fails we MUST roll back the rule edit too — otherwise the
-        # overrides left over from the old rule definition never self-heal.
+        # Rule edit + override reconciliation must commit atomically; a half-
+        # applied edit leaves stale overrides that never self-heal.
         try:
             from models import Transaction
             old_txs = (
@@ -497,8 +464,8 @@ def rules_create(session, user):
             user.id, fields["conditions"], fields["conditions_logic"],
             fields["action"], fields["action_value"], fields["scope"], session,
         )
-        # Persist the rule first; on create there are no stale overrides to
-        # reconcile, so a failed retro apply is recoverable from the next sync.
+        # On create there's no stale state to reconcile, so a failed retro
+        # apply is recoverable on next sync — commit the rule first.
         session.commit()
         try:
             applied = rules_mod.apply_rule_retroactively(rule, session)
@@ -646,9 +613,8 @@ def budget_save(session, user, detailed):
         budget_mod.upsert(user, detailed, value, session)
 
     primary = pfc.primary_of(detailed)
-    assert primary is not None  # is_valid_detailed verified above
+    assert primary is not None
     new_sum = budget_mod.primary_sum(user, primary, session)
-    # Spending page caches per-primary budget for 60s; bust it.
     _invalidate_user_caches(user.id)
     return jsonify({"ok": True, "primary_sum": new_sum})
 
@@ -672,10 +638,8 @@ def api_plaid_status(session, user):
 
 @app.route("/api/settings/plaid", methods=["POST"])
 def api_plaid_save():
-    # Hand-rolled auth instead of @with_user on purpose: @with_user 409s any
-    # request from a user without Plaid creds, but THIS endpoint is precisely
-    # how the user supplies those creds for the first time. Keep the manual
-    # 401 branch in sync with with_user above when changing auth behavior.
+    # Hand-rolled auth — @with_user 409s users with no creds, but this is
+    # where they SET creds for the first time. Mirror its 401 branch.
     with SessionLocal() as session:
         user = current_user(session)
         if user is None and auth.clerk_enabled():
@@ -697,16 +661,9 @@ def api_plaid_save():
 @with_user_json
 def api_me(session, user):
     last_sync = user.last_transactions_sync if user is not None else None
-    today_utc = datetime.now(timezone.utc).date()
-    needs_daily_sync = bool(
-        user is not None
-        and user.items
-        and (last_sync is None or last_sync.date() < today_utc)
-    )
     return jsonify({
         "last_sync": last_sync.isoformat() if last_sync else None,
         "last_sync_label": spending_mod.relative_time(last_sync),
-        "needs_daily_sync": needs_daily_sync,
     })
 
 
@@ -1055,10 +1012,8 @@ def _serve_spa_shell():
 @app.route("/", methods=["GET"])
 @app.route("/<path:_path>", methods=["GET"])
 def spa_catch_all(_path: str = ""):
-    # Root-level files Vite ships in dist/ (favicon.svg, manifest.json, etc.)
-    # need to be served as their real bytes — falling through to index.html
-    # delivers HTML when the browser asked for an icon and breaks the favicon.
-    # Only consider single-segment paths so the path can't escape dist/.
+    # Single-segment dist/ files (favicon.svg etc.) must serve their real
+    # bytes; falling through to index.html breaks the favicon.
     if _path and "/" not in _path:
         candidate = _CLIENT_DIST / _path
         if candidate.is_file():
@@ -1067,13 +1022,7 @@ def spa_catch_all(_path: str = ""):
 
 
 if __name__ == "__main__":
-    # Refuse to run the Flask dev server outside development — debug=True with
-    # 0.0.0.0 exposes the Werkzeug debugger PIN endpoint to anyone who can
-    # reach the host. Production must boot via gunicorn (entrypoint.sh).
+    # debug=True + 0.0.0.0 exposes the Werkzeug debugger PIN; never outside dev.
     if not config.IS_DEVELOPMENT:
-        raise RuntimeError(
-            "app.run() is dev-only. FLASK_ENV must be 'development' to start "
-            "the Flask reloader; boot via gunicorn for any other environment."
-        )
-    # 0.0.0.0 so phones on same Wi-Fi can reach the dev server.
+        raise RuntimeError("app.run() is dev-only; boot prod via gunicorn.")
     app.run(host="0.0.0.0", debug=True, port=5001)

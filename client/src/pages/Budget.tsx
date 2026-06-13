@@ -8,7 +8,7 @@ import { useToast } from "../components/Toast";
 import { AnimatedUsd } from "../components/AnimatedNumber";
 import { StackedBar } from "../components/StackedBar";
 import { ApiError, getJson, postJson } from "../lib/api";
-import { scrollToAnchor } from "../lib/scrollToTransactions";
+import { clientCurrentMonth, scrollToAnchor } from "../lib/scrollToTransactions";
 
 type Subitem = { code: string; label: string; amount: number; actual: number };
 type Group = {
@@ -33,7 +33,7 @@ function formatUsd(n: number): string {
 
 export default function BudgetPage() {
   const [searchParams] = useSearchParams();
-  const month = searchParams.get("month") || undefined;
+  const month = searchParams.get("month") || clientCurrentMonth();
 
   const q = useQuery<BudgetData, ApiError>({
     queryKey: ["budget", month],

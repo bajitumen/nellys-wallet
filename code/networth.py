@@ -11,14 +11,11 @@ log = logging.getLogger(__name__)
 
 
 def capture(user: User, session) -> NetWorthSnapshot | None:
-    # One row per UTC day; refreshing replaces today's row.
     if not user.items:
         return None
     data = providers.fetch_all(user, force_refresh=True)
-    # Don't replace today's snapshot when ANY institution failed — we'd
-    # otherwise record a false net-worth dip from the partial picture and
-    # destroy a successful earlier same-day snapshot. Defer; the next sync
-    # will retry.
+    # Partial fetches would overwrite a good earlier same-day snapshot with
+    # a false dip; defer to the next sync.
     if data.get("errors"):
         log.warning(
             "networth.capture skipped for user_id=%s due to provider errors: %s",
@@ -29,7 +26,6 @@ def capture(user: User, session) -> NetWorthSnapshot | None:
     investments = providers.sum_balances(data["investment"])
     credit = providers.sum_balances(data["credit"])
 
-    # UTC day boundary because taken_at is stored as naive UTC.
     today = datetime.now(timezone.utc).date()
     start_of_day = datetime.combine(today, datetime.min.time())
     end_of_day = start_of_day + timedelta(days=1)
@@ -108,10 +104,8 @@ def build_series_data(snapshots, account_snaps) -> dict:
     by_inst: dict = defaultdict(lambda: defaultdict(float))
     by_acct: dict = defaultdict(lambda: {})
     for s in account_snaps:
-        # Mirror the snapshot's net definition (cash + investments - credit):
-        # the "other" bucket isn't counted in headline net worth, so per-
-        # institution series mustn't include it either or the stacked series
-        # won't sum to the net line.
+        # Mirror net definition (cash + investments - credit); excluding
+        # credit/other keeps stacked series summing to the net line.
         if s.bucket in ("credit", "other"):
             continue
         d = s.taken_at.date()
@@ -148,7 +142,7 @@ def build_chart(
     plot_w = width - 2 * pad_x
     plot_h = height - 2 * pad_y
 
-    # Naive datetime.timestamp() treats as local time; force UTC to match browser.
+    # Naive datetime.timestamp() treats as local; force UTC for browser parity.
     def _utc_ts(dt):
         if dt.tzinfo is None:
             return dt.replace(tzinfo=timezone.utc).timestamp()
@@ -156,7 +150,7 @@ def build_chart(
     xs = [_utc_ts(s.taken_at) for s in snapshots]
     ys = [s.net_worth for s in snapshots]
 
-    # Synthetic zero points create the flat-then-spike L-shape before first real data.
+    # Synthetic zero prefix draws a flat-then-spike L before first real data.
     if range_start_ts is not None and xs[0] > range_start_ts:
         path_xs = [float(range_start_ts), xs[0]] + xs
         path_ys = [0.0, 0.0] + ys

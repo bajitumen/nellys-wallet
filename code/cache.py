@@ -9,6 +9,9 @@ class KeyedCache:
         self._entries: dict = {}
         self._lock = threading.Lock()
         self._keylocks: dict[tuple, threading.Lock] = {}
+        # invalidate() bumps gen; get_or_compute discards its write if gen
+        # moved during fn() — otherwise a mid-compute invalidate gets clobbered.
+        self._gen: dict[int, int] = {}
 
     def _get_keylock(self, key: tuple) -> threading.Lock:
         with self._lock:
@@ -25,10 +28,8 @@ class KeyedCache:
                 return None
             ts, value = entry
             if time.time() - ts >= self._ttl:
-                # Pop expired entry under the same lock so memory doesn't grow
-                # unboundedly for users who don't write (and thus never trigger
-                # an invalidate). Without this every distinct key sticks
-                # around at its full value size for the lifetime of the worker.
+                # Read-only users never invalidate, so expired entries would
+                # otherwise pin memory for the lifetime of the worker.
                 self._entries.pop(key, None)
                 return None
         return value
@@ -41,18 +42,22 @@ class KeyedCache:
         cached = self.get(key)
         if cached is not None:
             return cached
-        # Per-key lock serializes concurrent misses so fn() runs once.
         with self._get_keylock(key):
             cached = self.get(key)
             if cached is not None:
                 return cached
+            user_id = key[0] if key else None
+            with self._lock:
+                gen_before = self._gen.get(user_id, 0)
             value = fn()
-            self.set(key, value)
+            with self._lock:
+                if self._gen.get(user_id, 0) == gen_before:
+                    self._entries[key] = (time.time(), value)
             return value
 
     def invalidate(self, user_id: int) -> None:
-        # Keys are tuples with user_id as the first element.
         with self._lock:
+            self._gen[user_id] = self._gen.get(user_id, 0) + 1
             for k in list(self._entries.keys()):
                 if k and k[0] == user_id:
                     self._entries.pop(k, None)

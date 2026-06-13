@@ -20,7 +20,6 @@ PAYER_PALETTE: list[str] = [
 
 
 def color_for_payer(name: str) -> str:
-    # md5 only for stable mapping; not cryptographic.
     digest = hashlib.md5(name.encode("utf-8")).hexdigest()
     return PAYER_PALETTE[int(digest, 16) % len(PAYER_PALETTE)]
 
@@ -47,7 +46,7 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         }
         if not items_by_id:
             return []
-    # SQLite-only; if we move to Postgres, swap to to_char(date, 'YYYY-MM').
+    # SQLite-only — swap to to_char on Postgres.
     month_col = func.strftime("%Y-%m", Transaction.date)
     rows = (
         session.query(month_col)
@@ -70,10 +69,8 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
 def income_amount_with_override(
     tx_amount: float, override: TransactionOverride | None,
 ) -> float:
-    # Income is reported as a positive inflow. Plaid uses negative-=inflow,
-    # and the override (written by split rules) inherits that sign; treat
-    # both as magnitudes so a 50% split on a -2500 paycheck reads +1250, not
-    # -1250 (which would subtract from the headline income total).
+    # Plaid signs inflows negative; income is shown positive. Both raw and
+    # override are returned as magnitudes so a 50% split on -2500 reads +1250.
     if override and override.amount_override is not None:
         return abs(override.amount_override)
     return -tx_amount
@@ -124,6 +121,8 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             return out
 
     prev_start, prev_end = previous_month_window(start, end)
+    # Filter to amount<0 then route by RESOLVED category — matches
+    # monthly_cashflow across set_category overrides.
     tx_rows = (
         session.query(Transaction)
         .filter(
@@ -131,7 +130,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
             Transaction.date >= prev_start,
             Transaction.date <= end,
             Transaction.item_id.in_(items_by_id),
-            *rules_mod.build_scope_filter("income"),
+            Transaction.amount < 0,
             Transaction.is_internal_transfer.is_(False),
         )
         .all()
@@ -146,8 +145,17 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
     payer_counts: dict[str, int] = defaultdict(int)
     tx_list: list[dict] = []
     prev_total = 0.0
+    import pfc as _pfc
     for tx in tx_rows:
+        if tx.iso_currency_code and tx.iso_currency_code != "USD":
+            continue
         override = overrides_by_tx.get(tx.plaid_transaction_id)
+        resolved = (
+            (override.category_override if override and override.category_override else None)
+            or tx.pfc_primary
+        )
+        if not _pfc.is_strict_income(resolved):
+            continue
         amount, dismissed = _apply_income_override(tx, override)
         if dismissed:
             if not (start <= tx.date <= end):
@@ -178,8 +186,7 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
         })
 
     out["total"] = round(sum(payer_totals.values()), 2)
-    # Counts only non-dismissed rows; tx_list also holds dismissed rows for the
-    # restore action, so don't unify with len(tx_list).
+    # Count excludes dismissed; tx_list keeps them for the restore action.
     out["count"] = sum(payer_counts.values())
     out["payers"] = sorted(
         (

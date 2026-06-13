@@ -40,10 +40,14 @@ class User(Base):
     def get_plaid_credentials(self) -> Optional[tuple[str, str]]:
         if not self.plaid_client_id_encrypted or not self.plaid_secret_encrypted:
             return None
-        return (
-            crypto.decrypt(self.plaid_client_id_encrypted),
-            crypto.decrypt(self.plaid_secret_encrypted),
-        )
+        from cryptography.fernet import InvalidToken
+        try:
+            return (
+                crypto.decrypt(self.plaid_client_id_encrypted),
+                crypto.decrypt(self.plaid_secret_encrypted),
+            )
+        except InvalidToken:
+            return None
 
 
 class PlaidItem(Base):
@@ -197,6 +201,7 @@ class Transaction(Base):
     plaid_transaction_id: Mapped[str] = mapped_column(String(64), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
     amount: Mapped[float] = mapped_column(Float)
+    iso_currency_code: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)
     name: Mapped[str] = mapped_column(String(256))
     merchant_name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     pfc_primary: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

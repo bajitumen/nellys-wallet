@@ -72,6 +72,13 @@ def _classify(acct) -> str:
     return "other"
 
 
+# Cap every Plaid HTTP call. Without this, urllib3 waits forever for a
+# response, gunicorn's --timeout 90 (a liveness heartbeat under gthread)
+# doesn't kill the hung worker, and one stuck bank consumes a thread +
+# its executor + the per-user keylock until a health-check restart.
+PLAID_REQUEST_TIMEOUT_SECONDS: float = 30.0
+
+
 def plaid_client_for(user: User) -> plaid_api.PlaidApi:
     creds = user.get_plaid_credentials()
     if not creds:
@@ -94,7 +101,10 @@ def _fetch_one(client: plaid_api.PlaidApi, item: PlaidItem) -> dict:
     primary_color = item.primary_color
 
     try:
-        resp = client.accounts_get(AccountsGetRequest(access_token=token))
+        resp = client.accounts_get(
+            AccountsGetRequest(access_token=token),
+            _request_timeout=PLAID_REQUEST_TIMEOUT_SECONDS,
+        )
     except plaid.ApiException as e:
         body = getattr(e, "body", str(e))
         log.warning("accounts_get failed for %s: %s", institution, body[:500])

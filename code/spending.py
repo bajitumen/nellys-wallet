@@ -1,4 +1,5 @@
 import logging
+import threading
 from calendar import monthrange
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -15,10 +16,10 @@ import rules as rules_mod
 import transfers as transfers_mod
 from cache import KeyedCache
 from models import Transaction, TransactionOverride, User
+import providers
 from providers import plaid_client_for
 
-# income.py imports from spending at module load — keep `import income` local
-# in functions below to break the cycle.
+# income imports from spending at module load — keep `import income` local.
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ def available_months(user: User, session, source: str | None = None) -> list[dic
         }
         if not items_by_id:
             return []
-    # SQLite-only; if we move to Postgres, swap to to_char(date, 'YYYY-MM').
+    # SQLite-only — swap to to_char on Postgres.
     month_col = func.strftime("%Y-%m", Transaction.date)
     rows = (
         session.query(month_col)
@@ -77,9 +78,8 @@ def resolve_month(month: str | None) -> tuple[str, date, date, str]:
         y, m = int(y_str), int(m_str)
         if not (1 <= m <= 12):
             raise ValueError
-        # A request for any future month would yield end < start after the
-        # clamp below, and previous_month_window would explode on negative
-        # days. Snap any future month back to the current one.
+        # Snap future months to current — otherwise end<start collapses
+        # previous_month_window into negative-day territory and 500s.
         if (y, m) > (today.year, today.month):
             y, m = today.year, today.month
         start = date(y, m, 1)
@@ -94,8 +94,7 @@ def resolve_month(month: str | None) -> tuple[str, date, date, str]:
 
 
 def previous_month_window(start: date, end: date) -> tuple[date, date]:
-    # Day-aligned: shorter prev months are capped to month length. `end < start`
-    # would yield negative days and a min(...) day-of-month <= 0, so floor at 1.
+    # Day-aligned; cap at prev-month length, floor day-of-month at 1.
     if start.month == 1:
         prev_start = date(start.year - 1, 12, 1)
     else:
@@ -140,19 +139,19 @@ def _fetch_raw_transactions(client, item, start: date, end: date) -> dict:
 
     while True:
         try:
-            resp = client.transactions_get(TransactionsGetRequest(
-                access_token=token,
-                start_date=start,
-                end_date=end,
-                options=TransactionsGetRequestOptions(count=page_size, offset=offset),
-            ))
+            resp = client.transactions_get(
+                TransactionsGetRequest(
+                    access_token=token,
+                    start_date=start,
+                    end_date=end,
+                    options=TransactionsGetRequestOptions(count=page_size, offset=offset),
+                ),
+                _request_timeout=providers.PLAID_REQUEST_TIMEOUT_SECONDS,
+            )
         except plaid.ApiException as e:
             body = getattr(e, "body", str(e)) or ""
             log.warning("transactions_get failed for %s: %s", institution, body[:500])
-            # Sanitize for the user-facing toast — the raw body includes
-            # error_code, request_id, documentation_url, which leak via the
-            # /sync response. Map known codes to friendly messages and fall
-            # back to generic-temporary-failure for everything else.
+            # Sanitize — raw body leaks request_id/documentation_url etc.
             if "PRODUCT_NOT_READY" in body:
                 out["errors"].append(f"{institution}: transactions not yet ready")
             elif "NO_ACCOUNTS" in body or "PRODUCTS_NOT_SUPPORTED" in body:
@@ -181,12 +180,35 @@ def _fetch_raw_transactions(client, item, start: date, end: date) -> dict:
     return out
 
 
+_sync_locks_guard = threading.Lock()
+_sync_locks: dict[int, threading.Lock] = {}
+
+
+def _sync_lock(user_id: int) -> threading.Lock:
+    with _sync_locks_guard:
+        lock = _sync_locks.get(user_id)
+        if lock is None:
+            lock = threading.Lock()
+            _sync_locks[user_id] = lock
+        return lock
+
+
 def sync_transactions(user: User, session, days: int = 90) -> dict:
     out: dict = {"added": 0, "updated": 0, "errors": []}
-
     if not user.items:
         return out
+    # Serialize per-user — concurrent syncs would double-INSERT under uq_tx_user_plaid.
+    lock = _sync_lock(user.id)
+    if not lock.acquire(blocking=False):
+        out["errors"].append("Sync already in progress.")
+        return out
+    try:
+        return _sync_transactions_locked(user, session, days, out)
+    finally:
+        lock.release()
 
+
+def _sync_transactions_locked(user, session, days, out):
     try:
         client = plaid_client_for(user)
     except ValueError as e:
@@ -203,11 +225,8 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
             items,
         ))
 
-    # Key off plaid_transaction_id ONLY — not (user, date window). A Plaid
-    # date correction can move a stored row outside the window while the new
-    # date is inside; the old row would then look "missing" and we'd attempt
-    # a second INSERT that violates uq_tx_user_plaid and rolls back the whole
-    # sync. The id-only query covers the user's full history.
+    # Id-only — date-window filtering would treat Plaid date corrections as
+    # missing rows and trip uq_tx_user_plaid on the re-insert.
     existing = {
         t.plaid_transaction_id: t
         for t in session.query(Transaction)
@@ -218,10 +237,8 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
 
     new_inserts: list[Transaction] = []
     amount_changed_rows: list[Transaction] = []
-    # Per-item set of plaid_transaction_ids Plaid returned for the window,
-    # used after the loop to reconcile-and-delete rows Plaid no longer
-    # acknowledges (charge reversed, duplicate cleaned, re-issued under a
-    # new id). Only populated for items that responded without errors.
+    # Only healthy items populate this; window rows absent here are deleted
+    # below (Plaid dropped them — reversal, dedup, re-issue under new id).
     seen_ids_by_item: dict[int, set[str]] = {}
     healthy_items: set[int] = set()
     for item, result in per_item:
@@ -232,10 +249,7 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
         for tx in result["transactions"]:
             if getattr(tx, "pending", False):
                 continue
-            # Plaid's offset pagination can return the same transaction twice
-            # when a new tx posts mid-pagination and shifts the page boundary.
-            # Without this guard the second pass hits the INSERT branch again
-            # and the commit fails on uq_tx_user_plaid.
+            # Plaid offset pagination can echo a tx when a new one posts mid-page.
             if tx.transaction_id in plaid_ids_seen:
                 continue
             plaid_ids_seen.add(tx.transaction_id)
@@ -249,36 +263,28 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
             pfc_detailed = (
                 pfc_obj.detailed if pfc_obj and getattr(pfc_obj, "detailed", None) else None
             )
+            iso_currency = getattr(tx, "iso_currency_code", None)
+            if not isinstance(iso_currency, str):
+                iso_currency = None
             row = existing.get(tx.transaction_id)
             if row is not None:
                 new_amount = float(tx.amount or 0)
-                # If amount changed and a rule wrote a fixed-dollar or
-                # percentage split override on this row, the override now
-                # represents an outdated dollar value (50% of $100 ≠ 50% of $120).
-                # Mark for re-application after the row update.
                 amount_changed = (row.amount != new_amount)
                 row.amount = new_amount
                 row.name = tx.name
                 row.merchant_name = getattr(tx, "merchant_name", None)
                 row.pfc_primary = pfc_primary
                 row.pfc_detailed = pfc_detailed
+                row.iso_currency_code = iso_currency
                 row.item_id = item.id
-                # Update row.date — Plaid corrects dates on later syncs (a
-                # transaction that posted late can shift earlier). Without
-                # this, the row stays bucketed in the wrong month forever.
                 if tx.date is not None and row.date != tx.date:
                     row.date = tx.date
                 out["updated"] += 1
                 if amount_changed:
-                    # Flag for rule re-application below.
-                    if not hasattr(out, "_amount_changed_rows"):
-                        pass
                     amount_changed_rows.append(row)
             else:
-                # Carry any user override from pending → posted before insert.
-                # An override may already exist on the posted id from a prior
-                # sync or a manual touch; deleting it first avoids the
-                # uq_override_user_tx collision that would abort the sync.
+                # Move pending → posted override; drop any preexisting one
+                # at the posted id to avoid uq_override_user_tx.
                 if pending_row is not None:
                     session.query(TransactionOverride).filter(
                         TransactionOverride.user_id == user.id,
@@ -296,6 +302,7 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
                     plaid_transaction_id=tx.transaction_id,
                     date=tx.date,
                     amount=float(tx.amount or 0),
+                    iso_currency_code=iso_currency,
                     name=tx.name,
                     merchant_name=getattr(tx, "merchant_name", None),
                     pfc_primary=pfc_primary,
@@ -309,11 +316,9 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
                 session.delete(pending_row)
                 existing.pop(pending_id, None)
 
-    # Reconcile-and-delete: any tx we already have in the window for an item
-    # that responded healthily but DIDN'T return the tx is a row Plaid no
-    # longer acknowledges (bank reversed, duplicate cleaned, re-issued).
-    # Without this, the stale row keeps counting toward spending/income
-    # forever. Skip items that errored — we can't tell deleted from missed.
+    # Reconcile-and-delete rows healthy items stopped returning (reversal,
+    # dedup, re-issue). Skip errored items — can't distinguish deleted
+    # from missed.
     removed_count = 0
     if healthy_items:
         in_window = (
@@ -330,12 +335,10 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
             seen = seen_ids_by_item.get(row.item_id, set())
             if row.plaid_transaction_id in seen:
                 continue
+            # Still acknowledged under a different item_id (item shift since
+            # last sync) — keep it.
             if row.plaid_transaction_id in plaid_ids_seen:
-                # Row's item_id may have shifted since it was last synced;
-                # the tx is still in the response under a different item.
                 continue
-            # Clean up any user override on this row so the unique constraint
-            # doesn't trip if Plaid later re-issues the same plaid_transaction_id.
             session.query(TransactionOverride).filter_by(
                 user_id=user.id, plaid_transaction_id=row.plaid_transaction_id,
             ).delete(synchronize_session=False)
@@ -345,29 +348,14 @@ def sync_transactions(user: User, session, days: int = 90) -> dict:
         out["removed"] = removed_count
 
     rules_mod.apply_rules_to_new_transactions(user.id, new_inserts, session)
-    # Rerun rule matching on rows whose amount changed so any fixed-dollar /
-    # percentage split override gets recomputed against the new amount.
+    # Recompute split overrides — a 50%-of-$100 stored value no longer
+    # matches after Plaid corrects the amount to $120.
     if amount_changed_rows:
         rules_mod._recompute_overrides_for_txs(user.id, amount_changed_rows, session)
 
-    # Flag new internal-transfer pairs so the spending/income filters drop them.
     transfers_mod.pair_internal_transfers(user.id, session)
 
-    # Only stamp last_transactions_sync when the sync actually did SOMETHING
-    # useful — every item errored AND we added/updated/removed zero rows means
-    # the bank or Plaid is down. Bumping the timestamp anyway suppresses the
-    # daily auto-sync retry (api_me's needs_daily_sync), and data silently
-    # stays a day stale.
-    total_items = len(items)
-    everything_failed = (
-        total_items > 0
-        and len(healthy_items) == 0
-        and out["added"] == 0
-        and out["updated"] == 0
-        and removed_count == 0
-    )
-    if not everything_failed:
-        user.last_transactions_sync = datetime.now(timezone.utc).replace(tzinfo=None)
+    user.last_transactions_sync = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()
     invalidate_cache(user.id)
     import income as _income
@@ -463,7 +451,11 @@ def _fetch_last_month_uncached(
     sub_counts: dict[tuple[str, str], int] = defaultdict(int)
     tx_list: list[dict] = []
     prev_total = 0.0
+    skipped_non_usd = 0
     for tx in tx_rows:
+        if tx.iso_currency_code and tx.iso_currency_code != "USD":
+            skipped_non_usd += 1
+            continue
         override = overrides_by_tx.get(tx.plaid_transaction_id)
         resolved = _apply_spend_override(tx, override)
         if resolved is None:
@@ -503,9 +495,7 @@ def _fetch_last_month_uncached(
             "rule_id": rule_id_by_tx.get(tx.plaid_transaction_id),
         })
 
-    # Floats accumulated across hundreds of transactions drift in the last
-    # cents; round at the aggregation boundary so the UI never displays e.g.
-    # 1234.5600000001.
+    # Round at the aggregation boundary; float drift otherwise prints 1234.5600000001.
     out["total"] = round(sum(totals.values()), 2)
     out["count"] = sum(counts.values())
 
@@ -516,10 +506,8 @@ def _fetch_last_month_uncached(
         if primary:
             primary_budgets[primary] += amount
 
-    # Always include every spend-side primary so the table renders a row per
-    # category at $0 even when nothing landed in it for this month/source.
-    # Income-side primaries (INCOME / TRANSFER_IN) never belong on the
-    # spending table.
+    # Always include every spend-side primary so the table renders $0 rows;
+    # never include INCOME / TRANSFER_IN.
     category_keys = {
         p for p in pfc.PFC_TAXONOMY.keys() if pfc.is_spend_category(p)
     }
@@ -560,6 +548,10 @@ def _fetch_last_month_uncached(
 
     if prev_total > 0:
         out["prev_month_change_pct"] = round((out["total"] - prev_total) / prev_total * 100, 1)
+    if skipped_non_usd:
+        out.setdefault("errors", []).append(
+            f"Hid {skipped_non_usd} transaction(s) in non-USD currencies — totals are USD only."
+        )
 
     return out
 
@@ -573,9 +565,7 @@ def monthly_totals(user: User, session, n_months: int = 6) -> list[dict]:
 
 
 def monthly_cashflow(user: User, session, n_months: int = 6) -> list[dict]:
-    # Hot path: /api/overview runs this on every Dashboard load and refocus.
-    # The result is identical until an override / sync / rule change occurs,
-    # all of which invalidate_cache(user.id).
+    # /api/overview hot path; invalidated by every override/sync/rule mutation.
     return _cache.get_or_compute(
         (user.id, "cashflow", n_months),
         lambda: _monthly_cashflow_uncached(user, session, n_months=n_months),
@@ -617,17 +607,17 @@ def _monthly_cashflow_uncached(user: User, session, n_months: int = 6) -> list[d
     for tx in tx_rows:
         if tx.is_internal_transfer:
             continue
+        if tx.iso_currency_code and tx.iso_currency_code != "USD":
+            continue
         ov = overrides_by_tx.get(tx.plaid_transaction_id)
         if ov and ov.dismissed:
             continue
         if tx.amount is None:
             continue
         key = (tx.date.year, tx.date.month)
-        # Route by the resolved category (override > raw primary). The sign
-        # guards must match build_scope_filter() exactly — pages enforce
-        # amount > 0 for spending and amount < 0 for income; without the
-        # same guards here, refunds (negative spend) and income reversals
-        # (positive income) flow through and disagree with page totals.
+        # Sign guards must match build_scope_filter() — pages enforce
+        # amount>0 for spend, amount<0 for income; refunds and reversals
+        # would otherwise flow through and disagree with page totals.
         resolved_category = (
             (ov.category_override if ov and ov.category_override else None)
             or tx.pfc_primary
@@ -651,8 +641,7 @@ def _monthly_cashflow_uncached(user: User, session, n_months: int = 6) -> list[d
             "label": date(y, m, 1).strftime("%b %Y"),
             "spend": round(spend_by_month.get(key, 0.0), 2),
             "income": round(income_by_month.get(key, 0.0), 2),
-            # UTC so month boundaries don't fall on the wrong side of the
-            # client's range cutoffs when the server's clock isn't in UTC.
+            # UTC so the client's range cutoffs land consistently.
             "ts": int(datetime(y, m, 1, tzinfo=timezone.utc).timestamp()),
         })
         m += 1
@@ -663,7 +652,6 @@ def _monthly_cashflow_uncached(user: User, session, n_months: int = 6) -> list[d
 
 
 def relative_time(dt: datetime | None) -> str:
-    # dt is naive UTC.
     if dt is None:
         return "never"
     seconds = (datetime.now(timezone.utc).replace(tzinfo=None) - dt).total_seconds()

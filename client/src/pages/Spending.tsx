@@ -12,7 +12,7 @@ import { useToast } from "../components/Toast";
 import { TxFilters, applyTxFilters, type FilterColumn } from "../components/TxFilters";
 import { AnimatedCount, AnimatedUsd } from "../components/AnimatedNumber";
 import { SplitDialog } from "../components/SplitDialog";
-import { scrollToTransactions } from "../lib/scrollToTransactions";
+import { clientCurrentMonth, scrollToTransactions } from "../lib/scrollToTransactions";
 import { useSorted } from "../lib/useSorted";
 import {
   RuleModal, type ExistingRule, type Primary, type RuleMatchOptions,
@@ -72,7 +72,7 @@ function shortDate(iso: string): string {
 
 export default function SpendingPage() {
   const [searchParams] = useSearchParams();
-  const month = searchParams.get("month") || undefined;
+  const month = searchParams.get("month") || clientCurrentMonth();
   const source = searchParams.get("source") || undefined;
   const cats = searchParams.getAll("category");
 

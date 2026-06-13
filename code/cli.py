@@ -302,6 +302,29 @@ def cmd_probe_logo():
             print("→ Plaid did not return a logo for this institution_id.")
 
 
+def cmd_rotate_key():
+    # Re-encrypt every token under current FERNET_KEY; run after setting
+    # FERNET_KEY_OLD to the prior keys, then unset FERNET_KEY_OLD.
+    import crypto
+    from models import PlaidItem, User
+    with SessionLocal() as session:
+        n_items = n_users = 0
+        for item in session.query(PlaidItem).all():
+            if item.access_token_encrypted:
+                item.access_token_encrypted = crypto.rotate(item.access_token_encrypted)
+                n_items += 1
+        for user in session.query(User).all():
+            if user.plaid_client_id_encrypted:
+                user.plaid_client_id_encrypted = crypto.rotate(user.plaid_client_id_encrypted)
+            if user.plaid_secret_encrypted:
+                user.plaid_secret_encrypted = crypto.rotate(user.plaid_secret_encrypted)
+            if user.plaid_client_id_encrypted or user.plaid_secret_encrypted:
+                n_users += 1
+        session.commit()
+        print(f"Rotated {n_items} access tokens and {n_users} user credential pairs.")
+        print("Once verified, unset FERNET_KEY_OLD.")
+
+
 COMMANDS = {
     "init-db": cmd_init_db,
     "seed-me": cmd_seed_me,
@@ -311,6 +334,7 @@ COMMANDS = {
     "sync": cmd_sync,
     "reset-items": cmd_reset_items,
     "probe-logo": cmd_probe_logo,
+    "rotate-key": cmd_rotate_key,
 }
 
 

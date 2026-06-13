@@ -99,10 +99,8 @@ function buildChart(
     value: pathYs[i],
   }));
 
-  // Use the leftmost rendered value (which is 0 when the range starts before
-  // any real snapshot — the "synthetic prefix") so the trend matches what the
-  // user actually sees on the graph. lastValue is still the latest real
-  // snapshot — that's what the headline displays.
+  // Leftmost rendered value (0 under synthetic prefix) so trend matches
+  // the graph; lastValue stays the latest real snapshot for the headline.
   const realValues = series.map((s) => s.value);
   const firstValue = pathYs[0];
   const lastValue = realValues[realValues.length - 1];
@@ -284,7 +282,7 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
             style={{ left: `${hover.clientX}px`, top: `${hover.clientY}px` }}
           >
             {hoverDate?.toLocaleDateString("en-US", {
-              month: "short", day: "numeric", year: "numeric",
+              month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
             })}
             : {formatUsd(hover.value)}
           </div>

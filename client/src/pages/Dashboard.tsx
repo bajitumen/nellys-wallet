@@ -179,7 +179,11 @@ function AccountBucket({
                 </td>
               )}
               <td className="num">
-                {a.balance == null ? "—" : (negative ? "-" : "") + formatUsd(a.balance)}
+                {a.balance == null
+                  ? "—"
+                  : negative
+                    ? formatUsd(-Math.abs(a.balance))
+                    : formatUsd(a.balance)}
               </td>
             </tr>
           ))}

@@ -1,9 +1,5 @@
-// Auth contract: this client deliberately sends NO Authorization header.
-// The Flask backend reads Clerk's __session cookie via verify_session_cookie
-// (code/auth.py), so the only auth signal is `credentials: "same-origin"`
-// putting that cookie on the request. Switching the backend to header-based
-// bearer tokens would silently log every user out — don't "fix" this without
-// updating both sides together.
+// Auth is `credentials: "same-origin"` only — backend reads Clerk's __session
+// cookie. Don't add an Authorization header without updating auth.py too.
 
 export class ApiError extends Error {
   status: number;
@@ -38,10 +34,7 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   try {
     return JSON.parse(text) as T;
   } catch {
-    // A 2xx with a body that doesn't parse as JSON means something upstream
-    // (proxy error page, truncated response) intercepted us. Surface as an
-    // ApiError so the page hits its error branch instead of crashing on
-    // data.foo.map(...).
+    // 2xx with non-JSON body means an upstream proxy intercepted us.
     throw new ApiError(res.status, "Server returned non-JSON response");
   }
 }
@@ -75,9 +68,10 @@ async function sendWithCsrf(url: string, method: "POST" | "DELETE", body?: unkno
   });
 
   const first = await send(await fetchCsrfToken());
-  // The cached token can outlive a session rotation; one retry with a fresh
-  // token covers that without surfacing a 403 the user has to refresh away.
-  if (first.status !== 403) return first;
+  // flask-wtf returns 400, not 403 — sniff body for CSRF, retry once.
+  if (first.status !== 400 && first.status !== 403) return first;
+  const peek = await first.clone().text();
+  if (!/CSRF|csrf/.test(peek)) return first;
   _csrfToken = null;
   return send(await fetchCsrfToken(true));
 }

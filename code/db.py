@@ -8,16 +8,16 @@ import config
 
 
 def _restrict_sqlite_perms() -> None:
-    # SQLite file defaults world-readable; budgets/snapshots/overrides leak without chmod.
+    # SQLite defaults world-readable; budgets/snapshots/overrides leak.
     if not config.DATABASE_URL.startswith("sqlite:///"):
         return
     path = config.DATABASE_URL[len("sqlite:///") :]
     if not os.path.exists(path):
         return
     try:
-        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
     except OSError:
-        pass  # best-effort; permission errors here aren't fatal
+        pass
 
 
 class Base(DeclarativeBase):
@@ -26,7 +26,6 @@ class Base(DeclarativeBase):
 
 engine = create_engine(
     config.DATABASE_URL,
-    # SQLite-specific: allow connections from multiple threads (Flask dev server).
     connect_args={"check_same_thread": False} if config.DATABASE_URL.startswith("sqlite") else {},
     echo=False,
 )
@@ -35,25 +34,14 @@ engine = create_engine(
 def _is_file_backed_sqlite(url: str) -> bool:
     if not url.startswith("sqlite"):
         return False
-    # In-memory: sqlite:// or sqlite:///:memory:
     if url in ("sqlite://", "sqlite:///") or url.endswith(":memory:"):
         return False
     return True
 
 
 if config.DATABASE_URL.startswith("sqlite"):
-    # WAL allows concurrent reads with one writer (default is full DB lock).
-    # busy_timeout makes writers wait up to 10s for a lock instead of failing
-    # immediately — prevents user-visible hangs when a background sync overlaps
-    # with a rule save.
-    #
-    # Operational caveats for deploys:
-    #   * WAL writes two sidecar files (<db>-wal, <db>-shm). A backup that
-    #     copies only the main .db file can lose committed data. Use
-    #     `sqlite3.backup()` / `VACUUM INTO`, not `cp`.
-    #   * WAL relies on POSIX fcntl locks; misbehaves on networked filesystems
-    #     (NFS, SMB). Keep the DB on local disk.
-    # WAL is skipped for in-memory test DBs (no-op there anyway).
+    # WAL needs sidecar files (-wal, -shm); back up via sqlite3.backup or
+    # VACUUM INTO, never `cp`. Local disk only — fcntl breaks on NFS/SMB.
     @event.listens_for(engine, "connect")
     def _sqlite_pragmas(dbapi_connection, _record):
         cur = dbapi_connection.cursor()
@@ -67,36 +55,13 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def init_db():
-    """Bring the SQLite schema up to date at boot.
-
-    Called once from `python code/cli.py init-db` in entrypoint.sh BEFORE
-    gunicorn starts, so the multi-worker concurrent-ALTER race that used to
-    exist when init_db ran at app-module-import time no longer applies. App
-    workers see the schema as-of right before they boot.
-
-    History note: alembic is in pyproject.toml but intentionally unused. We
-    run a single-file SQLite DB on a small-N user base, so a hand-rolled
-    migration block that is idempotent on each boot has been simpler to reason
-    about than a generated migration chain.
-
-    Constraints to preserve if you swap this for alembic later:
-      * SQLite ALTER TABLE is limited (no DROP COLUMN before 3.35, no
-        rename-with-FK, no constraint-changes-in-place). Several of the
-        migrations below work around exactly those gaps.
-      * The block must remain idempotent — re-running it on an already-
-        migrated DB is safe (the entrypoint calls it every boot).
-      * Schema changes affecting only NEW tables can lean on create_all
-        below; only existing tables need an explicit ALTER block.
-      * The app's in-process caches (cache.py KeyedCache) assume a single
-        gunicorn worker (entrypoint.sh uses -w 1 --threads N). Adding -w 2
-        would reintroduce silent cross-worker cache staleness; assert in
-        gunicorn config rather than relax this.
-    """
+    # Hand-rolled idempotent migrations; alembic in pyproject is intentionally
+    # unused for this single-file SQLite DB. KeyedCache assumes -w 1 — adding
+    # workers reintroduces silent cross-worker staleness.
     from sqlalchemy import text
-    import models  # noqa: F401 — register models with Base.metadata
+    import models  # noqa: F401
     Base.metadata.create_all(engine)
 
-    # Lightweight in-place migrations for existing DBs.
     with engine.connect() as conn:
         ov_cols = {
             row[1] for row in conn.execute(text("PRAGMA table_info(transaction_overrides)"))
@@ -118,9 +83,8 @@ def init_db():
                 "ALTER TABLE transaction_overrides ADD COLUMN source VARCHAR(16) "
                 "NOT NULL DEFAULT 'manual'"
             ))
-        # Orphan NOT-NULL columns from an earlier model. Inserts of new
-        # override rows fail until they're dropped, since the model doesn't
-        # set them and the DB has no defaults.
+        # Orphan NOT-NULL columns from an earlier model — new inserts fail
+        # until they're dropped.
         for orphan in ("split_count", "created_at", "updated_at"):
             if orphan in ov_cols:
                 conn.execute(text(
@@ -138,9 +102,6 @@ def init_db():
             conn.execute(text("ALTER TABLE users ADD COLUMN monthly_income FLOAT"))
         if user_cols and "monthly_spend" not in user_cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN monthly_spend FLOAT"))
-        # count_transfers_as_transactions is intentionally abandoned: the model no
-        # longer maps it and nothing reads it. Left in existing DBs (SQLite drops
-        # are destructive); never re-added.
 
         tx_cols = {
             row[1] for row in conn.execute(text("PRAGMA table_info(transactions)"))
@@ -157,6 +118,10 @@ def init_db():
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_tx_internal_transfer "
                 "ON transactions (user_id, is_internal_transfer)"
+            ))
+        if tx_cols and "iso_currency_code" not in tx_cols:
+            conn.execute(text(
+                "ALTER TABLE transactions ADD COLUMN iso_currency_code VARCHAR(3)"
             ))
 
         item_cols = {
@@ -204,8 +169,6 @@ def init_db():
                 "SELECT name FROM sqlite_master "
                 "WHERE type='index' AND tbl_name='transaction_rules'"
             ))}
-            # The old uniqueness shape is meaningless once rules can have multiple
-            # conditions; drop both legacy variants.
             for legacy in (
                 "uq_rule_user_field_op_value_action",
                 "uq_rule_user_field_op_value_action_scope",
@@ -213,8 +176,7 @@ def init_db():
                 if legacy in rule_indexes:
                     conn.execute(text(f"DROP INDEX {legacy}"))
 
-        # Idempotent per-rule: conditions are the sole representation now, so a
-        # legacy rule left without condition rows would read as having none.
+        # Backfill conditions for legacy rules — without rows they read as no-op.
         cond_exists = conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name='transaction_rule_conditions'"
@@ -230,8 +192,7 @@ def init_db():
                 "WHERE c.rule_id = r.id)"
             ))
 
-        # Composite index for (user_id, date) Transaction reads. create_all
-        # only adds the index on a fresh DB; this picks up existing DBs.
+        # Backfill (user_id, date) on existing DBs — create_all only seeds fresh ones.
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_tx_user_date "
             "ON transactions (user_id, date)"
