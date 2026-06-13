@@ -67,18 +67,21 @@ export function TxFilters<T>({ rows, columns }: Props<T>) {
     setOpenUp(rect.bottom > window.innerHeight - 8);
   }, [menu]);
 
+  // Chip toggles use replace, not push, so 10 successive chip clicks don't
+  // need 10 Back presses to leave the page. Browser back/forward still moves
+  // between meaningful navigations (month, page change, etc.).
   function removeChip(urlParam: string, value: string) {
     const p = new URLSearchParams(searchParams);
     const keep = p.getAll(urlParam).filter((v) => v !== value);
     p.delete(urlParam);
     keep.forEach((v) => p.append(urlParam, v));
-    setSearchParams(p);
+    setSearchParams(p, { replace: true });
   }
 
   function addFilter(urlParam: string, value: string) {
     const p = new URLSearchParams(searchParams);
     if (!p.getAll(urlParam).includes(value)) p.append(urlParam, value);
-    setSearchParams(p);
+    setSearchParams(p, { replace: true });
     setMenu({ kind: "closed" });
   }
 

@@ -69,26 +69,22 @@ function PlanningView({ data }: { data: PlanningData }) {
   const qc = useQueryClient();
   const toast = useToast();
 
-  const [rates, setRates] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      data.accounts.map((a) => [
-        a.id, data.rates[a.id] == null ? "" : data.rates[a.id].toFixed(2),
-      ]),
-    ),
+  const initialIncome = data.monthly_income == null ? "" : data.monthly_income.toFixed(0);
+  const initialSpend = data.monthly_spend == null ? "" : data.monthly_spend.toFixed(0);
+  const initialRates: Record<string, string> = Object.fromEntries(
+    data.accounts.map((a) => [
+      a.id, data.rates[a.id] == null ? "" : data.rates[a.id].toFixed(2),
+    ]),
   );
-  const [contribs, setContribs] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      data.accounts.map((a) => [
-        a.id, data.contributions[a.id] == null ? "" : data.contributions[a.id].toFixed(0),
-      ]),
-    ),
+  const initialContribs: Record<string, string> = Object.fromEntries(
+    data.accounts.map((a) => [
+      a.id, data.contributions[a.id] == null ? "" : data.contributions[a.id].toFixed(0),
+    ]),
   );
-  const [income, setIncome] = useState<string>(
-    data.monthly_income == null ? "" : data.monthly_income.toFixed(0),
-  );
-  const [spend, setSpend] = useState<string>(
-    data.monthly_spend == null ? "" : data.monthly_spend.toFixed(0),
-  );
+  const [rates, setRates] = useState<Record<string, string>>(initialRates);
+  const [contribs, setContribs] = useState<Record<string, string>>(initialContribs);
+  const [income, setIncome] = useState<string>(initialIncome);
+  const [spend, setSpend] = useState<string>(initialSpend);
 
   const saveRate = useMutation({
     mutationFn: (vars: { id: string; rate: string }) =>
@@ -148,7 +144,11 @@ function PlanningView({ data }: { data: PlanningData }) {
                     placeholder={data.avg_monthly_income ? data.avg_monthly_income.toFixed(0) : "0"}
                     value={income}
                     onChange={(e) => setIncome(e.target.value)}
-                    onBlur={() => saveCashflow.mutate({ field: "income", value: income })}
+                    onBlur={() => {
+                      if (income !== initialIncome) {
+                        saveCashflow.mutate({ field: "income", value: income });
+                      }
+                    }}
                   />
                 </span>
               </label>
@@ -164,7 +164,11 @@ function PlanningView({ data }: { data: PlanningData }) {
                     placeholder={data.avg_monthly_spend ? data.avg_monthly_spend.toFixed(0) : "0"}
                     value={spend}
                     onChange={(e) => setSpend(e.target.value)}
-                    onBlur={() => saveCashflow.mutate({ field: "spend", value: spend })}
+                    onBlur={() => {
+                      if (spend !== initialSpend) {
+                        saveCashflow.mutate({ field: "spend", value: spend });
+                      }
+                    }}
                   />
                 </span>
               </label>
@@ -215,9 +219,12 @@ function PlanningView({ data }: { data: PlanningData }) {
                         onChange={(e) =>
                           setRates((p) => ({ ...p, [a.id]: e.target.value }))
                         }
-                        onBlur={() =>
-                          saveRate.mutate({ id: a.id, rate: rates[a.id] ?? "" })
-                        }
+                        onBlur={() => {
+                          const current = rates[a.id] ?? "";
+                          if (current !== (initialRates[a.id] ?? "")) {
+                            saveRate.mutate({ id: a.id, rate: current });
+                          }
+                        }}
                       />
                       <span className="prefix">%</span>
                     </span>
@@ -235,9 +242,12 @@ function PlanningView({ data }: { data: PlanningData }) {
                         onChange={(e) =>
                           setContribs((p) => ({ ...p, [a.id]: e.target.value }))
                         }
-                        onBlur={() =>
-                          saveContrib.mutate({ id: a.id, value: contribs[a.id] ?? "" })
-                        }
+                        onBlur={() => {
+                          const current = contribs[a.id] ?? "";
+                          if (current !== (initialContribs[a.id] ?? "")) {
+                            saveContrib.mutate({ id: a.id, value: current });
+                          }
+                        }}
                       />
                     </span>
                   </td>

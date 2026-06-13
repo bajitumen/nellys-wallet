@@ -150,13 +150,22 @@ function BudgetGroup({ group }: { group: Group }) {
 function BudgetRow({ sub }: { sub: Subitem }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [value, setValue] = useState<string>(sub.amount ? sub.amount.toFixed(2) : "");
+  const initialValue = sub.amount ? sub.amount.toFixed(2) : "";
+  const [value, setValue] = useState<string>(initialValue);
   const save = useMutation({
     mutationFn: (amount: string) =>
       postJson(`/budget/${encodeURIComponent(sub.code)}`, { amount }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["budget"] }),
     onError: (e: Error) => toast.error(`Could not save budget for ${sub.label}: ${e.message}`),
   });
+
+  function onBlur() {
+    // Skip the POST when the user tabbed through without touching the field.
+    // Every save busts the spending cache + triggers a month recompute, and
+    // an erroring server would stack a toast per untouched input on tab-out.
+    if (value === initialValue) return;
+    save.mutate(value);
+  }
 
   const actualClass = sub.actual
     ? sub.amount && sub.actual <= sub.amount
@@ -182,7 +191,7 @@ function BudgetRow({ sub }: { sub: Subitem }) {
             className="budget-input numeric-input"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            onBlur={() => save.mutate(value)}
+            onBlur={onBlur}
           />
         </span>
       </td>

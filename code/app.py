@@ -8,6 +8,7 @@ from pathlib import Path
 from flask import Flask, g, jsonify, request, send_from_directory
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 from sqlalchemy import func, text
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
 import budget as budget_mod
@@ -33,6 +34,18 @@ log = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CLIENT_DIST = _REPO_ROOT / "client" / "dist"
 
+
+def _invalidate_user_caches(user_id: int) -> None:
+    """Bust every cache keyed on this user. Override / rule / budget mutations
+    can affect both the spending page and the income page (dismiss applies to
+    either side; an income-scoped rule edits income totals; a category-cross
+    override moves a transaction between sides). Previously only the spending
+    cache was invalidated, so dismissed income visibly reappeared on the next
+    refetch for up to 60s."""
+    spending_mod.invalidate_cache(user_id)
+    income_mod.invalidate_cache(user_id)
+    rules_mod.invalidate_cache(user_id)
+
 app = Flask(__name__)
 app.secret_key = config.FLASK_SECRET_KEY
 app.config.update(
@@ -45,6 +58,12 @@ app.config.update(
     # hour; the client retries once on 403 with a fresh token (api.ts).
     WTF_CSRF_TIME_LIMIT=3600,
 )
+
+# Render terminates TLS at its proxy and forwards via plain HTTP; without
+# ProxyFix, request.is_secure is False, request.remote_addr is the proxy IP,
+# and url_for(_external=True) builds http:// URLs. Trust exactly one hop.
+if config.IS_PRODUCTION:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_for=1, x_host=1)
 
 csrf = CSRFProtect(app)
 
@@ -59,9 +78,27 @@ _SECURITY_HEADERS = {
 # Baseline CSP. 'unsafe-inline' on style/script is required for Clerk's SDK
 # injection + the theme bootstrap in index.html; tightening to nonces is a
 # larger refactor. The connect/frame allowlists cover Clerk and Plaid Link.
+# Production Clerk instances live at clerk.<your-domain> (a CNAME the user
+# sets up in the Clerk dashboard), which doesn't match *.clerk.accounts.dev
+# or *.clerk.com. CLERK_FRONTEND_API holds that host (no protocol) — fold
+# it into the CSP allowlist so a pk_live_ key isn't blocked at runtime.
+_CLERK_PROD_HOSTS = (
+    [f"https://{config.CLERK_FRONTEND_API}"] if config.CLERK_FRONTEND_API else []
+)
+_CLERK_HOSTS = " ".join([
+    "https://*.clerk.accounts.dev",
+    "https://*.clerk.com",
+    *_CLERK_PROD_HOSTS,
+])
+# Cloudflare Turnstile is Clerk's default bot-protection captcha; without it
+# in script-src + frame-src + connect-src, sign-ups that hit the captcha
+# silently fail to render the challenge.
+_TURNSTILE = "https://challenges.cloudflare.com"
+_PLAID_HOSTS = "https://*.plaid.com https://cdn.plaid.com"
+
 _CSP = "; ".join([
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev https://*.clerk.com https://*.plaid.com https://cdn.plaid.com",
+    f"script-src 'self' 'unsafe-inline' {_CLERK_HOSTS} {_PLAID_HOSTS} {_TURNSTILE}",
     # Clerk's SDK spawns a Web Worker from a blob: URL for background session
     # refresh; without this it falls back to script-src (no blob:), the worker
     # is blocked, and the __session cookie silently goes stale on idle tabs —
@@ -70,8 +107,8 @@ _CSP = "; ".join([
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self' data:",
-    "connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://*.plaid.com",
-    "frame-src https://*.clerk.accounts.dev https://*.clerk.com https://*.plaid.com https://cdn.plaid.com",
+    f"connect-src 'self' {_CLERK_HOSTS} {_PLAID_HOSTS} {_TURNSTILE}",
+    f"frame-src {_CLERK_HOSTS} {_PLAID_HOSTS} {_TURNSTILE}",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -149,7 +186,14 @@ def _month_options(n: int = 12) -> list[dict]:
 def add_response_headers(response):
     for header, value in _SECURITY_HEADERS.items():
         response.headers.setdefault(header, value)
-    if request.path.startswith("/static/"):
+    if request.path.startswith("/assets/"):
+        # Vite ships content-hashed bundles under /assets/, so their bytes
+        # are immutable for the lifetime of that filename. Tell the browser
+        # to skip revalidation entirely.
+        response.cache_control.public = True
+        response.cache_control.max_age = 31536000
+        response.cache_control.immutable = True
+    elif request.path.startswith("/static/"):
         response.cache_control.public = True
         response.cache_control.max_age = 86400
     return response
@@ -206,12 +250,12 @@ def transaction_override(session, user, tx_id):
     # check the user could create override rows for arbitrary plaid_transaction
     # ids (a slow DB-growing nuisance, and conceptually a cross-tenant write
     # surface even though it only ever materializes on their own row).
-    owns_tx = session.query(
+    tx_row = (
         session.query(Transaction)
         .filter_by(user_id=user.id, plaid_transaction_id=tx_id)
-        .exists()
-    ).scalar()
-    if not owns_tx:
+        .one_or_none()
+    )
+    if tx_row is None:
         return jsonify({"error": "Transaction not found"}), 404
 
     override = (
@@ -223,8 +267,14 @@ def transaction_override(session, user, tx_id):
     if data.get("clear"):
         if override is not None:
             session.delete(override)
-            session.commit()
-        spending_mod.invalidate_cache(user.id)
+            session.flush()
+        # Re-apply still-matching rules. Without this, a rule-sourced dismiss
+        # that the user "cleared" silently rejoins totals while the UI still
+        # shows the rule badge (applied_rule_id_by_tx reads from rule matching,
+        # not from the override row), so rule state and money state disagree.
+        rules_mod._recompute_overrides_for_txs(user.id, [tx_row], session)
+        session.commit()
+        _invalidate_user_caches(user.id)
         return jsonify({"ok": True, "cleared": True})
 
     if override is None:
@@ -245,11 +295,20 @@ def transaction_override(session, user, tx_id):
         # A detailed code rooted in a different primary than the resolved
         # category lands in a (primary, detailed) cell that _subitems_for
         # never iterates — the amount shows in the primary total but in no
-        # subitem. Match the Plaid-detailed import guard.
-        if detailed and override.category_override:
-            if pfc.primary_of(detailed) != override.category_override:
+        # subitem. Validate against the RESOLVED primary, not just the one
+        # in this payload — a "set detailed only" call against a tx whose
+        # primary is FOOD_AND_DRINK must reject a TRAVEL_FLIGHTS detailed.
+        resolved_primary = override.category_override or tx_row.pfc_primary
+        if detailed and resolved_primary:
+            if pfc.primary_of(detailed) != resolved_primary:
                 return jsonify({"error": "Detailed code does not belong to chosen category"}), 400
         override.detailed_override = detailed
+    # If the caller cleared category in this payload AND left a stale detailed
+    # override on the row, drop it — the detailed code is no longer guaranteed
+    # to match the resolved primary.
+    if "category" in data and override.category_override is None and override.detailed_override:
+        if pfc.primary_of(override.detailed_override) != tx_row.pfc_primary:
+            override.detailed_override = None
     if "amount" in data:
         if data["amount"] is None:
             override.amount_override = None
@@ -277,7 +336,7 @@ def transaction_override(session, user, tx_id):
     override.source = "manual"
 
     session.commit()
-    spending_mod.invalidate_cache(user.id)
+    _invalidate_user_caches(user.id)
     return jsonify({
         "ok": True,
         "category": override.category_override,
@@ -449,7 +508,7 @@ def rules_create(session, user):
             session.rollback()
             applied = 0
             apply_warning = "Rule saved, but applying to past transactions failed."
-    spending_mod.invalidate_cache(user.id)
+    _invalidate_user_caches(user.id)
     out = {"ok": True, "rule_id": rule.id, "applied_to": applied}
     if apply_warning:
         out["warning"] = apply_warning
@@ -492,7 +551,7 @@ def rules_delete(session, user, rule_id):
         log.exception("delete_rule failed for rule_id=%s", rule_id)
         session.rollback()
         return jsonify({"error": "Could not delete the rule. Please try again."}), 500
-    spending_mod.invalidate_cache(user.id)
+    _invalidate_user_caches(user.id)
     return jsonify({"ok": True})
 
 
@@ -563,25 +622,6 @@ def planning_cashflow_save(session, user):
     return jsonify({"ok": True, "value": parsed})
 
 
-@app.route("/budget/summary")
-@with_user
-def budget_summary(session, user):
-    if user is None:
-        return jsonify({"error": "No user"}), 401
-    month_arg = request.args.get("month")
-    spend = spending_mod.fetch_last_month(
-        user, month=month_arg, source=None, session=session,
-    )
-    spent_by_detailed: dict[str, float] = {}
-    for c in spend.get("categories", []):
-        for s in c.get("subitems", []):
-            spent_by_detailed[s["code"]] = s["total"]
-    return jsonify({
-        "month": spend["month"],
-        "month_label": spend["month_label"],
-        "total_spent": spend["total"],
-        "spent_by_detailed": spent_by_detailed,
-    })
 
 
 @app.route("/budget/<detailed>", methods=["POST"])
@@ -609,7 +649,7 @@ def budget_save(session, user, detailed):
     assert primary is not None  # is_valid_detailed verified above
     new_sum = budget_mod.primary_sum(user, primary, session)
     # Spending page caches per-primary budget for 60s; bust it.
-    spending_mod.invalidate_cache(user.id)
+    _invalidate_user_caches(user.id)
     return jsonify({"ok": True, "primary_sum": new_sum})
 
 
@@ -677,12 +717,21 @@ def api_csrf_token():
 
 @app.route("/healthz")
 def healthz():
+    """Deep enough to catch the failure modes that would actually break the app:
+
+    - SELECT 1 alone passes against a wrong-path SQLite (which SQLite happily
+      creates as an empty file), so probe a real table the schema must have.
+    - The SPA shell on disk; missing dist/ means every page would 404.
+    """
     try:
         with SessionLocal() as session:
-            session.execute(text("SELECT 1")).scalar()
+            session.execute(text("SELECT COUNT(*) FROM users")).scalar()
     except Exception:
         log.exception("/healthz DB probe failed")
-        return jsonify({"ok": False}), 503
+        return jsonify({"ok": False, "reason": "db"}), 503
+    if not (_CLIENT_DIST / "index.html").is_file():
+        log.error("/healthz SPA shell missing at %s", _CLIENT_DIST)
+        return jsonify({"ok": False, "reason": "spa-shell-missing"}), 503
     return jsonify({"ok": True})
 
 

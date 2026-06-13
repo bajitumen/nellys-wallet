@@ -170,11 +170,15 @@ export function RuleModal(props: Props) {
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
+      // Skip when the bulk-dismiss confirm is up — both handlers fire on the
+      // same Escape and would dismiss the rule modal underneath, throwing
+      // away the user's draft when they only wanted to back out of the confirm.
+      if (pending) return;
       if (e.key === "Escape") onClose();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, pending]);
 
   const save = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>

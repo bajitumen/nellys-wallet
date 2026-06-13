@@ -255,6 +255,7 @@ def test_sync_invalidates_income_cache(user_with_item, db_session, patch_plaid):
     sync_transactions(user_with_item, db_session)
 
     after = fetch_last_month(user_with_item, session=db_session)
-    # Cache was busted; rebuilt to include the new $200.
-    assert after["total"] == 300.0
+    # "old" was reconcile-deleted by sync (Plaid didn't return it); cache
+    # was busted, so we rebuild and see only the $200 Plaid did return.
+    assert after["total"] == 200.0
     assert first is not after

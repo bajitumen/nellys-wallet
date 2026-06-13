@@ -69,6 +69,11 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 def init_db():
     """Bring the SQLite schema up to date at boot.
 
+    Called once from `python code/cli.py init-db` in entrypoint.sh BEFORE
+    gunicorn starts, so the multi-worker concurrent-ALTER race that used to
+    exist when init_db ran at app-module-import time no longer applies. App
+    workers see the schema as-of right before they boot.
+
     History note: alembic is in pyproject.toml but intentionally unused. We
     run a single-file SQLite DB on a small-N user base, so a hand-rolled
     migration block that is idempotent on each boot has been simpler to reason
@@ -78,10 +83,14 @@ def init_db():
       * SQLite ALTER TABLE is limited (no DROP COLUMN before 3.35, no
         rename-with-FK, no constraint-changes-in-place). Several of the
         migrations below work around exactly those gaps.
-      * The block must remain idempotent — gunicorn boots N workers in
-        parallel and each will call init_db on import.
+      * The block must remain idempotent — re-running it on an already-
+        migrated DB is safe (the entrypoint calls it every boot).
       * Schema changes affecting only NEW tables can lean on create_all
         below; only existing tables need an explicit ALTER block.
+      * The app's in-process caches (cache.py KeyedCache) assume a single
+        gunicorn worker (entrypoint.sh uses -w 1 --threads N). Adding -w 2
+        would reintroduce silent cross-worker cache staleness; assert in
+        gunicorn config rather than relax this.
     """
     from sqlalchemy import text
     import models  # noqa: F401 — register models with Base.metadata

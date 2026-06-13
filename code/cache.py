@@ -21,11 +21,16 @@ class KeyedCache:
     def get(self, key: tuple):
         with self._lock:
             entry = self._entries.get(key)
-        if entry is None:
-            return None
-        ts, value = entry
-        if time.time() - ts >= self._ttl:
-            return None
+            if entry is None:
+                return None
+            ts, value = entry
+            if time.time() - ts >= self._ttl:
+                # Pop expired entry under the same lock so memory doesn't grow
+                # unboundedly for users who don't write (and thus never trigger
+                # an invalidate). Without this every distinct key sticks
+                # around at its full value size for the lifetime of the worker.
+                self._entries.pop(key, None)
+                return None
         return value
 
     def set(self, key: tuple, value) -> None:

@@ -189,6 +189,39 @@ def test_pair_clears_stale_flag_on_recategorization(user_with_item, db_session):
     assert flags == {"out1": False, "in1": False}
 
 
+def test_pair_clears_stale_flag_when_primary_changes(user_with_item, db_session):
+    """If a previously-paired IN leg gets its pfc_primary rewritten (Plaid
+    recategorizes from TRANSFER_IN to INCOME after the bank tags it as payroll),
+    the stale is_internal_transfer=True must drop — otherwise that income
+    silently disappears from every total forever.
+    """
+    import transfers as transfers_mod
+    from models import Transaction
+    from income import fetch_last_month
+    other = _add_second_item(db_session, user_with_item)
+    today = date.today()
+    _seed_tx(db_session, user_with_item.items[0], "out1", 500.0, "Out",
+             "TRANSFER_OUT", today)
+    _seed_tx(db_session, other, "in1", -500.0, "Acme Payroll",
+             "TRANSFER_IN", today)
+    transfers_mod.pair_internal_transfers(user_with_item.id, db_session)
+    # Plaid recategorizes the IN leg as INCOME on a later sync — different
+    # pfc_primary, so the row leaves the TRANSFER_* candidate set.
+    in_row = db_session.query(Transaction).filter_by(plaid_transaction_id="in1").one()
+    in_row.pfc_primary = "INCOME"
+    in_row.pfc_detailed = "INCOME_WAGES"
+    db_session.flush()
+
+    transfers_mod.pair_internal_transfers(user_with_item.id, db_session)
+
+    refreshed = db_session.query(Transaction).filter_by(plaid_transaction_id="in1").one()
+    assert refreshed.is_internal_transfer is False, (
+        "primary-rewritten transfer kept stale internal flag — income vanished"
+    )
+    out = fetch_last_month(user_with_item, session=db_session)
+    assert out["total"] == 500.0
+
+
 def test_pair_skips_external_transfer_with_matching_amount(user_with_item, db_session):
     """A Zelle-out + a same-amount external deposit on the same day must NOT pair.
 

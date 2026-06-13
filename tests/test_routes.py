@@ -370,13 +370,6 @@ def test_api_overview_signals_setup_required_when_no_creds(client, db_session):
     assert r.status_code in (200, 409)
 
 
-def test_static_favicon_cache_header(client):
-    """Static assets get a Cache-Control max-age."""
-    r = client.get("/static/favicon.svg")
-    assert r.status_code == 200
-    assert "max-age=86400" in r.headers.get("Cache-Control", "")
-
-
 def test_sync_route(client, user_with_item):
     """POST /sync invokes sync_transactions and returns counts."""
     with patch("spending.sync_transactions",

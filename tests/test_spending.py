@@ -400,22 +400,74 @@ def test_sync_sets_last_synced_timestamp(user_with_item, db_session, patch_plaid
 
 
 def test_sync_invalidates_cache(user_with_item, db_session, patch_plaid):
-    """After a sync, fetch_last_month rebuilds (does not return stale)."""
+    """After a sync, fetch_last_month rebuilds (does not return stale).
+
+    Note: sync now reconciles-and-deletes window rows Plaid doesn't return,
+    so the pre-existing 'old' row drops once Plaid responds without it.
+    What this test really proves is that the post-sync read isn't served
+    from the 60s cache built before the mutation.
+    """
     from spending import fetch_last_month, sync_transactions
     _seed_tx(db_session, user_with_item.items[0], "old", 10.0, "FOOD_AND_DRINK")
     before = fetch_last_month(user_with_item, session=db_session)
     assert before["total"] == 10.0
 
-    # Sync replaces with new data
     resp = MagicMock()
     resp.transactions = [_mock_plaid_tx("p1", 99.0, "TRANSPORTATION")]
     patch_plaid.transactions_get.return_value = resp
     sync_transactions(user_with_item, db_session)
 
     after = fetch_last_month(user_with_item, session=db_session)
-    # Was 10.0 from old seeded data + 99.0 from new synced data
-    assert after["total"] == 10.0 + 99.0
+    assert after["total"] == 99.0
     assert before is not after
+
+
+def test_sync_removes_rows_plaid_no_longer_acknowledges(
+    user_with_item, db_session, patch_plaid,
+):
+    """A row in our window that Plaid stops returning (charge reversed, dup
+    cleaned, re-issued under new id) must be deleted — otherwise the stale
+    row keeps counting toward spending/income forever."""
+    from models import Transaction, TransactionOverride
+    from spending import fetch_last_month, sync_transactions
+    _seed_tx(db_session, user_with_item.items[0], "ghost", 75.0, "TRAVEL")
+    # Seed an override on the ghost row so we can confirm it's also cleaned
+    # up — a re-issued plaid_transaction_id would otherwise trip the unique
+    # constraint on a future sync.
+    db_session.add(TransactionOverride(
+        user_id=user_with_item.id, plaid_transaction_id="ghost",
+        category_override="FOOD_AND_DRINK", source="manual",
+    ))
+    db_session.commit()
+
+    # Plaid responds healthily but doesn't return the ghost.
+    resp = MagicMock()
+    resp.transactions = []
+    patch_plaid.transactions_get.return_value = resp
+    sync_transactions(user_with_item, db_session)
+
+    assert db_session.query(Transaction).filter_by(plaid_transaction_id="ghost").one_or_none() is None
+    assert db_session.query(TransactionOverride).filter_by(plaid_transaction_id="ghost").one_or_none() is None
+    out = fetch_last_month(user_with_item, session=db_session)
+    assert out["total"] == 0.0
+
+
+def test_sync_does_not_remove_rows_for_errored_items(
+    user_with_item, db_session, patch_plaid,
+):
+    """If Plaid returned errors for an item, we don't know if missing rows
+    are truly removed or just missed by the failed call — don't delete."""
+    import plaid
+    from models import Transaction
+    from spending import sync_transactions
+    _seed_tx(db_session, user_with_item.items[0], "keep_me", 50.0, "FOOD_AND_DRINK")
+
+    err = plaid.ApiException(status=500, reason="boom")
+    err.body = "ITEM_LOGIN_REQUIRED"
+    patch_plaid.transactions_get.side_effect = err
+    sync_transactions(user_with_item, db_session)
+
+    assert db_session.query(Transaction).filter_by(plaid_transaction_id="keep_me").one_or_none() is not None
 
 
 def test_transaction_carries_raw_category_and_detailed(user_with_item, db_session):
@@ -660,6 +712,25 @@ def test_monthly_totals_applies_overrides(user_with_item, db_session):
 def test_monthly_totals_empty_for_user_without_items(user, db_session):
     from spending import monthly_totals
     assert monthly_totals(user, db_session) == []
+
+
+def test_resolve_month_clamps_future_to_current():
+    """Future month strings (any year > current, or month > current in current
+    year) must snap to today's month — previous_month_window would otherwise
+    blow up on negative day counts, 500'ing four authenticated endpoints."""
+    from spending import previous_month_window, resolve_month
+    today = date.today()
+    cur = f"{today.year:04d}-{today.month:02d}"
+    assert resolve_month("2099-12")[0] == cur
+    assert resolve_month("2027-01")[0] == cur
+    assert resolve_month("2026-15")[0] == cur
+    assert resolve_month("bogus")[0] == cur
+    assert resolve_month(None)[0] == cur
+
+    # And previous_month_window doesn't choke when start==end day (worst case).
+    _, s, e, _ = resolve_month(cur)
+    ps, pe = previous_month_window(s, e)
+    assert pe >= ps
 
 
 def test_relative_time_formats():

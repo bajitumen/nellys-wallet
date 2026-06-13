@@ -26,8 +26,17 @@ RUN npm ci
 COPY client/ ./
 # Surface the Clerk publishable key at build time so Vite can embed it; the
 # rest of Clerk's auth happens server-side and reads runtime env.
+# Required for production builds — an empty value would inline an empty key
+# and ship a fully-broken SPA (no ClerkProvider, every API call 401s, healthz
+# stays green). Refuse to build instead of producing that artifact.
 ARG VITE_CLERK_PUBLISHABLE_KEY=""
+ARG BUILD_ENV=production
 ENV VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
+RUN if [ "$BUILD_ENV" = "production" ] && [ -z "$VITE_CLERK_PUBLISHABLE_KEY" ]; then \
+        echo "FATAL: VITE_CLERK_PUBLISHABLE_KEY must be provided as a build-arg for production builds." >&2; \
+        echo "Set it in render.yaml envVars (the value gets passed as --build-arg)." >&2; \
+        exit 1; \
+    fi
 RUN npm run build
 
 # --- Stage 2: Python runtime -----------------------------------------------
@@ -64,7 +73,7 @@ RUN useradd -m -u 10001 -s /usr/sbin/nologin app \
     && mkdir -p /var/data \
     && chown -R app:app /app /var/data
 
-ENV DATABASE_URL=sqlite:///var/data/finance.db
+ENV DATABASE_URL=sqlite:////var/data/finance.db
 ENV FLASK_ENV=production
 ENV PATH="/app/.venv/bin:$PATH"
 

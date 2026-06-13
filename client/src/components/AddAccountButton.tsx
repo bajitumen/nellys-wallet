@@ -32,9 +32,17 @@ export function AddAccountButton() {
       qc.invalidateQueries({ queryKey: ["budget"] });
       qc.invalidateQueries({ queryKey: ["me"] });
       qc.invalidateQueries({ queryKey: ["plaid-status"] });
+      // Reset so the next "+" click can open Plaid Link again. Without this
+      // the open-effect bails on openedRef=true forever, the button stays
+      // disabled (busy=false but linkToken stale), and the user has to
+      // hard-reload to link a second bank.
+      openedRef.current = false;
+      setLinkToken(null);
       setBusy(false);
     },
     onError: (e: Error) => {
+      openedRef.current = false;
+      setLinkToken(null);
       setBusy(false);
       toast.error(`Could not link account: ${e.message}`);
     },

@@ -21,6 +21,10 @@ services:
     envVars:
       - key: FLASK_ENV
         value: production
+      # Four slashes = absolute path; three would be relative to gunicorn's CWD
+      # (/app/code) and miss the litestream-protected /var/data file entirely.
+      - key: DATABASE_URL
+        value: sqlite:////var/data/finance.db
       # Required app secrets (paste in dashboard).
       - key: FERNET_KEY
         sync: false

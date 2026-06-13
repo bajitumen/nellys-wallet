@@ -40,11 +40,21 @@ db_needs_restore() {
 if [[ -n "${LITESTREAM_REPLICA_URL:-}" ]]; then
   if db_needs_restore; then
     echo "Restoring SQLite database from $LITESTREAM_REPLICA_URL"
-    # Move the broken file aside so litestream restore writes a clean one
-    # (otherwise restore refuses to overwrite). Keep it for forensic recovery.
-    if [[ -e "$DB_PATH" ]]; then
-      mv "$DB_PATH" "${DB_PATH}.broken.$(date +%s)" 2>/dev/null || rm -f "$DB_PATH"
-    fi
+    # Move the broken file AND its WAL/SHM sidecars aside. WAL/SHM hold
+    # committed-but-not-checkpointed frames; if left in place, SQLite would
+    # replay them into the freshly restored DB on first open and silently
+    # re-inject the corruption we just escaped (which litestream then ships
+    # back to the bucket). Keep them for forensic recovery.
+    ts=$(date +%s)
+    for ext in "" "-wal" "-shm"; do
+      if [[ -e "${DB_PATH}${ext}" ]]; then
+        mv "${DB_PATH}${ext}" "${DB_PATH}.broken.${ts}${ext}" 2>/dev/null \
+          || rm -f "${DB_PATH}${ext}"
+      fi
+    done
+    # Cap forensic copies at the 3 most recent triplets so a crash loop
+    # against a corrupt DB can't fill the 1GB persistent disk.
+    ls -1tr "${DB_PATH}".broken.* 2>/dev/null | head -n -9 | xargs -r rm -f
     # -if-replica-exists exits 0 when no replica is found (legitimate first run);
     # any non-zero exit means the replica IS there but restore failed (bad creds,
     # corrupt snapshot, network error). Bail rather than overwrite the backup
@@ -69,7 +79,11 @@ python /app/code/cli.py init-db
 # rule/spending caches and the per-key locks live in Python memory; -w N
 # would let one worker invalidate while another keeps serving stale rows.
 GUNICORN_THREADS="${GUNICORN_THREADS:-8}"
-GUNICORN_CMD="gunicorn -w 1 --threads ${GUNICORN_THREADS} -b 0.0.0.0:${PORT:-5001} --chdir /app/code app:app"
+# --graceful-timeout 60 outpaces Render's default 30s SIGTERM-to-SIGKILL grace
+# (Render gives services 30s before force-killing on deploy). Workers finish
+# in-flight writes instead of being killed mid-commit. Worker --timeout 90 so
+# the cold-cache /api/overview can complete without being recycled.
+GUNICORN_CMD="gunicorn -w 1 --threads ${GUNICORN_THREADS} --timeout 90 --graceful-timeout 25 -b 0.0.0.0:${PORT:-5001} --chdir /app/code app:app"
 
 if [[ -n "${LITESTREAM_REPLICA_URL:-}" ]]; then
   exec litestream replicate -config /app/litestream.yml -exec "${GUNICORN_CMD}"

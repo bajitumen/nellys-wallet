@@ -242,10 +242,10 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
         />
         <span
           className={`networth-delta ${
-            delta > 0 ? "delta-up" : delta < 0 ? "delta-down" : ""
+            chart && delta > 0 ? "delta-up" : chart && delta < 0 ? "delta-down" : ""
           }`}
         >
-          {formatUsd(lastValue)}
+          {chart ? formatUsd(lastValue) : "—"}
         </span>
       </div>
       {chart ? (

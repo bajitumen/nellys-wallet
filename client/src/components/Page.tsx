@@ -40,7 +40,10 @@ export function Page({ heading, title, children }: Props) {
     mutationFn: () =>
       postJson<{ ok: boolean; added?: number; updated?: number; errors?: string[] }>("/sync"),
     onSuccess: (result) => {
-      for (const key of ["overview", "spending", "income", "budget", "rules", "me"] as const) {
+      for (const key of [
+        "overview", "spending", "income", "budget", "rules", "me",
+        "planning", "plaid-status",
+      ] as const) {
         qc.invalidateQueries({ queryKey: [key] });
       }
       // Surface what the server actually did — a zero-result sync used to look

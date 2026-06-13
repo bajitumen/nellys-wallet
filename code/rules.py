@@ -1,4 +1,5 @@
 from sqlalchemy import and_, false, func, or_, true
+from sqlalchemy.orm import selectinload
 
 import pfc as pfc_mod
 from models import (
@@ -145,7 +146,13 @@ def tx_in_scope(tx: Transaction, scope: str) -> bool:
     if scope == "all":
         return True
     if scope == "spending":
-        return tx.amount is not None and tx.amount > 0 and pfc_mod.is_spend_category(tx.pfc_primary)
+        # Treat NULL pfc_primary as spend-side. Plaid sometimes returns no
+        # category at all; falling through silently used to drop the row from
+        # every total (Python `None not in {...}` is True, but the SQL
+        # `pfc_primary NOT IN (...)` ignores NULLs and excludes the row).
+        if tx.amount is None or tx.amount <= 0:
+            return False
+        return tx.pfc_primary is None or pfc_mod.is_spend_category(tx.pfc_primary)
     if scope == "income":
         return tx.amount is not None and tx.amount < 0 and pfc_mod.is_strict_income(tx.pfc_primary)
     return False
@@ -153,7 +160,14 @@ def tx_in_scope(tx: Transaction, scope: str) -> bool:
 
 def build_scope_filter(scope: str):
     if scope == "spending":
-        return [Transaction.amount > 0, ~Transaction.pfc_primary.in_(pfc_mod.INCOME_SIDE_PRIMARIES)]
+        # Match tx_in_scope: NULL pfc_primary is treated as spend-side.
+        return [
+            Transaction.amount > 0,
+            or_(
+                Transaction.pfc_primary.is_(None),
+                ~Transaction.pfc_primary.in_(pfc_mod.INCOME_SIDE_PRIMARIES),
+            ),
+        ]
     if scope == "income":
         return [Transaction.amount < 0, Transaction.pfc_primary == "INCOME"]
     return []
@@ -194,6 +208,13 @@ def _rank_key(rule: TransactionRule, specificity: dict[int, int]) -> tuple:
     return (-specificity[rule.id], rule.id if rule.id is not None else 0)
 
 
+# Dependency-order for applying winners. set_category resets detailed (in
+# _apply_rule_to_override), so a winning set_detailed must apply AFTER any
+# winning set_category — otherwise the detailed rule's effect is silently
+# clobbered and the outcome flips based on rule creation order.
+_ACTION_APPLY_ORDER = ("dismiss", "set_category", "set_detailed", "split")
+
+
 def _winning_rules(
     matched: list[TransactionRule], specificity: dict[int, int],
 ) -> list[TransactionRule]:
@@ -202,13 +223,21 @@ def _winning_rules(
     Tie-break is deterministic: on equal specificity the older rule wins
     (lower id). Without this, the result depends on row order from the DB
     and the same tx can flap between rules across syncs.
+
+    Returned order is the dependency-order needed by _apply_rule_to_override.
     """
     by_group: dict[str, TransactionRule] = {}
     for r in sorted(matched, key=lambda r: _rank_key(r, specificity)):
         key = _action_group(r.action)
         if key not in by_group:
             by_group[key] = r
-    return list(by_group.values())
+
+    def order(group: str) -> int:
+        try:
+            return _ACTION_APPLY_ORDER.index(group)
+        except ValueError:
+            return len(_ACTION_APPLY_ORDER)
+    return [by_group[g] for g in sorted(by_group.keys(), key=order)]
 
 
 def _reset_rule_fields(ov: TransactionOverride) -> None:
@@ -319,7 +348,7 @@ def _recompute_overrides_for_txs(user_id: int, txs: list[Transaction], session) 
     if not txs:
         return 0
     all_rules = (
-        session.query(TransactionRule)
+        session.query(TransactionRule).options(selectinload(TransactionRule.conditions))
         .filter_by(user_id=user_id)
         .order_by(TransactionRule.id)
         .all()
@@ -387,7 +416,7 @@ def applied_rule_id_by_tx(
     if not txs:
         return {}
     rules = (
-        session.query(TransactionRule)
+        session.query(TransactionRule).options(selectinload(TransactionRule.conditions))
         .filter_by(user_id=user_id)
         .order_by(TransactionRule.id)
         .all()
@@ -413,7 +442,7 @@ def rules_by_id_dict(user_id: int, session, rule_ids: list[int]) -> dict[str, di
     if not rule_ids:
         return {}
     rows = (
-        session.query(TransactionRule)
+        session.query(TransactionRule).options(selectinload(TransactionRule.conditions))
         .filter(
             TransactionRule.user_id == user_id,
             TransactionRule.id.in_(rule_ids),
@@ -457,7 +486,7 @@ def apply_rules_to_new_transactions(
     if not new_txs:
         return 0
     rules = (
-        session.query(TransactionRule)
+        session.query(TransactionRule).options(selectinload(TransactionRule.conditions))
         .filter_by(user_id=user_id)
         .order_by(TransactionRule.id)
         .all()
@@ -532,7 +561,7 @@ def find_equivalent_rule(
     """
     target = _canonical_payload_conditions(conditions)
     candidates = (
-        session.query(TransactionRule)
+        session.query(TransactionRule).options(selectinload(TransactionRule.conditions))
         .filter(
             TransactionRule.user_id == user_id,
             TransactionRule.action == action,
@@ -626,14 +655,37 @@ def upsert_rule(
 
 def list_rules(user: User, session) -> list[TransactionRule]:
     return (
-        session.query(TransactionRule)
+        session.query(TransactionRule).options(selectinload(TransactionRule.conditions))
         .filter_by(user_id=user.id)
         .order_by(TransactionRule.created_at.desc())
         .all()
     )
 
 
+_match_options_cache = None  # set below after the function is defined
+
+
 def user_match_options(user: User, session) -> dict:
+    """Cached: this runs 4 DISTINCT scans + a sort over the whole user's
+    transaction set. The spending/income pages call it on every load, every
+    refocus, every chip click. The cache is invalidated on sync alongside
+    spending/income (see invalidate_cache below)."""
+    global _match_options_cache
+    if _match_options_cache is None:
+        from cache import KeyedCache
+        _match_options_cache = KeyedCache(ttl_seconds=60.0)
+    return _match_options_cache.get_or_compute(
+        (user.id,), lambda: _user_match_options_uncached(user, session)
+    )
+
+
+def invalidate_cache(user_id: int) -> None:
+    global _match_options_cache
+    if _match_options_cache is not None:
+        _match_options_cache.invalidate(user_id)
+
+
+def _user_match_options_uncached(user: User, session) -> dict:
     def _distinct(col, order=None):
         return [
             v for (v,) in
@@ -682,7 +734,7 @@ def delete_rule(user: User, rule_id: int, session) -> bool:
     are protected by `_recompute_overrides_for_txs`.
     """
     row = (
-        session.query(TransactionRule)
+        session.query(TransactionRule).options(selectinload(TransactionRule.conditions))
         .filter_by(id=rule_id, user_id=user.id)
         .one_or_none()
     )

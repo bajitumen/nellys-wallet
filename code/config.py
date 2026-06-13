@@ -37,10 +37,14 @@ def _required_in_prod(name: str) -> str:
     return value
 
 
-CLERK_PUBLISHABLE_KEY = _required_in_prod("CLERK_PUBLISHABLE_KEY")
-CLERK_SECRET_KEY = _required_in_prod("CLERK_SECRET_KEY")
+# Only the backend-verification keys are required in prod. The others are
+# kept as optional reads — the publishable key is consumed by Vite at build
+# time (VITE_CLERK_PUBLISHABLE_KEY), the secret key isn't used here at all,
+# and CLERK_FRONTEND_API is only used to extend the CSP allowlist.
+CLERK_PUBLISHABLE_KEY = os.environ.get("CLERK_PUBLISHABLE_KEY", "")
+CLERK_SECRET_KEY = os.environ.get("CLERK_SECRET_KEY", "")
 CLERK_JWT_PUBLIC_KEY = _required_in_prod("CLERK_JWT_PUBLIC_KEY")
-CLERK_FRONTEND_API = _required_in_prod("CLERK_FRONTEND_API")
+CLERK_FRONTEND_API = os.environ.get("CLERK_FRONTEND_API", "")
 CLERK_ISSUER = _required_in_prod("CLERK_ISSUER")
 # Comma-separated list of origins the Clerk-issued session is allowed to be
 # scoped to (azp claim). Required in prod so a sibling app on the same Clerk
@@ -48,6 +52,11 @@ CLERK_ISSUER = _required_in_prod("CLERK_ISSUER")
 CLERK_AUTHORIZED_PARTIES = tuple(
     p.strip() for p in _required_in_prod("CLERK_AUTHORIZED_PARTIES").split(",") if p.strip()
 )
+# JWKS URL for automatic signing-key rotation. Optional — if set, takes
+# precedence over the static CLERK_JWT_PUBLIC_KEY. Clerk publishes this at
+# <issuer>/.well-known/jwks.json. Strongly recommended in prod: a Clerk key
+# rotation otherwise locks every user out until a manual redeploy.
+CLERK_JWKS_URL = os.environ.get("CLERK_JWKS_URL", "").strip()
 
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 os.makedirs(INSTANCE_DIR, exist_ok=True)

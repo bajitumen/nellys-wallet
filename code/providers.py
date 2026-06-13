@@ -195,17 +195,5 @@ def source_avatars(user: User) -> dict[str, dict]:
     return out
 
 
-def institution_letter_color(name: str, primary_color: str | None) -> str:
-    if primary_color and primary_color.startswith("#"):
-        return primary_color
-    import hashlib
-    palette = [
-        "#3b82f6", "#22c55e", "#a855f7", "#ec4899", "#f97316",
-        "#14b8a6", "#eab308", "#8b5cf6", "#06b6d4", "#f59e0b",
-    ]
-    digest = hashlib.md5((name or "?").encode("utf-8")).hexdigest()
-    return palette[int(digest, 16) % len(palette)]
-
-
 def sum_balances(accounts: list[dict]) -> float:
     return sum(a["balance"] for a in accounts if a.get("balance") is not None)

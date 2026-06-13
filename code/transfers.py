@@ -39,15 +39,36 @@ def pair_internal_transfers(
 ) -> int:
     """Flag TRANSFER_OUT/TRANSFER_IN pairs as internal transfers.
 
-    Greedy match by (|amount|, date proximity), restricted to pairs that live
-    on different PlaidItems for the same user. Each tx is matched at most once.
-    Returns the number of newly-flagged transactions (so a fully successful run
-    on N pairs returns 2N).
+    Greedy match by (|amount|, date proximity). The two legs of a real same-
+    bank transfer (BoA checking → BoA savings) share one PlaidItem, so we do
+    NOT require different items; instead we restrict pairing to Plaid's
+    explicit *_ACCOUNT_TRANSFER / _SAVINGS / _INVESTMENT detailed codes — a
+    generic Zelle-out won't accidentally pair with a same-amount deposit.
 
-    Idempotency: clears stale is_internal_transfer flags within the candidate
-    window before re-pairing, so that a Plaid recategorization or amount
-    correction on a later sync doesn't leave a phantom pair hidden forever.
+    Each tx is matched at most once. Returns the number of newly-flagged
+    transactions (so a fully successful run on N pairs returns 2N).
+
+    Idempotency: clears stale is_internal_transfer flags across the user's
+    entire transaction set before re-pairing — not just the current
+    TRANSFER_* candidate set — so a Plaid recategorization (e.g. TRANSFER_IN
+    → INCOME) doesn't leave a phantom pair hidden forever.
     """
+    # Reset is_internal_transfer for EVERY currently-flagged row this user
+    # owns, not just rows that still classify as TRANSFER_*. Plaid sometimes
+    # recategorizes a previously-paired leg's pfc_primary (e.g. a TRANSFER_IN
+    # becomes INCOME after the bank tags it as payroll). If we only reset
+    # within the TRANSFER_* candidate set, the recategorized leg keeps a
+    # stale True flag and disappears from every total forever.
+    (
+        session.query(Transaction)
+        .filter(
+            Transaction.user_id == user_id,
+            Transaction.is_internal_transfer.is_(True),
+        )
+        .update({"is_internal_transfer": False}, synchronize_session="fetch")
+    )
+    session.flush()
+
     rows = (
         session.query(Transaction)
         .filter(
@@ -59,13 +80,6 @@ def pair_internal_transfers(
     )
     if not rows:
         return 0
-
-    # Reset prior pairings on the candidate set so a Plaid recategorization or
-    # amount correction on a later sync doesn't leave a phantom pair hidden.
-    for t in rows:
-        if t.is_internal_transfer:
-            t.is_internal_transfer = False
-    session.flush()
 
     def is_internal(t: Transaction) -> bool:
         if t.pfc_primary == "TRANSFER_OUT":

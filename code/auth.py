@@ -8,9 +8,40 @@ from models import User
 
 log = logging.getLogger(__name__)
 
+# 10s tolerance on exp/iat checks — Render's container clock and the user's
+# device clock both drift slightly, and Clerk sessions can be ~60s short.
+# Without leeway, a freshly minted token can 401 right out of the gate.
+_LEEWAY_SECONDS = 10
+
+# Lazy JWKS client: if CLERK_JWKS_URL is configured, fetch + rotate signing
+# keys automatically (Clerk rotates them periodically; a static PEM-in-env
+# would lock every user out at rotation time until a manual redeploy).
+_jwks_client: Optional["jwt.PyJWKClient"] = None
+
+
+def _get_jwks_client() -> Optional["jwt.PyJWKClient"]:
+    global _jwks_client
+    if not config.CLERK_JWKS_URL:
+        return None
+    if _jwks_client is None:
+        _jwks_client = jwt.PyJWKClient(
+            config.CLERK_JWKS_URL,
+            cache_keys=True,
+            lifespan=3600,  # cache rotated keys for an hour
+        )
+    return _jwks_client
+
 
 def clerk_enabled() -> bool:
-    return bool(config.CLERK_JWT_PUBLIC_KEY)
+    return bool(config.CLERK_JWT_PUBLIC_KEY) or bool(config.CLERK_JWKS_URL)
+
+
+def _resolve_signing_key(token: str):
+    """Prefer JWKS (rotates automatically) over the static PEM env var."""
+    jwks = _get_jwks_client()
+    if jwks is not None:
+        return jwks.get_signing_key_from_jwt(token).key
+    return config.CLERK_JWT_PUBLIC_KEY
 
 
 def verify_session_cookie(token: Optional[str]) -> Optional[str]:
@@ -20,6 +51,7 @@ def verify_session_cookie(token: Optional[str]) -> Optional[str]:
         require = ["exp", "sub"]
         decode_kwargs = {
             "algorithms": ["RS256"],
+            "leeway": _LEEWAY_SECONDS,
         }
         if config.CLERK_ISSUER:
             decode_kwargs["issuer"] = config.CLERK_ISSUER
@@ -27,9 +59,14 @@ def verify_session_cookie(token: Optional[str]) -> Optional[str]:
         if config.CLERK_AUTHORIZED_PARTIES:
             require.append("azp")
         decode_kwargs["options"] = {"verify_aud": False, "require": require}
-        claims = jwt.decode(token, config.CLERK_JWT_PUBLIC_KEY, **decode_kwargs)
+        key = _resolve_signing_key(token)
+        claims = jwt.decode(token, key, **decode_kwargs)
     except jwt.InvalidTokenError as e:
         log.warning("Clerk session verification failed: %s", e)
+        return None
+    except Exception as e:
+        # JWKS network errors etc. — log loudly but don't expose details.
+        log.exception("Clerk session verification raised unexpected error: %s", e)
         return None
     if config.CLERK_AUTHORIZED_PARTIES:
         azp = claims.get("azp")

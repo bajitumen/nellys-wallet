@@ -804,11 +804,13 @@ def test_same_merchant_can_have_distinct_spending_and_income_rules(user_with_ite
     assert db_session.query(TransactionRule).count() == 2
 
 
-def test_spending_scope_excludes_null_pfc_primary_at_sync_time(
+def test_spending_scope_includes_null_pfc_primary_at_sync_time(
     user_with_item, db_session, patch_plaid,
 ):
-    """Sync-time path must skip a NULL-pfc_primary tx for spending scope,
-    matching the SQL filter used by retroactive apply and by the spending page."""
+    """A positive-amount tx with NULL pfc_primary is spend-side (Plaid
+    sometimes returns no category at all). Spending-scoped rules MUST
+    match it — and the spending page MUST show it. Otherwise real
+    outflows silently vanish from every total."""
     import rules as rules_mod
     from models import TransactionOverride
     from spending import sync_transactions
@@ -833,9 +835,10 @@ def test_spending_scope_excludes_null_pfc_primary_at_sync_time(
 
     sync_transactions(user_with_item, db_session)
 
-    assert db_session.query(TransactionOverride).filter_by(
+    ov = db_session.query(TransactionOverride).filter_by(
         plaid_transaction_id="null_cat"
-    ).one_or_none() is None
+    ).one_or_none()
+    assert ov is not None and ov.dismissed is True
 
 
 def test_editing_rule_clears_stale_overrides_on_old_side(user_with_item, db_session):

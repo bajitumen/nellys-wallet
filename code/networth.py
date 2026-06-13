@@ -1,3 +1,4 @@
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -6,12 +7,24 @@ from sqlalchemy import asc
 import providers
 from models import AccountBalanceSnapshot, NetWorthSnapshot, User
 
+log = logging.getLogger(__name__)
+
 
 def capture(user: User, session) -> NetWorthSnapshot | None:
     # One row per UTC day; refreshing replaces today's row.
     if not user.items:
         return None
     data = providers.fetch_all(user, force_refresh=True)
+    # Don't replace today's snapshot when ANY institution failed — we'd
+    # otherwise record a false net-worth dip from the partial picture and
+    # destroy a successful earlier same-day snapshot. Defer; the next sync
+    # will retry.
+    if data.get("errors"):
+        log.warning(
+            "networth.capture skipped for user_id=%s due to provider errors: %s",
+            user.id, data["errors"],
+        )
+        return None
     cash = providers.sum_balances(data["cash"])
     investments = providers.sum_balances(data["investment"])
     credit = providers.sum_balances(data["credit"])

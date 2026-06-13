@@ -101,21 +101,6 @@ def test_fetch_one_includes_logo(user_with_item, patch_plaid_client, db_session)
     assert result["cash"][0]["logo"] == "BASE64_PNG_DATA"
 
 
-def test_institution_letter_color_uses_brand_when_available():
-    """Plaid's primary_color is preferred over the hash-based fallback."""
-    from providers import institution_letter_color
-    assert institution_letter_color("Chase", "#095aa6") == "#095aa6"
-
-
-def test_institution_letter_color_falls_back_to_hash():
-    """No brand color → stable hash-derived palette color."""
-    from providers import institution_letter_color
-    c1 = institution_letter_color("Chase", None)
-    c2 = institution_letter_color("Chase", "")
-    assert c1.startswith("#") and len(c1) == 7
-    assert c1 == c2  # stable across calls
-
-
 def test_source_avatars_pairs_logo_and_color(user_with_item, db_session):
     """source_avatars exposes both logo + primary_color per institution."""
     from providers import source_avatars

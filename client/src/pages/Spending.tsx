@@ -381,6 +381,14 @@ function SpendingView({ data }: { data: SpendingData }) {
     <Page heading="Spending">
       <p className="subtitle">Grouped by category</p>
 
+      {data.errors.length > 0 && (
+        <div className="error-list">
+          {data.errors.map((e, i) => (
+            <p key={i} className="error">{e}</p>
+          ))}
+        </div>
+      )}
+
       {data.sources.length > 1 && (
         <SourceFilter
           sources={data.sources}
