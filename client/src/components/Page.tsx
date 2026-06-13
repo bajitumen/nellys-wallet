@@ -99,7 +99,7 @@ export function Page({ heading, title, children }: Props) {
         <h1>{heading}</h1>
         <div className="page-actions">
           <button
-            className="action-btn"
+            className={`action-btn${sync.isPending ? " busy" : ""}`}
             type="button"
             aria-label="Refresh data"
             title={me.data?.last_sync_label ? `Last synced ${me.data.last_sync_label}` : "Refresh"}

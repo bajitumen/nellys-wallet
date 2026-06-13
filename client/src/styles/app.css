@@ -218,7 +218,10 @@
     transition: background 0.1s;
   }
   .action-btn:hover { background: var(--bg); }
-  .action-btn:disabled { opacity: 0.5; cursor: wait; }
+  /* `cursor: wait` would summon the macOS spinning beach ball; the icon's
+     own spin animation is the visual signal. */
+  .action-btn:disabled { opacity: 0.6; cursor: default; }
+  .action-btn.busy { opacity: 1; }
   .action-btn.busy .icon { animation: spin 1s linear infinite; }
   svg.icon {
     width: 1em;
@@ -794,7 +797,7 @@
     color: var(--surface);
     border-color: var(--text);
   }
-  .rule-modal-actions .primary:disabled { opacity: 0.5; cursor: wait; }
+  .rule-modal-actions .primary:disabled { opacity: 0.5; cursor: default; }
   .rules-section-heading {
     font-size: 0.85em;
     text-transform: uppercase;
