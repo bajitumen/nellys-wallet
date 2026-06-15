@@ -127,3 +127,65 @@ def test_b_api_rules_does_not_leak_a_rules(client, db_session, two_users, acting
     rule_ids = set(int(k) for k in resp.get_json()["rules_by_id"].keys())
     assert rule_a.id not in rule_ids
     assert rule_b.id in rule_ids
+
+
+def test_b_cannot_write_planning_rate_for_a_account(client, db_session, two_users, acting_as):
+    a, b = two_users
+    item_a = PlaidItem(user_id=a.id, institution_name="Bank")
+    item_a.set_access_token("tok")
+    db_session.add(item_a)
+    db_session.commit()
+    from models import AccountBalanceSnapshot, AccountRate
+    from datetime import datetime
+    db_session.add(AccountBalanceSnapshot(
+        user_id=a.id, item_id=item_a.id, plaid_account_id="acct_a",
+        bucket="cash", balance=100.0, taken_at=datetime.utcnow(),
+    ))
+    db_session.commit()
+
+    acting_as["user"] = b
+    resp = client.post("/planning/rate/acct_a", json={"rate": 5.0})
+    assert resp.status_code == 404
+    assert db_session.query(AccountRate).filter_by(
+        user_id=a.id, plaid_account_id="acct_a",
+    ).one_or_none() is None
+    assert db_session.query(AccountRate).filter_by(
+        user_id=b.id, plaid_account_id="acct_a",
+    ).one_or_none() is None
+
+
+def test_b_cannot_write_planning_contribution_for_a_account(
+    client, db_session, two_users, acting_as,
+):
+    a, b = two_users
+    item_a = PlaidItem(user_id=a.id, institution_name="Bank")
+    item_a.set_access_token("tok")
+    db_session.add(item_a)
+    db_session.commit()
+    from models import AccountBalanceSnapshot, AccountRate
+    from datetime import datetime
+    db_session.add(AccountBalanceSnapshot(
+        user_id=a.id, item_id=item_a.id, plaid_account_id="acct_a",
+        bucket="investment", balance=1000.0, taken_at=datetime.utcnow(),
+    ))
+    db_session.commit()
+
+    acting_as["user"] = b
+    resp = client.post("/planning/contribution/acct_a", json={"value": 250.0})
+    assert resp.status_code == 404
+    assert db_session.query(AccountRate).filter_by(
+        user_id=a.id, plaid_account_id="acct_a",
+    ).one_or_none() is None
+
+
+def test_b_budget_write_only_lands_on_b(client, db_session, two_users, acting_as):
+    a, b = two_users
+    from models import Budget
+    acting_as["user"] = b
+    resp = client.post(
+        "/budget/FOOD_AND_DRINK_RESTAURANT", json={"amount": "75.00"},
+    )
+    assert resp.status_code == 200
+    rows = db_session.query(Budget).all()
+    assert all(r.user_id == b.id for r in rows)
+    assert not any(r.user_id == a.id for r in rows)

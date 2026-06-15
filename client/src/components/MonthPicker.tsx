@@ -26,7 +26,7 @@ export function MonthPickerCard({ label, options, currentValue }: Props) {
   function pick(value: string) {
     const next = new URLSearchParams(searchParams);
     next.set("month", value);
-    setSearchParams(next, { replace: false });
+    setSearchParams(next, { replace: true });
     setOpen(false);
   }
 

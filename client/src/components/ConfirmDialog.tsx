@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useModal } from "../lib/useModal";
 
 type Props = {
   open: boolean;
@@ -20,6 +21,7 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: Props) {
+  const containerRef = useModal(open);
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
@@ -43,7 +45,10 @@ export function ConfirmDialog({
         if (e.target === e.currentTarget) onCancel();
       }}
     >
-      <div className="confirm-modal" role="alertdialog" aria-modal="true">
+      <div
+        ref={containerRef as React.RefObject<HTMLDivElement>}
+        className="confirm-modal" role="alertdialog" aria-modal="true"
+      >
         <h2 className="confirm-modal-title">{title}</h2>
         <p className="confirm-modal-msg">{message}</p>
         <div className="confirm-modal-actions">

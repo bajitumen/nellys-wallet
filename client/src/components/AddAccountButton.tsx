@@ -73,6 +73,20 @@ export function AddAccountButton() {
     }
   }, [linkToken, ready, open]);
 
+  // If Plaid Link script never readies (CDN blocked, ad blocker, network),
+  // reset after 8s and toast rather than leaving the + button stuck busy.
+  useEffect(() => {
+    if (!linkToken || ready) return;
+    const t = setTimeout(() => {
+      if (openedRef.current) return;
+      openedRef.current = false;
+      setLinkToken(null);
+      setBusy(false);
+      toast.error("Plaid Link didn't load. Check network/ad-blocker and try again.");
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [linkToken, ready, toast]);
+
   return (
     <button
       className="action-btn"

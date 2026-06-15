@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useModal } from "../lib/useModal";
 
 type Props = {
   open: boolean;
@@ -19,6 +20,7 @@ export function SplitDialog({ open, amount, onClose, onSave }: Props) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useModal(open);
 
   useEffect(() => {
     if (!open) return;
@@ -57,8 +59,10 @@ export function SplitDialog({ open, amount, onClose, onSave }: Props) {
   return createPortal(
     <div className="rule-modal-backdrop" onClick={onClose}>
       <div
+        ref={containerRef as React.RefObject<HTMLDivElement>}
         className="rule-modal split-dialog"
         role="dialog"
+        aria-modal="true"
         aria-label="Split transaction"
         style={{ maxWidth: 380, padding: "1.1rem" }}
         onClick={(e) => e.stopPropagation()}

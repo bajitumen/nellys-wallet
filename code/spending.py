@@ -131,11 +131,22 @@ def _apply_spend_override(tx: Transaction, override: TransactionOverride | None)
 
 
 def _fetch_raw_transactions(client, item, start: date, end: date) -> dict:
+    return _fetch_raw_transactions_snapshot(
+        client, item.institution_name or "Unknown", item.get_access_token(),
+        start, end,
+    )
+
+
+def _fetch_raw_transactions_snapshot(
+    client, institution: str, token: str, start: date, end: date,
+) -> dict:
     out: dict = {"transactions": [], "errors": []}
-    institution = item.institution_name or "Unknown"
-    token = item.get_access_token()
     page_size = 250
     offset = 0
+    # Use total_transactions from the first page as the cap so mid-fetch
+    # inserts can't bump us off the end of the page set; pages don't shift
+    # because we trust the server-side ordering.
+    expected_total: int | None = None
 
     while True:
         try:
@@ -151,7 +162,6 @@ def _fetch_raw_transactions(client, item, start: date, end: date) -> dict:
         except plaid.ApiException as e:
             body = getattr(e, "body", str(e)) or ""
             log.warning("transactions_get failed for %s: %s", institution, body[:500])
-            # Sanitize — raw body leaks request_id/documentation_url etc.
             if "PRODUCT_NOT_READY" in body:
                 out["errors"].append(f"{institution}: transactions not yet ready")
             elif "NO_ACCOUNTS" in body or "PRODUCTS_NOT_SUPPORTED" in body:
@@ -171,11 +181,23 @@ def _fetch_raw_transactions(client, item, start: date, end: date) -> dict:
             else:
                 out["errors"].append(f"{institution}: temporarily unavailable")
             break
+        except Exception as e:
+            # Network timeouts and urllib3 errors aren't plaid.ApiException;
+            # without catching, they'd escape ex.map and abort all items.
+            log.warning(
+                "transactions_get raised non-Plaid error for %s: %s", institution, e,
+            )
+            out["errors"].append(f"{institution}: temporarily unavailable")
+            break
 
         out["transactions"].extend(resp.transactions)
+        if expected_total is None:
+            expected_total = getattr(resp, "total_transactions", None)
         if len(resp.transactions) < page_size:
             break
         offset += page_size
+        if expected_total is not None and offset >= expected_total:
+            break
 
     return out
 
@@ -219,11 +241,21 @@ def _sync_transactions_locked(user, session, days, out):
     start = end - timedelta(days=days)
 
     items = list(user.items)
-    with ThreadPoolExecutor(max_workers=min(8, len(items))) as ex:
-        per_item = list(ex.map(
-            lambda it: (it, _fetch_raw_transactions(client, it, start, end)),
-            items,
+    # Snapshot on the calling thread; never share an ORM attribute load across
+    # the executor.
+    snapshots = [(it.id, it.institution_name or "Unknown", it.get_access_token())
+                 for it in items]
+
+    def _fetch(snap):
+        item_id, institution, token = snap
+        return (item_id, _fetch_raw_transactions_snapshot(
+            client, institution, token, start, end,
         ))
+
+    with ThreadPoolExecutor(max_workers=min(8, len(items))) as ex:
+        per_item_raw = list(ex.map(_fetch, snapshots))
+    items_by_id = {it.id: it for it in items}
+    per_item = [(items_by_id[item_id], result) for item_id, result in per_item_raw]
 
     # Id-only — date-window filtering would treat Plaid date corrections as
     # missing rows and trip uq_tx_user_plaid on the re-insert.
@@ -284,18 +316,23 @@ def _sync_transactions_locked(user, session, days, out):
                     amount_changed_rows.append(row)
             else:
                 # Move pending → posted override; drop any preexisting one
-                # at the posted id to avoid uq_override_user_tx.
+                # at the posted id to avoid uq_override_user_tx. Flush between
+                # the bulk delete and the rename — synchronize_session=False
+                # bypasses the identity map, so an in-memory override at the
+                # posted id could otherwise be re-flushed and collide.
                 if pending_row is not None:
                     session.query(TransactionOverride).filter(
                         TransactionOverride.user_id == user.id,
                         TransactionOverride.plaid_transaction_id == tx.transaction_id,
-                    ).delete(synchronize_session=False)
+                    ).delete(synchronize_session="fetch")
+                    session.flush()
                     session.query(TransactionOverride).filter_by(
                         user_id=user.id, plaid_transaction_id=pending_id,
                     ).update(
                         {"plaid_transaction_id": tx.transaction_id},
-                        synchronize_session=False,
+                        synchronize_session="fetch",
                     )
+                    session.flush()
                 new_tx = Transaction(
                     user_id=user.id,
                     item_id=item.id,

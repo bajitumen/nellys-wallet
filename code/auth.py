@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 
 import jwt
+from sqlalchemy.exc import IntegrityError
 
 import config
 from models import User
@@ -24,16 +25,31 @@ def _get_jwks_client() -> Optional["jwt.PyJWKClient"]:
     if not config.CLERK_JWKS_URL:
         return None
     if _jwks_client is None:
+        # Short timeout — without it a slow JWKS host pins every thread on the
+        # 8-thread worker up to urllib's 30s default → 401 storm.
         _jwks_client = jwt.PyJWKClient(
             config.CLERK_JWKS_URL,
             cache_keys=True,
-            lifespan=3600,  # cache rotated keys for an hour
+            lifespan=3600,
+            timeout=5,
         )
     return _jwks_client
 
 
 def clerk_enabled() -> bool:
     return bool(config.CLERK_JWT_PUBLIC_KEY) or bool(config.CLERK_JWKS_URL)
+
+
+def log_clerk_config() -> None:
+    if not clerk_enabled():
+        log.warning("Clerk auth is disabled — set CLERK_JWT_PUBLIC_KEY or CLERK_JWKS_URL.")
+        return
+    log.info(
+        "Clerk auth ready: issuer=%s authorized_parties=%s jwks=%s",
+        config.CLERK_ISSUER or "(unset)",
+        config.CLERK_AUTHORIZED_PARTIES or "(unset)",
+        bool(config.CLERK_JWKS_URL),
+    )
 
 
 def _resolve_signing_key(token: str):
@@ -90,7 +106,16 @@ def find_or_create_user(
 
     user = User(clerk_user_id=clerk_user_id, email=email or "")
     session.add(user)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        # Concurrent first-load: another thread inserted the same clerk_user_id.
+        session.rollback()
+        return (
+            session.query(User)
+            .filter_by(clerk_user_id=clerk_user_id)
+            .one()
+        )
     log.info("Created new user from Clerk session: %s", clerk_user_id)
     return user
 

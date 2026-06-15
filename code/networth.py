@@ -14,14 +14,27 @@ def capture(user: User, session) -> NetWorthSnapshot | None:
     if not user.items:
         return None
     data = providers.fetch_all(user, force_refresh=True)
-    # Partial fetches would overwrite a good earlier same-day snapshot with
-    # a false dip; defer to the next sync.
-    if data.get("errors"):
-        log.warning(
-            "networth.capture skipped for user_id=%s due to provider errors: %s",
-            user.id, data["errors"],
-        )
-        return None
+
+    # Healthy item ids appear in returned account rows; missing ones either
+    # errored or hit reauth. Carry forward the most recent same-bucket balance
+    # for each missing item so one broken bank doesn't blank net worth.
+    healthy_item_ids: set[int] = set()
+    for bucket in ("cash", "credit", "investment", "other"):
+        for acct in data[bucket]:
+            if "item_id" in acct:
+                healthy_item_ids.add(acct["item_id"])
+    degraded_item_ids = {it.id for it in user.items} - healthy_item_ids
+    if degraded_item_ids:
+        carried = _carry_forward(degraded_item_ids, session, user.id)
+        if carried is None:
+            log.warning(
+                "networth.capture skipped for user_id=%s: degraded items %s have no prior snapshot",
+                user.id, degraded_item_ids,
+            )
+            return None
+        for bucket, accts in carried.items():
+            data[bucket].extend(accts)
+
     cash = providers.sum_balances(data["cash"])
     investments = providers.sum_balances(data["investment"])
     credit = providers.sum_balances(data["credit"])
@@ -65,6 +78,37 @@ def capture(user: User, session) -> NetWorthSnapshot | None:
 
     session.commit()
     return snapshot
+
+
+def _carry_forward(
+    item_ids: set[int], session, user_id: int,
+) -> dict[str, list[dict]] | None:
+    out: dict[str, list[dict]] = {"cash": [], "credit": [], "investment": [], "other": []}
+    found_any = False
+    for item_id in item_ids:
+        rows = (
+            session.query(AccountBalanceSnapshot)
+            .filter_by(user_id=user_id, item_id=item_id)
+            .order_by(AccountBalanceSnapshot.taken_at.desc())
+            .all()
+        )
+        latest_by_acct: dict[str, AccountBalanceSnapshot] = {}
+        for r in rows:
+            if r.plaid_account_id not in latest_by_acct:
+                latest_by_acct[r.plaid_account_id] = r
+        if not latest_by_acct:
+            continue
+        found_any = True
+        for r in latest_by_acct.values():
+            bucket = r.bucket if r.bucket in out else "other"
+            out[bucket].append({
+                "institution": r.institution_name or "Unknown",
+                "name": r.account_name or "",
+                "plaid_account_id": r.plaid_account_id,
+                "balance": float(r.balance),
+                "item_id": r.item_id,
+            })
+    return out if found_any or not item_ids else None
 
 
 def get_snapshots(user: User, session) -> list[NetWorthSnapshot]:

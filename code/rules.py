@@ -246,6 +246,7 @@ def _reset_rule_fields(ov: TransactionOverride) -> None:
     ov.detailed_override = None
     ov.amount_override = None
     ov.split_percentage = None
+    ov.rule_id = None
 
 
 def _apply_rule_to_override(
@@ -388,6 +389,8 @@ def _recompute_overrides_for_txs(user_id: int, txs: list[Transaction], session) 
             ov = existing
             _reset_rule_fields(ov)
             ov.source = "rule"
+        winning_rule_id = min(winners, key=lambda r: _rank_key(r, specificity)).id
+        ov.rule_id = winning_rule_id
         for r in winners:
             _apply_rule_to_override(r, ov, tx)
         affected += 1
@@ -409,12 +412,30 @@ def applied_rule_id_by_tx(
 ) -> dict[str, int]:
     """Return {plaid_transaction_id: rule_id} for the rule shown on each tx row.
 
-    Picks the most-specific of the rules that actually set the tx's override
-    (the same winners `_winning_rules` applies), so the "Edit rule" affordance
-    always points at a rule affecting the row.
+    Reads TransactionOverride.rule_id directly — O(txs). Falls back to live
+    matching when a tx has no stored rule_id (legacy overrides created before
+    the FK existed).
     """
     if not txs:
         return {}
+    tx_ids = [t.plaid_transaction_id for t in txs]
+    override_rows = (
+        session.query(TransactionOverride.plaid_transaction_id, TransactionOverride.rule_id)
+        .filter(
+            TransactionOverride.user_id == user_id,
+            TransactionOverride.plaid_transaction_id.in_(tx_ids),
+            TransactionOverride.source == "rule",
+        )
+        .all()
+    )
+    out: dict[str, int] = {
+        plaid_id: rule_id for plaid_id, rule_id in override_rows if rule_id is not None
+    }
+    needs_match = [t for t in txs if t.plaid_transaction_id not in out and any(
+        t.plaid_transaction_id == r[0] and r[1] is None for r in override_rows
+    )]
+    if not needs_match:
+        return out
     rules = (
         session.query(TransactionRule).options(selectinload(TransactionRule.conditions))
         .filter_by(user_id=user_id)
@@ -422,11 +443,10 @@ def applied_rule_id_by_tx(
         .all()
     )
     if not rules:
-        return {}
+        return out
     institutions = _item_institutions(user_id, session)
     specificity = {r.id: rule_specificity(r) for r in rules}
-    out: dict[str, int] = {}
-    for tx in txs:
+    for tx in needs_match:
         matched = [r for r in rules if _tx_matches_rule(tx, r, institutions)]
         winners = _winning_rules(matched, specificity)
         if not winners:
@@ -514,10 +534,12 @@ def apply_rules_to_new_transactions(
         if not matched:
             continue
         winners = _winning_rules(matched, specificity)
+        winning_rule_id = min(winners, key=lambda r: _rank_key(r, specificity)).id
         ov = TransactionOverride(
             user_id=user_id,
             plaid_transaction_id=tx.plaid_transaction_id,
             source="rule",
+            rule_id=winning_rule_id,
         )
         for r in winners:
             _apply_rule_to_override(r, ov, tx)
@@ -685,6 +707,12 @@ def invalidate_cache(user_id: int) -> None:
         _match_options_cache.invalidate(user_id)
 
 
+def clear_cache() -> None:
+    global _match_options_cache
+    if _match_options_cache is not None:
+        _match_options_cache.clear()
+
+
 def _user_match_options_uncached(user: User, session) -> dict:
     def _distinct(col, order=None):
         return [
@@ -726,13 +754,6 @@ def _user_match_options_uncached(user: User, session) -> dict:
 
 
 def delete_rule(user: User, rule_id: int, session) -> bool:
-    """Delete a rule and reconcile the overrides it created.
-
-    Snapshots the txs the rule used to match, deletes the rule, then recomputes
-    overrides for those txs without the rule in play. Any source='rule' overrides
-    that were created only because of this rule get cleared. Manual overrides
-    are protected by `_recompute_overrides_for_txs`.
-    """
     row = (
         session.query(TransactionRule).options(selectinload(TransactionRule.conditions))
         .filter_by(id=rule_id, user_id=user.id)
@@ -740,7 +761,32 @@ def delete_rule(user: User, rule_id: int, session) -> bool:
     )
     if row is None:
         return False
+    # Also include txs whose stored override pointed at this rule — a scope-
+    # narrowed rule's current conditions miss txs that were matched by an
+    # earlier broader version, leaving them with a rule-less override.
+    orphan_tx_ids = [
+        o.plaid_transaction_id for o in
+        session.query(TransactionOverride.plaid_transaction_id)
+        .filter(
+            TransactionOverride.user_id == user.id,
+            TransactionOverride.rule_id == rule_id,
+        )
+    ]
     old_txs = _query_txs_for_rule(row, session)
+    seen_ids = {t.plaid_transaction_id for t in old_txs}
+    if orphan_tx_ids:
+        extra = (
+            session.query(Transaction)
+            .filter(
+                Transaction.user_id == user.id,
+                Transaction.plaid_transaction_id.in_(orphan_tx_ids),
+            )
+            .all()
+        )
+        for t in extra:
+            if t.plaid_transaction_id not in seen_ids:
+                old_txs.append(t)
+                seen_ids.add(t.plaid_transaction_id)
     session.delete(row)
     session.flush()
     _recompute_overrides_for_txs(user.id, old_txs, session)

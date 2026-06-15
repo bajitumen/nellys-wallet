@@ -83,13 +83,28 @@ def init_db():
                 "ALTER TABLE transaction_overrides ADD COLUMN source VARCHAR(16) "
                 "NOT NULL DEFAULT 'manual'"
             ))
+        if ov_cols and "rule_id" not in ov_cols:
+            conn.execute(text(
+                "ALTER TABLE transaction_overrides ADD COLUMN rule_id INTEGER "
+                "REFERENCES transaction_rules(id) ON DELETE SET NULL"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_override_rule_id "
+                "ON transaction_overrides (rule_id)"
+            ))
         # Orphan NOT-NULL columns from an earlier model — new inserts fail
-        # until they're dropped.
+        # until they're dropped. DROP COLUMN requires SQLite >= 3.35.
         for orphan in ("split_count", "created_at", "updated_at"):
             if orphan in ov_cols:
-                conn.execute(text(
-                    f"ALTER TABLE transaction_overrides DROP COLUMN {orphan}"
-                ))
+                try:
+                    conn.execute(text(
+                        f"ALTER TABLE transaction_overrides DROP COLUMN {orphan}"
+                    ))
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "Could not DROP COLUMN %s (SQLite likely < 3.35): %s", orphan, e,
+                    )
 
         user_cols = {
             row[1] for row in conn.execute(text("PRAGMA table_info(users)"))
@@ -136,6 +151,15 @@ def init_db():
         if item_cols and "primary_color" not in item_cols:
             conn.execute(text(
                 "ALTER TABLE plaid_items ADD COLUMN primary_color VARCHAR(16)"
+            ))
+        if item_cols and "needs_reauth" not in item_cols:
+            conn.execute(text(
+                "ALTER TABLE plaid_items ADD COLUMN needs_reauth BOOLEAN NOT NULL DEFAULT 0"
+            ))
+        if item_cols:
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_item_user_plaid "
+                "ON plaid_items (user_id, plaid_item_id)"
             ))
 
         rate_cols = {
@@ -197,6 +221,20 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS ix_tx_user_date "
             "ON transactions (user_id, date)"
         ))
+
+        # Drop redundant single-column indexes: composite covers them, and each
+        # unused index adds write cost on every sync.
+        tx_indexes = {row[0] for row in conn.execute(text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='index' AND tbl_name='transactions'"
+        ))}
+        for legacy in (
+            "ix_transactions_date",
+            "ix_transactions_plaid_transaction_id",
+            "ix_transactions_is_internal_transfer",
+        ):
+            if legacy in tx_indexes:
+                conn.execute(text(f"DROP INDEX {legacy}"))
 
         conn.commit()
     _restrict_sqlite_perms()

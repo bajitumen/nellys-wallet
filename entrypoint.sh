@@ -49,18 +49,29 @@ if [[ -n "${LITESTREAM_REPLICA_URL:-}" ]]; then
   fi
 fi
 
-# Migrate once before workers boot — concurrent ALTERs would race otherwise.
-echo "Initializing DB schema..."
-python /app/code/cli.py init-db
-
 # -w 1 is mandatory: in-process caches/locks are not shared across workers.
 GUNICORN_THREADS="${GUNICORN_THREADS:-8}"
 # --graceful-timeout 25 fits inside Render's 30s SIGTERM grace.
 GUNICORN_CMD="gunicorn -w 1 --threads ${GUNICORN_THREADS} --timeout 90 --graceful-timeout 25 -b 0.0.0.0:${PORT:-5001} --chdir /app/code app:app"
 
+# Run migrations and serving under one process so init-db's WAL frames
+# replicate too — a crash between migrate and first checkpoint would
+# otherwise restore a pre-migration schema.
+APP_CMD="python /app/code/cli.py init-db && ${GUNICORN_CMD}"
+
 if [[ -n "${LITESTREAM_REPLICA_URL:-}" ]]; then
-  exec litestream replicate -config /app/litestream.yml -exec "${GUNICORN_CMD}"
+  # Background probe: alert loud if no successful generation appears after
+  # 60s. Catches misconfigured S3 creds where writes succeed but backups
+  # silently never run — restore would then yield an empty DB.
+  (
+    sleep 60
+    if ! litestream snapshots -config /app/litestream.yml "$DB_PATH" 2>/dev/null \
+        | grep -q .; then
+      echo "ALERT: litestream has no snapshots 60s after start — check S3 creds + replica URL." >&2
+    fi
+  ) &
+  exec litestream replicate -config /app/litestream.yml -exec "bash -c '${APP_CMD}'"
 else
   echo "LITESTREAM_REPLICA_URL not set — running without backups."
-  exec ${GUNICORN_CMD}
+  bash -c "${APP_CMD}"
 fi

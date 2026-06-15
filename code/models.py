@@ -52,6 +52,9 @@ class User(Base):
 
 class PlaidItem(Base):
     __tablename__ = "plaid_items"
+    __table_args__ = (
+        UniqueConstraint("user_id", "plaid_item_id", name="uq_item_user_plaid"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
@@ -62,6 +65,8 @@ class PlaidItem(Base):
     primary_color: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     plaid_item_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
     access_token_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    # Set by webhook on ITEM_LOGIN_REQUIRED / PENDING_EXPIRATION — flagged for reauth.
+    needs_reauth: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     user: Mapped[User] = relationship(back_populates="items")
@@ -91,6 +96,10 @@ class TransactionOverride(Base):
     dismissed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # 'manual' protects from rule overwrites; 'rule' is recomputed when rules change.
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    # Set when source='rule'; lets reads attribute an override to a rule in O(1).
+    rule_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("transaction_rules.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
 
 
 class TransactionRule(Base):
@@ -198,8 +207,8 @@ class Transaction(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("plaid_items.id"), index=True)
 
-    plaid_transaction_id: Mapped[str] = mapped_column(String(64), index=True)
-    date: Mapped[date] = mapped_column(Date, index=True)
+    plaid_transaction_id: Mapped[str] = mapped_column(String(64))
+    date: Mapped[date] = mapped_column(Date)
     amount: Mapped[float] = mapped_column(Float)
     iso_currency_code: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)
     name: Mapped[str] = mapped_column(String(256))
@@ -207,10 +216,9 @@ class Transaction(Base):
     pfc_primary: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     pfc_detailed: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    # True when this tx has been paired with the opposite leg of a transfer
-    # between the user's own accounts. Set by rules.pair_internal_transfers().
+    # Set by transfers.pair_internal_transfers(); excluded from spend/income totals.
     is_internal_transfer: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, index=True,
+        Boolean, nullable=False, default=False,
     )
 
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

@@ -56,7 +56,9 @@ function buildChart(
 ): ChartGeometry | null {
   if (series.length === 0) return null;
   const DAY = 86400;
-  const start = rangeStart ?? series[0].ts;
+  // Clamp to first snapshot — padding earlier days with 0 draws a fake
+  // drop-to-baseline spike at the left edge.
+  const start = Math.max(rangeStart ?? series[0].ts, series[0].ts);
   const realByDay = new Map<number, number>();
   for (const s of series) {
     realByDay.set(Math.floor(s.ts / DAY) * DAY, s.value);
@@ -70,7 +72,7 @@ function buildChart(
   }
   const pathXs = allDays.map((d) => d.ts);
   const pathYs = allDays.map((d) => d.value);
-  const xMin = rangeStart ?? pathXs[0];
+  const xMin = pathXs[0];
   const xMax = rangeEnd;
   const xSpan = Math.max(1, xMax - xMin);
   const yMin = Math.min(...pathYs);

@@ -39,9 +39,10 @@ from db import Base, SessionLocal, engine
 
 @pytest.fixture(autouse=True)
 def fresh_db():
-    """Drop and recreate all tables before each test."""
+    """Drop everything and run the actual prod migration path."""
     Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    import db
+    db.init_db()
     yield
 
 
@@ -50,14 +51,17 @@ def clear_caches():
     """Reset all in-process caches between tests."""
     import income
     import providers
+    import rules
     import spending
     providers.clear_cache()
     spending.clear_cache()
     income.clear_cache()
+    rules.clear_cache()
     yield
     providers.clear_cache()
     spending.clear_cache()
     income.clear_cache()
+    rules.clear_cache()
 
 
 @pytest.fixture

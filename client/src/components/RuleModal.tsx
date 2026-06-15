@@ -5,6 +5,7 @@ import { InlineDropdown, type DropdownOption } from "./InlineDropdown";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 import { postJson } from "../lib/api";
+import { useModal } from "../lib/useModal";
 
 export type MatchOption = { field: string; value: string; label: string };
 export type RuleMatchOptions = {
@@ -82,6 +83,7 @@ export function RuleModal(props: Props) {
     rowCategoryRaw, rowDetailedRaw, rowSource, onClose, onSaved,
   } = props;
   const toast = useToast();
+  const containerRef = useModal(open);
 
   function defaultCondition(field: Condition["field"]): Condition {
     const list = options[field] || [];
@@ -264,7 +266,10 @@ export function RuleModal(props: Props) {
           if (e.target === e.currentTarget) onClose();
         }}
       >
-        <div className="rule-modal" role="dialog" aria-modal="true" aria-labelledby="rule-modal-title">
+        <div
+          ref={containerRef as React.RefObject<HTMLDivElement>}
+          className="rule-modal" role="dialog" aria-modal="true" aria-labelledby="rule-modal-title"
+        >
           <h2 id="rule-modal-title">
             {editingRule ? "Edit rule" : "Set rule"}
             <span className="rule-modal-scope-tag">: </span>

@@ -15,6 +15,19 @@ export class ApiError extends Error {
 
 let _csrfToken: string | null = null;
 
+// Idle tabs let Clerk's short-lived __session cookie expire; refresh it
+// before retrying so a 401 doesn't kick the user back to the empty state.
+async function refreshClerkSession(): Promise<boolean> {
+  const clerk = (window as unknown as { Clerk?: { session?: { getToken?: (opts?: { skipCache?: boolean }) => Promise<string | null> } } }).Clerk;
+  if (!clerk?.session?.getToken) return false;
+  try {
+    await clerk.session.getToken({ skipCache: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchCsrfToken(force = false): Promise<string> {
   if (_csrfToken && !force) return _csrfToken;
   const res = await fetch("/api/csrf-token", { credentials: "same-origin" });
@@ -48,10 +61,14 @@ function safeParse(text: string): unknown {
 }
 
 export async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, {
+  const init: RequestInit = {
     credentials: "same-origin",
     headers: { Accept: "application/json" },
-  });
+  };
+  let res = await fetch(url, init);
+  if (res.status === 401 && (await refreshClerkSession())) {
+    res = await fetch(url, init);
+  }
   return jsonOrThrow<T>(res);
 }
 
@@ -67,7 +84,10 @@ async function sendWithCsrf(url: string, method: "POST" | "DELETE", body?: unkno
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-  const first = await send(await fetchCsrfToken());
+  let first = await send(await fetchCsrfToken());
+  if (first.status === 401 && (await refreshClerkSession())) {
+    first = await send(await fetchCsrfToken());
+  }
   // flask-wtf returns 400, not 403 — sniff body for CSRF, retry once.
   if (first.status !== 400 && first.status !== 403) return first;
   const peek = await first.clone().text();

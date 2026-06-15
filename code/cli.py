@@ -5,6 +5,8 @@ Commands:
   seed-me                 Create a placeholder User and migrate permissions.env into it.
                           Used once during the migration from the single-user prototype.
                           Replace the placeholder later when you sign up via Clerk.
+  claim-placeholder <id>  Re-key the placeholder User row to a real Clerk user id.
+                          Local-only; never exposed via HTTP.
   show                    Print all users and their linked items (with masked tokens).
   backfill-institutions   Fill in PlaidItem.institution_name and .logo for any
                           item missing either. Idempotent — items with both set
@@ -24,6 +26,9 @@ Commands:
                           institution_id, logo presence + length, URL, primary_color.
                           Useful when a logo is mysteriously missing from the DB.
                           Costs ~1 Plaid credit per call.
+  rotate-key              Re-encrypt every Plaid token under the current FERNET_KEY
+                          (set FERNET_KEY_OLD to the prior key(s) first). Break-glass
+                          for key rotations.
 """
 
 import os

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { Page } from "../components/Page";
@@ -152,6 +152,11 @@ function BudgetRow({ sub }: { sub: Subitem }) {
   const toast = useToast();
   const initialValue = sub.amount ? sub.amount.toFixed(2) : "";
   const [value, setValue] = useState<string>(initialValue);
+  // Rows are keyed by sub.code (stable across months); without this reset
+  // the prior month's value rides through onBlur and POSTs to the new month.
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
   const save = useMutation({
     mutationFn: (amount: string) =>
       postJson(`/budget/${encodeURIComponent(sub.code)}`, { amount }),

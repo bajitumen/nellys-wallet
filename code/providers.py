@@ -7,6 +7,7 @@ import plaid
 from plaid.api import plaid_api
 from plaid.model.accounts_get_request import AccountsGetRequest
 
+import config
 from models import PlaidItem, User
 
 log = logging.getLogger(__name__)
@@ -79,26 +80,47 @@ def _classify(acct) -> str:
 PLAID_REQUEST_TIMEOUT_SECONDS: float = 30.0
 
 
-def plaid_client_for(user: User) -> plaid_api.PlaidApi:
-    creds = user.get_plaid_credentials()
-    if not creds:
-        raise ValueError(f"User {user.id} has no Plaid credentials configured.")
-    client_id, secret = creds
+_PLAID_HOSTS = {
+    "production": plaid.Environment.Production,
+    "sandbox": plaid.Environment.Sandbox,
+}
+
+
+def _plaid_host():
+    return _PLAID_HOSTS.get(config.PLAID_ENV.lower(), plaid.Environment.Production)
+
+
+def build_plaid_client(client_id: str, secret: str) -> plaid_api.PlaidApi:
     configuration = plaid.Configuration(
-        host=plaid.Environment.Production,
+        host=_plaid_host(),
         api_key={"clientId": client_id, "secret": secret},
     )
     return plaid_api.PlaidApi(plaid.ApiClient(configuration))
 
 
+def plaid_client_for(user: User) -> plaid_api.PlaidApi:
+    creds = user.get_plaid_credentials()
+    if not creds:
+        raise ValueError(f"User {user.id} has no Plaid credentials configured.")
+    client_id, secret = creds
+    return build_plaid_client(client_id, secret)
+
+
 def _fetch_one(client: plaid_api.PlaidApi, item: PlaidItem) -> dict:
+    return _fetch_one_snapshot(
+        client, item.id, item.get_access_token(),
+        item.institution_name, item.logo, item.primary_color,
+    )
+
+
+def _fetch_one_snapshot(
+    client: plaid_api.PlaidApi, item_id: int, token: str,
+    institution_name: str | None, logo: str | None, primary_color: str | None,
+) -> dict:
     result: dict = {
         "cash": [], "credit": [], "investment": [], "other": [], "errors": [],
     }
-    token = item.get_access_token()
-    institution = item.institution_name or "Unknown"
-    logo = item.logo
-    primary_color = item.primary_color
+    institution = institution_name or "Unknown"
 
     try:
         resp = client.accounts_get(
@@ -108,12 +130,25 @@ def _fetch_one(client: plaid_api.PlaidApi, item: PlaidItem) -> dict:
     except plaid.ApiException as e:
         body = getattr(e, "body", str(e))
         log.warning("accounts_get failed for %s: %s", institution, body[:500])
-        # Generic to the client — Plaid error bodies can leak request IDs and
-        # the access path; full detail stays in server logs.
+        if "ITEM_LOGIN_REQUIRED" in (body or ""):
+            result["errors"].append(f"{institution}: reconnect required.")
+            result["needs_reauth_item_id"] = item.id
+        else:
+            result["errors"].append(f"{institution}: temporarily unavailable.")
+        return result
+    except Exception as e:
+        # Network timeouts / urllib3 errors aren't plaid.ApiException; without
+        # catching, they escape ex.map and abort fetch for ALL items.
+        log.warning("accounts_get raised non-Plaid error for %s: %s", institution, e)
         result["errors"].append(f"{institution}: temporarily unavailable.")
         return result
 
+    skipped_non_usd = 0
     for acct in resp.accounts:
+        iso = getattr(acct.balances, "iso_currency_code", None)
+        if isinstance(iso, str) and iso != "USD":
+            skipped_non_usd += 1
+            continue
         result[_classify(acct)].append({
             "institution": institution,
             "logo": logo,
@@ -127,8 +162,13 @@ def _fetch_one(client: plaid_api.PlaidApi, item: PlaidItem) -> dict:
             "available": (float(acct.balances.available)
                           if acct.balances.available is not None else None),
             "plaid_account_id": acct.account_id,
-            "item_id": item.id,
+            "item_id": item_id,
+            "iso_currency_code": iso if isinstance(iso, str) else "USD",
         })
+    if skipped_non_usd:
+        result["errors"].append(
+            f"{institution}: hid {skipped_non_usd} non-USD account(s) — totals are USD only."
+        )
     return result
 
 
@@ -169,8 +209,17 @@ def fetch_all(user: User, force_refresh: bool = False) -> dict:
             out["errors"].append(str(e))
             return out
 
+        # Snapshot ORM attributes on the calling thread; the executor reads
+        # plain tuples so a SQLAlchemy Session is never shared across threads.
+        snapshots = [(it.id, it.get_access_token(), it.institution_name,
+                      it.logo, it.primary_color) for it in items]
+
+        def _fetch_snap(snap):
+            item_id, token, institution, logo, primary_color = snap
+            return _fetch_one_snapshot(client, item_id, token, institution, logo, primary_color)
+
         with ThreadPoolExecutor(max_workers=min(8, len(items))) as ex:
-            results = list(ex.map(lambda it: _fetch_one(client, it), items))
+            results = list(ex.map(_fetch_snap, snapshots))
 
         for r in results:
             for key in ("cash", "credit", "investment", "other", "errors"):

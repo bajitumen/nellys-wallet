@@ -43,6 +43,11 @@ def test_fetch_one_buckets_accounts(user_with_item, patch_plaid_client):
     assert len(result["investment"]) == 1
     assert len(result["other"]) == 1
     assert result["errors"] == []
+    # Every Plaid call must carry _request_timeout — a hung bank would
+    # otherwise pin a worker thread + executor + keylock indefinitely.
+    from providers import PLAID_REQUEST_TIMEOUT_SECONDS
+    kwargs = patch_plaid_client.accounts_get.call_args.kwargs
+    assert kwargs["_request_timeout"] == PLAID_REQUEST_TIMEOUT_SECONDS
 
 
 def test_fetch_all_caches_results(user_with_item, patch_plaid_client):

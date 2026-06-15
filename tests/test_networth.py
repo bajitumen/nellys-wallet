@@ -9,14 +9,18 @@ def _utcnow_naive():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _fetch_all_with(cash=0.0, investment=0.0, credit=0.0):
+def _fetch_all_with(cash=0.0, investment=0.0, credit=0.0, item_id=1):
     """Build a providers.fetch_all return value with single-account totals."""
-    def acct(b):
-        return {"balance": b}
+    def acct(b, kind):
+        return {
+            "balance": b, "item_id": item_id,
+            "plaid_account_id": f"acct-{kind}-{item_id}",
+            "name": kind.title(), "institution": "TestBank",
+        }
     return {
-        "cash": [acct(cash)] if cash else [],
-        "investment": [acct(investment)] if investment else [],
-        "credit": [acct(credit)] if credit else [],
+        "cash": [acct(cash, "cash")] if cash else [],
+        "investment": [acct(investment, "investment")] if investment else [],
+        "credit": [acct(credit, "credit")] if credit else [],
         "other": [],
         "errors": [],
     }

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SignedIn, UserButton } from "@clerk/clerk-react";
+import { SignedIn, UserButton, useClerk } from "@clerk/clerk-react";
 import { IconRefresh } from "./icons";
 import { AddAccountButton } from "./AddAccountButton";
 import { useToast } from "./Toast";
@@ -29,6 +29,18 @@ export function Page({ heading, title, children }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const clerkEnabled = useClerkEnabled();
+  const clerk = clerkEnabled ? useClerk() : null;
+  // Drop cached financial data the moment the client-side session disappears
+  // so the next sign-in never flashes a previous user's numbers.
+  useEffect(() => {
+    if (!clerk) return;
+    const unsub = clerk.addListener((res: { user?: unknown }) => {
+      if (!res.user) qc.clear();
+    });
+    return () => {
+      if (typeof unsub === "function") unsub();
+    };
+  }, [clerk, qc]);
   const { open, setOpen } = useSidebar();
   const me = useQuery<{ last_sync_label: string | null }>({
     queryKey: ["me"],

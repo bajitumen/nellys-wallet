@@ -1,6 +1,7 @@
 import logging
 import math
 import time
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 from flask import Flask, g, jsonify, request, send_from_directory
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 from sqlalchemy import func, text
+from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
@@ -22,9 +24,27 @@ import providers
 import rules as rules_mod
 import spending as spending_mod
 from db import SessionLocal
-from models import Transaction, TransactionOverride, User
+from models import (
+    AccountBalanceSnapshot, NetWorthSnapshot, PlaidItem, Transaction,
+    TransactionOverride, User,
+)
 
 log = logging.getLogger(__name__)
+
+if config.SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.flask import FlaskIntegration
+        sentry_sdk.init(
+            dsn=config.SENTRY_DSN,
+            integrations=[FlaskIntegration()],
+            traces_sample_rate=0.0,
+            send_default_pii=False,
+        )
+    except Exception:
+        log.exception("Sentry init failed")
+
+auth.log_clerk_config()
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CLIENT_DIST = _REPO_ROOT / "client" / "dist"
@@ -122,11 +142,31 @@ def with_user(f):
                     "setup_required": True,
                 }), 409
             g.user = user
-            return f(session, user, *args, **kwargs)
+            try:
+                return f(session, user, *args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception:
+                try:
+                    session.rollback()
+                except Exception:
+                    log.exception("Session rollback failed")
+                raise
     return wrapped
 
 
-with_user_json = with_user
+@app.before_request
+def _assign_request_id() -> None:
+    g.request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+
+
+@app.errorhandler(Exception)
+def _on_unhandled_exception(e):
+    if isinstance(e, HTTPException):
+        return e
+    rid = getattr(g, "request_id", "?")
+    log.exception("Unhandled exception (request_id=%s, path=%s)", rid, request.path)
+    return jsonify({"error": "Internal server error", "request_id": rid}), 500
 
 
 def _pfc_dropdown_data(side: str = "all") -> dict:
@@ -215,6 +255,104 @@ def link_exchange(session, user):
              user.id, item.institution_name)
     providers.invalidate_cache(user.id)
     return jsonify({"item_id": item.id, "institution_name": item.institution_name})
+
+
+@app.route("/link/token/update/<int:item_id>", methods=["POST"])
+@with_user
+def link_token_update(session, user, item_id):
+    if user is None:
+        return jsonify({"error": "No user provisioned"}), 400
+    item = session.query(PlaidItem).filter_by(user_id=user.id, id=item_id).one_or_none()
+    if item is None:
+        return jsonify({"error": "Item not found"}), 404
+    try:
+        client = providers.plaid_client_for(user)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    try:
+        token = plaid_link.create_update_link_token(client, user, item)
+    except Exception:
+        log.exception("create_update_link_token failed for item_id=%s", item.id)
+        return jsonify({"error": "Could not start reauth. Try again in a moment."}), 500
+    return jsonify({"link_token": token})
+
+
+@app.route("/items/<int:item_id>", methods=["DELETE"])
+@with_user
+def item_delete(session, user, item_id):
+    if user is None:
+        return jsonify({"error": "No user"}), 400
+    item = session.query(PlaidItem).filter_by(user_id=user.id, id=item_id).one_or_none()
+    if item is None:
+        return jsonify({"error": "Item not found"}), 404
+    access_token = None
+    try:
+        access_token = item.get_access_token()
+    except Exception:
+        log.warning("Could not decrypt access token for item_id=%s; skipping item_remove", item.id)
+    if access_token:
+        try:
+            client = providers.plaid_client_for(user)
+            from plaid.model.item_remove_request import ItemRemoveRequest
+            client.item_remove(
+                ItemRemoveRequest(access_token=access_token),
+                _request_timeout=providers.PLAID_REQUEST_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            log.exception("Best-effort item_remove failed for item_id=%s", item.id)
+    session.query(TransactionOverride).filter(
+        TransactionOverride.user_id == user.id,
+        TransactionOverride.plaid_transaction_id.in_(
+            session.query(Transaction.plaid_transaction_id).filter_by(
+                user_id=user.id, item_id=item.id,
+            )
+        ),
+    ).delete(synchronize_session=False)
+    session.query(Transaction).filter_by(user_id=user.id, item_id=item.id).delete(
+        synchronize_session=False,
+    )
+    session.query(AccountBalanceSnapshot).filter_by(
+        user_id=user.id, item_id=item.id,
+    ).delete(synchronize_session=False)
+    session.delete(item)
+    session.commit()
+    providers.invalidate_cache(user.id)
+    _invalidate_user_caches(user.id)
+    return jsonify({"ok": True})
+
+
+@app.route("/plaid/webhook", methods=["POST"])
+@csrf.exempt
+def plaid_webhook():
+    # Plaid signs webhooks with Plaid-Verification (JWT, ES256). Verify before
+    # any state change. plaid_webhook_verify_jwt() handles the key fetch + cache.
+    body = request.get_data()
+    signature = request.headers.get("Plaid-Verification", "")
+    if not plaid_link.verify_webhook(body, signature):
+        log.warning("Plaid webhook rejected: signature verification failed")
+        return jsonify({"error": "invalid signature"}), 401
+    payload = request.get_json(silent=True) or {}
+    webhook_type = payload.get("webhook_type")
+    webhook_code = payload.get("webhook_code")
+    plaid_item_id = payload.get("item_id")
+    log.info(
+        "Plaid webhook: type=%s code=%s item=%s", webhook_type, webhook_code, plaid_item_id,
+    )
+    if not plaid_item_id:
+        return jsonify({"ok": True})
+    needs_reauth_codes = {
+        "ITEM_LOGIN_REQUIRED", "PENDING_EXPIRATION", "USER_PERMISSION_REVOKED",
+        "USER_ACCOUNT_REVOKED",
+    }
+    with SessionLocal() as session:
+        item = session.query(PlaidItem).filter_by(plaid_item_id=plaid_item_id).one_or_none()
+        if item is None:
+            return jsonify({"ok": True})
+        if webhook_code in needs_reauth_codes:
+            item.needs_reauth = True
+            session.commit()
+            providers.invalidate_cache(item.user_id)
+    return jsonify({"ok": True})
 
 
 @app.route("/transactions/<tx_id>/override", methods=["POST"])
@@ -631,7 +769,7 @@ def sync_route(session, user):
 
 
 @app.route("/api/settings/plaid", methods=["GET"])
-@with_user_json
+@with_user
 def api_plaid_status(session, user):
     return jsonify({"has_creds": user is not None and user.get_plaid_credentials() is not None})
 
@@ -658,7 +796,7 @@ def api_plaid_save():
 
 
 @app.route("/api/me")
-@with_user_json
+@with_user
 def api_me(session, user):
     last_sync = user.last_transactions_sync if user is not None else None
     return jsonify({
@@ -672,28 +810,33 @@ def api_csrf_token():
     return jsonify({"token": generate_csrf()})
 
 
+_healthz_cache: dict = {"ts": 0.0, "ok": False}
+
+
 @app.route("/healthz")
 def healthz():
-    """Deep enough to catch the failure modes that would actually break the app:
-
-    - SELECT 1 alone passes against a wrong-path SQLite (which SQLite happily
-      creates as an empty file), so probe a real table the schema must have.
-    - The SPA shell on disk; missing dist/ means every page would 404.
-    """
+    # Cache a healthy result for 10s so probes don't compete with real traffic
+    # under thread saturation. Cheap row read — schema must have users.
+    now = time.monotonic()
+    if _healthz_cache["ok"] and now - _healthz_cache["ts"] < 10.0:
+        return jsonify({"ok": True})
     try:
         with SessionLocal() as session:
-            session.execute(text("SELECT COUNT(*) FROM users")).scalar()
+            session.execute(text("SELECT 1 FROM users LIMIT 1")).first()
     except Exception:
         log.exception("/healthz DB probe failed")
+        _healthz_cache["ok"] = False
         return jsonify({"ok": False, "reason": "db"}), 503
     if not (_CLIENT_DIST / "index.html").is_file():
         log.error("/healthz SPA shell missing at %s", _CLIENT_DIST)
         return jsonify({"ok": False, "reason": "spa-shell-missing"}), 503
+    _healthz_cache["ok"] = True
+    _healthz_cache["ts"] = now
     return jsonify({"ok": True})
 
 
 @app.route("/api/overview")
-@with_user_json
+@with_user
 def api_overview(session, user):
     if user is None:
         return jsonify({
@@ -715,7 +858,7 @@ def api_overview(session, user):
     snapshots = networth_mod.get_snapshots(user, session)
     now_ts = int(time.time())
     networth_default_start = now_ts - 30 * 86400
-    cutoff_dt = date.today() - timedelta(days=30)
+    cutoff_dt = datetime.now(timezone.utc).date() - timedelta(days=30)
     networth_default_snapshots = [s for s in snapshots if s.taken_at.date() >= cutoff_dt]
     networth_chart = networth_mod.build_chart(
         networth_default_snapshots,
@@ -761,7 +904,7 @@ def api_overview(session, user):
 
 
 @app.route("/api/spending")
-@with_user_json
+@with_user
 def api_spending(session, user):
     source = request.args.get("source") or None
     month = request.args.get("month") or None
@@ -820,7 +963,7 @@ def api_spending(session, user):
 
 
 @app.route("/api/income")
-@with_user_json
+@with_user
 def api_income(session, user):
     source = request.args.get("source") or None
     month = request.args.get("month") or None
@@ -869,7 +1012,7 @@ def api_income(session, user):
 
 
 @app.route("/api/rules")
-@with_user_json
+@with_user
 def api_rules_list(session, user):
     valid_tabs = {"spending", "income", "both"}
     active_tab = request.args.get("tab") or "spending"
@@ -919,7 +1062,7 @@ def api_rules_list(session, user):
 
 
 @app.route("/api/budget")
-@with_user_json
+@with_user
 def api_budget(session, user):
     month_options = _month_options(12)
     if user is None:
@@ -949,7 +1092,7 @@ def api_budget(session, user):
 
 
 @app.route("/api/planning")
-@with_user_json
+@with_user
 def api_planning(session, user):
     if user is None:
         return jsonify({
@@ -976,7 +1119,8 @@ def api_planning(session, user):
             })
     rates = planning_mod.get_rates(user, session)
     contributions = planning_mod.get_contributions(user, session)
-    cashflow = spending_mod.monthly_cashflow(user, session, n_months=6)
+    # Reuse the 12-month cache slot — strict subset and avoids a second scan.
+    cashflow = spending_mod.monthly_cashflow(user, session, n_months=12)[-6:]
     non_empty = [m for m in cashflow if m["spend"] > 0 or m["income"] > 0]
     if non_empty:
         avg_monthly_income = sum(m["income"] for m in non_empty) / len(non_empty)

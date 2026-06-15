@@ -319,6 +319,10 @@ def test_sync_inserts_new_rows(user_with_item, db_session, patch_plaid):
     assert result["added"] == 2
     assert result["updated"] == 0
     assert db_session.query(Transaction).count() == 2
+    # transactions_get must carry _request_timeout — load-bearing invariant.
+    from providers import PLAID_REQUEST_TIMEOUT_SECONDS
+    kwargs = patch_plaid.transactions_get.call_args.kwargs
+    assert kwargs["_request_timeout"] == PLAID_REQUEST_TIMEOUT_SECONDS
 
 
 def test_sync_updates_existing_rows(user_with_item, db_session, patch_plaid):

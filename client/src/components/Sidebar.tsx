@@ -31,6 +31,11 @@ function readDark(): boolean {
   return document.documentElement.getAttribute("data-theme") === "dark";
 }
 
+function applyTheme(dark: boolean): void {
+  if (dark) document.documentElement.setAttribute("data-theme", "dark");
+  else document.documentElement.removeAttribute("data-theme");
+}
+
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [isDark, setIsDark] = useState(readDark);
@@ -40,16 +45,34 @@ export function Sidebar() {
     localStorage.setItem("sidebarCollapsed", collapsed ? "1" : "0");
   }, [collapsed]);
 
+  // Mirror theme across tabs and follow live OS preference when the user
+  // hasn't set an explicit choice.
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key !== "theme") return;
+      const dark = e.newValue === "dark";
+      applyTheme(dark);
+      setIsDark(dark);
+    }
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    function onMedia(ev: MediaQueryListEvent) {
+      if (localStorage.getItem("theme") !== null) return;
+      applyTheme(ev.matches);
+      setIsDark(ev.matches);
+    }
+    window.addEventListener("storage", onStorage);
+    mq.addEventListener?.("change", onMedia);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      mq.removeEventListener?.("change", onMedia);
+    };
+  }, []);
+
   function toggleTheme() {
     const next = !isDark;
     setIsDark(next);
-    if (next) {
-      document.documentElement.setAttribute("data-theme", "dark");
-      localStorage.setItem("theme", "dark");
-    } else {
-      document.documentElement.removeAttribute("data-theme");
-      localStorage.setItem("theme", "light");
-    }
+    applyTheme(next);
+    localStorage.setItem("theme", next ? "dark" : "light");
   }
 
   return (

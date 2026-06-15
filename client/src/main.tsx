@@ -1,33 +1,40 @@
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, keepPreviousData } from "@tanstack/react-query";
 import { ClerkProvider } from "@clerk/clerk-react";
 
 import App from "./App";
 import { ClerkEnabledContext } from "./lib/clerkContext";
 import { ToastProvider } from "./components/Toast";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./index.css";
 
 const clerkKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
-const queryClient = new QueryClient({
+export const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { refetchOnWindowFocus: true, staleTime: 30_000 },
+    queries: {
+      refetchOnWindowFocus: true,
+      staleTime: 30_000,
+      placeholderData: keepPreviousData,
+    },
   },
 });
 
 function Root() {
   const enabled = !!clerkKey;
   const tree = (
-    <ClerkEnabledContext.Provider value={enabled}>
-      <QueryClientProvider client={queryClient}>
-        <ToastProvider>
-          <BrowserRouter>
-            <App clerkEnabled={enabled} />
-          </BrowserRouter>
-        </ToastProvider>
-      </QueryClientProvider>
-    </ClerkEnabledContext.Provider>
+    <ErrorBoundary>
+      <ClerkEnabledContext.Provider value={enabled}>
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <BrowserRouter>
+              <App clerkEnabled={enabled} />
+            </BrowserRouter>
+          </ToastProvider>
+        </QueryClientProvider>
+      </ClerkEnabledContext.Provider>
+    </ErrorBoundary>
   );
   if (!enabled) return tree;
   try {

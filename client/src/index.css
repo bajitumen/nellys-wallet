@@ -88,3 +88,7 @@ button.stacked-bar-segment {
   padding: 2.5rem 1rem;
   background: var(--bg);
 }
+
+body.modal-open {
+  overflow: hidden;
+}

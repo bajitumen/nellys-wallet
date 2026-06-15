@@ -45,7 +45,11 @@ def _required_in_prod(name: str) -> str:
 CLERK_PUBLISHABLE_KEY = os.environ.get("CLERK_PUBLISHABLE_KEY", "")
 CLERK_SECRET_KEY = os.environ.get("CLERK_SECRET_KEY", "")
 CLERK_JWT_PUBLIC_KEY = _required_in_prod("CLERK_JWT_PUBLIC_KEY")
-CLERK_FRONTEND_API = os.environ.get("CLERK_FRONTEND_API", "")
+CLERK_FRONTEND_API = _required_in_prod("CLERK_FRONTEND_API")
+if IS_PRODUCTION and ("://" in CLERK_FRONTEND_API or "/" in CLERK_FRONTEND_API):
+    raise RuntimeError(
+        f"CLERK_FRONTEND_API must be a bare host (no scheme/path): {CLERK_FRONTEND_API!r}"
+    )
 CLERK_ISSUER = _required_in_prod("CLERK_ISSUER")
 # Origins the azp claim must match; locks out sibling apps on the same Clerk.
 CLERK_AUTHORIZED_PARTIES = tuple(
@@ -57,6 +61,21 @@ if IS_PRODUCTION and not CLERK_AUTHORIZED_PARTIES:
     )
 # Optional JWKS URL; takes precedence over the static key and survives Clerk key rotations.
 CLERK_JWKS_URL = os.environ.get("CLERK_JWKS_URL", "").strip()
+
+# Public origin (https://nellyswallet.com) — used to build the Plaid webhook URL.
+APP_PUBLIC_URL = os.environ.get("APP_PUBLIC_URL", "").strip()
+if IS_PRODUCTION and not APP_PUBLIC_URL:
+    raise RuntimeError(
+        "APP_PUBLIC_URL is required in production (used for the Plaid webhook URL)."
+    )
+
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+
+# Plaid creds used for webhook signature key fetch (one shared admin client,
+# not the per-user dashboard creds). Required in prod to receive webhooks.
+PLAID_ADMIN_CLIENT_ID = os.environ.get("PLAID_ADMIN_CLIENT_ID", "").strip()
+PLAID_ADMIN_SECRET = os.environ.get("PLAID_ADMIN_SECRET", "").strip()
+PLAID_ENV = os.environ.get("PLAID_ENV", "production" if IS_PRODUCTION else "sandbox").strip()
 
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 os.makedirs(INSTANCE_DIR, exist_ok=True)
