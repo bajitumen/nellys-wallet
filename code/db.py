@@ -200,6 +200,93 @@ def init_db():
                 if legacy in rule_indexes:
                     conn.execute(text(f"DROP INDEX {legacy}"))
 
+            # Drop NOT NULL on the legacy match_field/match_value columns —
+            # the model treats them as orphaned/nullable but old prod schemas
+            # still have the constraint, so create_rule explodes when those
+            # columns aren't written. SQLite can't ALTER away NOT NULL;
+            # rebuild the table.
+            legacy_not_null = {
+                row[1]: row[3]
+                for row in conn.execute(text("PRAGMA table_info(transaction_rules)"))
+            }
+            if legacy_not_null.get("match_field") or legacy_not_null.get("match_value"):
+                # FK enforcement MUST be off — DROP TABLE under FK=ON fires an
+                # implicit DELETE that CASCADE-deletes every condition row.
+                # We can't toggle the pragma inside a transaction, so refuse
+                # to proceed if it's on; the operator needs to set it OFF.
+                fk_state = conn.execute(text("PRAGMA foreign_keys")).scalar()
+                if fk_state:
+                    raise RuntimeError(
+                        "Refusing to rebuild transaction_rules: PRAGMA "
+                        "foreign_keys is ON. DROP TABLE under FK enforcement "
+                        "would cascade-delete every rule condition. Set "
+                        "foreign_keys=OFF in db._sqlite_pragmas and retry."
+                    )
+                # Capture every index on the old table so the rebuild doesn't
+                # silently drop one we don't know about.
+                preserved_indexes = [
+                    (name, sql) for (name, sql) in conn.execute(text(
+                        "SELECT name, sql FROM sqlite_master "
+                        "WHERE type='index' AND tbl_name='transaction_rules' "
+                        "AND sql IS NOT NULL"
+                    ))
+                ]
+                conn.execute(text(
+                    "CREATE TABLE transaction_rules_new ("
+                    "id INTEGER PRIMARY KEY, "
+                    "user_id INTEGER NOT NULL REFERENCES users(id), "
+                    "match_field VARCHAR(32), "
+                    "match_op VARCHAR(16) NOT NULL DEFAULT 'equals', "
+                    "match_value VARCHAR(256), "
+                    "action VARCHAR(32) NOT NULL, "
+                    "action_value VARCHAR(64), "
+                    "scope VARCHAR(16) NOT NULL DEFAULT 'all', "
+                    "conditions_logic VARCHAR(8) NOT NULL DEFAULT 'all', "
+                    "created_at TIMESTAMP"
+                    ")"
+                ))
+                conn.execute(text(
+                    "INSERT INTO transaction_rules_new "
+                    "(id, user_id, match_field, match_op, match_value, action, "
+                    "action_value, scope, conditions_logic, created_at) "
+                    "SELECT id, user_id, match_field, "
+                    "COALESCE(match_op, 'equals'), match_value, action, "
+                    "action_value, COALESCE(scope, 'all'), "
+                    "COALESCE(conditions_logic, 'all'), created_at "
+                    "FROM transaction_rules"
+                ))
+                conn.execute(text("DROP TABLE transaction_rules"))
+                conn.execute(text(
+                    "ALTER TABLE transaction_rules_new RENAME TO transaction_rules"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_transaction_rules_user_id "
+                    "ON transaction_rules (user_id)"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_transaction_rules_match_value "
+                    "ON transaction_rules (match_value)"
+                ))
+                # Replay any other indexes that existed on the old table —
+                # legacy uniqueness indexes already got dropped above, so
+                # only model-defined indexes survive in `preserved_indexes`.
+                for name, idx_sql in preserved_indexes:
+                    if name in {
+                        "ix_transaction_rules_user_id",
+                        "ix_transaction_rules_match_value",
+                        "uq_rule_user_field_op_value_action",
+                        "uq_rule_user_field_op_value_action_scope",
+                    }:
+                        continue
+                    conn.execute(text(idx_sql))
+                # Detect corruption — assert before commit so the tx rolls back
+                # on the way out instead of shipping bad frames to Litestream.
+                violations = list(conn.execute(text("PRAGMA foreign_key_check")))
+                if violations:
+                    raise RuntimeError(
+                        f"transaction_rules rebuild left FK violations: {violations!r}"
+                    )
+
         # Backfill conditions for legacy rules — without rows they read as no-op.
         cond_exists = conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table' "

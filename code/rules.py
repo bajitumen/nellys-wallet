@@ -623,16 +623,9 @@ def create_rule(
     if existing is not None:
         return existing
 
-    # Legacy match_field/match_value columns are NOT NULL on prod schemas
-    # built before they were demoted to nullable. Copy the first condition
-    # into them so inserts still satisfy the constraint; nothing reads them.
-    first = conditions[0] if conditions else {"match_field": "", "match_value": ""}
     rule = TransactionRule(
         user_id=user_id, action=action, action_value=action_value,
         scope=scope, conditions_logic=conditions_logic,
-        match_field=first.get("match_field") or "",
-        match_op=first.get("match_op", "equals") or "equals",
-        match_value=first.get("match_value") or "",
     )
     for c in conditions:
         rule.conditions.append(TransactionRuleCondition(
@@ -653,10 +646,6 @@ def update_rule(
     rule.action_value = action_value
     rule.scope = scope
     rule.conditions_logic = conditions_logic
-    first = conditions[0] if conditions else {"match_field": "", "match_value": ""}
-    rule.match_field = first.get("match_field") or ""
-    rule.match_op = first.get("match_op", "equals") or "equals"
-    rule.match_value = first.get("match_value") or ""
     rule.conditions.clear()
     for c in conditions:
         rule.conditions.append(TransactionRuleCondition(
