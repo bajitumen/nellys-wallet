@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { InlineDropdown, type DropdownOption } from "./InlineDropdown";
 import { formatUsdWhole as formatUsd } from "../lib/format";
 
@@ -121,6 +121,20 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
     x: number; y: number; ts: number; value: number;
     clientX: number; clientY: number;
   } | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
+  const [clampedTipLeft, setClampedTipLeft] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (!hover || !tipRef.current) {
+      setClampedTipLeft(null);
+      return;
+    }
+    const w = tipRef.current.offsetWidth;
+    const margin = 8;
+    let left = hover.clientX - w / 2;
+    if (left < margin) left = margin;
+    if (left + w > window.innerWidth - margin) left = window.innerWidth - w - margin;
+    setClampedTipLeft(left);
+  }, [hover]);
 
   const series = seriesData[seriesKey] || [];
   const rangeEnd = useMemo(() => Math.floor(Date.now() / 1000), [seriesKey, range]);
@@ -279,8 +293,14 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
             style={{ left: `${hover.clientX}px`, top: `${hover.clientY}px` }}
           />
           <div
+            ref={tipRef}
             className="bar-tooltip visible"
-            style={{ left: `${hover.clientX}px`, top: `${hover.clientY}px` }}
+            style={{
+              left: `${clampedTipLeft ?? hover.clientX}px`,
+              top: `${hover.clientY}px`,
+              transform: clampedTipLeft != null ? "translateY(-100%)" : undefined,
+              visibility: clampedTipLeft != null ? "visible" : "hidden",
+            }}
           >
             {hoverDate?.toLocaleDateString("en-US", {
               month: "short", day: "numeric", year: "numeric", timeZone: "UTC",

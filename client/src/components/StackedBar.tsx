@@ -18,7 +18,23 @@ const REPLAY_MS = 350;
 
 export function StackedBar({ segments, onToggle, ariaLabel }: Props) {
   const [hover, setHover] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [clampedLeft, setClampedLeft] = useState<number | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
+  // After the tooltip mounts, measure it and shift left so its centered
+  // position never spills past the viewport on narrow screens.
+  useLayoutEffect(() => {
+    if (!hover || !tipRef.current) {
+      setClampedLeft(null);
+      return;
+    }
+    const w = tipRef.current.offsetWidth;
+    const margin = 8;
+    let left = hover.x - w / 2;
+    if (left < margin) left = margin;
+    if (left + w > window.innerWidth - margin) left = window.innerWidth - w - margin;
+    setClampedLeft(left);
+  }, [hover]);
   // Snapshot previous flex weights per key so we can animate from the old
   // distribution to the new one when segments rebalance after a filter change.
   const prevValuesRef = useRef<Record<string, number>>({});
@@ -80,8 +96,16 @@ export function StackedBar({ segments, onToggle, ariaLabel }: Props) {
       </div>
       {hover && (
         <div
+          ref={tipRef}
           className="bar-tooltip visible"
-          style={{ left: `${hover.x}px`, top: `${hover.y}px` }}
+          style={{
+            // Position by explicit left after measuring — CSS translateX(-50%)
+            // alone would still spill past the right edge on narrow viewports.
+            left: `${clampedLeft ?? hover.x}px`,
+            top: `${hover.y}px`,
+            transform: clampedLeft != null ? "translateY(-100%)" : undefined,
+            visibility: clampedLeft != null ? "visible" : "hidden",
+          }}
         >
           {hover.text}
         </div>
