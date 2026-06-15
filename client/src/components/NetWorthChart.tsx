@@ -56,19 +56,19 @@ function buildChart(
 ): ChartGeometry | null {
   if (series.length === 0) return null;
   const DAY = 86400;
-  // Clamp to first snapshot — padding earlier days with 0 draws a fake
-  // drop-to-baseline spike at the left edge.
-  const start = Math.max(rangeStart ?? series[0].ts, series[0].ts);
+  const start = rangeStart ?? series[0].ts;
   const realByDay = new Map<number, number>();
   for (const s of series) {
     realByDay.set(Math.floor(s.ts / DAY) * DAY, s.value);
   }
-  const allDays: { ts: number; value: number }[] = [];
-  let carried = 0;
+  const allDays: { ts: number; value: number; synthetic: boolean }[] = [];
+  // Carry back from the first real snapshot so days before it draw a flat
+  // line at the earliest known value — no L-spike from baseline zeros.
+  let carried = series[0].value;
   for (let t = Math.floor(start / DAY) * DAY; t <= rangeEnd; t += DAY) {
     const real = realByDay.get(t);
     if (real !== undefined) carried = real;
-    allDays.push({ ts: t, value: carried });
+    allDays.push({ ts: t, value: carried, synthetic: real === undefined && t < series[0].ts });
   }
   const pathXs = allDays.map((d) => d.ts);
   const pathYs = allDays.map((d) => d.value);
@@ -94,19 +94,22 @@ function buildChart(
     points.map((p) => `L ${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ") +
     ` L ${points[points.length - 1].x.toFixed(2)},${baselineY.toFixed(2)} Z`;
 
-  const rendered = pathXs.map((t, i) => ({
-    x: toX(t),
-    y: toY(pathYs[i]),
-    ts: t,
-    value: pathYs[i],
-  }));
+  // Hover only on real snapshots — never lie about a value the user
+  // didn't actually have on a carried-back day.
+  const rendered = allDays
+    .map((d, i) => ({ synthetic: d.synthetic, i }))
+    .filter(({ synthetic }) => !synthetic)
+    .map(({ i }) => ({
+      x: toX(pathXs[i]),
+      y: toY(pathYs[i]),
+      ts: pathXs[i],
+      value: pathYs[i],
+    }));
 
-  // Leftmost rendered value (0 under synthetic prefix) so trend matches
-  // the graph; lastValue stays the latest real snapshot for the headline.
   const realValues = series.map((s) => s.value);
-  const firstValue = pathYs[0];
+  const firstRealValue = realValues[0];
   const lastValue = realValues[realValues.length - 1];
-  return { linePath, areaPath, rendered, firstValue, lastValue };
+  return { linePath, areaPath, rendered, firstValue: firstRealValue, lastValue };
 }
 
 type Props = {

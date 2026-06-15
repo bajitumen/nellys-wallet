@@ -73,7 +73,7 @@ SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
 # not the per-user dashboard creds). Required in prod to receive webhooks.
 PLAID_ADMIN_CLIENT_ID = os.environ.get("PLAID_ADMIN_CLIENT_ID", "").strip()
 PLAID_ADMIN_SECRET = os.environ.get("PLAID_ADMIN_SECRET", "").strip()
-PLAID_ENV = os.environ.get("PLAID_ENV", "production" if IS_PRODUCTION else "sandbox").strip()
+PLAID_ENV = os.environ.get("PLAID_ENV", "production").strip()
 
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 os.makedirs(INSTANCE_DIR, exist_ok=True)

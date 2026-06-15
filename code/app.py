@@ -46,6 +46,13 @@ if config.SENTRY_DSN:
 
 auth.log_clerk_config()
 
+if config.IS_DEVELOPMENT:
+    # Auto-migrate on dev boot so pulling new columns doesn't surface as a
+    # 500 the first time you hit the page. Prod migrates via entrypoint.sh
+    # before gunicorn forks.
+    import db as _db
+    _db.init_db()
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CLIENT_DIST = _REPO_ROOT / "client" / "dist"
 
