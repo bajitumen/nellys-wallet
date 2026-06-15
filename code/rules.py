@@ -277,17 +277,22 @@ def _apply_rule_to_override(
             return
         ov.split_percentage = pct
         if tx is not None and tx.amount is not None:
-            ov.amount_override = round(tx.amount * pct / 100.0, 2)
+            mag = abs(tx.amount) * pct / 100.0
+            sign = -1 if tx.amount < 0 else 1
+            ov.amount_override = round(mag * sign, 2)
     elif rule.action == "split_dollar":
         try:
             amt = float(rule.action_value or 0)
         except (TypeError, ValueError):
             return
         if tx is not None and tx.amount is not None:
-            amt = min(amt, abs(tx.amount))
+            mag = min(abs(amt), abs(tx.amount))
             if tx.amount:
-                ov.split_percentage = round(amt / abs(tx.amount) * 100.0, 2)
-        ov.amount_override = amt
+                ov.split_percentage = round(mag / abs(tx.amount) * 100.0, 2)
+            sign = -1 if tx.amount < 0 else 1
+            ov.amount_override = round(mag * sign, 2)
+        else:
+            ov.amount_override = amt
 
 
 def _build_match_filter(col, op: str, value: str):
@@ -431,9 +436,10 @@ def applied_rule_id_by_tx(
     out: dict[str, int] = {
         plaid_id: rule_id for plaid_id, rule_id in override_rows if rule_id is not None
     }
-    needs_match = [t for t in txs if t.plaid_transaction_id not in out and any(
-        t.plaid_transaction_id == r[0] and r[1] is None for r in override_rows
-    )]
+    null_rule_ids = {
+        plaid_id for plaid_id, rule_id in override_rows if rule_id is None
+    }
+    needs_match = [t for t in txs if t.plaid_transaction_id in null_rule_ids]
     if not needs_match:
         return out
     rules = (

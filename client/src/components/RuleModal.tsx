@@ -26,10 +26,17 @@ export type ExistingRule = {
 };
 
 type Condition = {
+  cid: string;
   field: "merchant" | "category" | "item" | "source";
   op: "equals" | "not_equals";
   value: { value: string; label: string; _field: string } | null;
 };
+
+let _nextCid = 0;
+function newCid(): string {
+  _nextCid += 1;
+  return `c${_nextCid}`;
+}
 
 type Props = {
   open: boolean;
@@ -95,6 +102,7 @@ export function RuleModal(props: Props) {
     };
     const found = list.find(picks[field]) || list[0] || null;
     return {
+      cid: newCid(),
       field,
       op: "equals",
       value: found
@@ -110,6 +118,7 @@ export function RuleModal(props: Props) {
       const found = list.find((o) => o.value === c.match_value);
       const label = found ? found.label : c.match_value;
       return {
+        cid: newCid(),
         field: key,
         op: c.match_op as "equals" | "not_equals",
         value: { value: c.match_value, label, _field: c.match_field },
@@ -302,7 +311,7 @@ export function RuleModal(props: Props) {
             </legend>
             <div className="rule-modal-conditions-list">
               {state.conditions.map((c, idx) => (
-                <div key={idx} className="rule-modal-condition-row">
+                <div key={c.cid} className="rule-modal-condition-row">
                   <InlineDropdown
                     className="inline-dropdown rule-modal-dd rule-modal-dd-field"
                     options={FIELD_OPTS}

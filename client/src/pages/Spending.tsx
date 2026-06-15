@@ -19,6 +19,7 @@ import {
 } from "../components/RuleModal";
 import { InlineDropdown } from "../components/InlineDropdown";
 import { ApiError, getJson, postJson } from "../lib/api";
+import { formatUsd, shortDate } from "../lib/format";
 
 type Subitem = { code: string; name: string; total: number; count: number; budget: number };
 type Category = {
@@ -61,14 +62,6 @@ type SpendingData = {
   rule_match_options: RuleMatchOptions;
   rules_by_id: Record<string, ExistingRule>;
 };
-
-function formatUsd(n: number): string {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
-}
-function shortDate(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
-}
 
 export default function SpendingPage() {
   const [searchParams] = useSearchParams();
@@ -315,9 +308,12 @@ function SpendingView({ data }: { data: SpendingData }) {
   // would require a refetch).
   const activeCategoryCodes = searchParams.getAll("category");
   const dataWithLiveFilter = { ...data, categories_filter: activeCategoryCodes };
-  // Filtered totals so the summary cards reflect the active chip set instead
-  // of disagreeing with the table below.
-  const filteredTotal = filteredTransactions.reduce((s, tx) => s + tx.amount, 0);
+  // Sum magnitudes — refunds (negative spend) would otherwise net out of
+  // the headline, making a filter toggle move the total by more than the
+  // visible rows.
+  const filteredTotal = filteredTransactions.reduce(
+    (s, tx) => s + Math.abs(tx.amount), 0,
+  );
   const filteredCount = filteredTransactions.length;
   const isFiltered = activeCategoryCodes.length > 0
     || filterColumns.some((c) => c.urlParam !== "category" && searchParams.getAll(c.urlParam).length > 0);

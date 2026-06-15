@@ -87,7 +87,8 @@ _PLAID_HOSTS = {
 
 
 def _plaid_host():
-    return _PLAID_HOSTS.get(config.PLAID_ENV.lower(), plaid.Environment.Production)
+    # config.PLAID_ENV is validated at import — unknown values raise at startup.
+    return _PLAID_HOSTS[config.PLAID_ENV]
 
 
 def build_plaid_client(client_id: str, secret: str) -> plaid_api.PlaidApi:
@@ -132,7 +133,7 @@ def _fetch_one_snapshot(
         log.warning("accounts_get failed for %s: %s", institution, body[:500])
         if "ITEM_LOGIN_REQUIRED" in (body or ""):
             result["errors"].append(f"{institution}: reconnect required.")
-            result["needs_reauth_item_id"] = item.id
+            result["needs_reauth_item_id"] = item_id
         else:
             result["errors"].append(f"{institution}: temporarily unavailable.")
         return result

@@ -6,6 +6,7 @@ import { InstAvatar } from "../components/InstAvatar";
 import { PlanningChart, type ProjectionAccount } from "../components/PlanningChart";
 import { useToast } from "../components/Toast";
 import { ApiError, getJson, postJson } from "../lib/api";
+import { formatUsd } from "../lib/format";
 
 type Account = {
   id: string;
@@ -28,10 +29,6 @@ type PlanningData = {
   avg_monthly_income: number;
   avg_monthly_spend: number;
 };
-
-function formatUsd(n: number): string {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
-}
 
 export default function PlanningPage() {
   const q = useQuery<PlanningData, ApiError>({

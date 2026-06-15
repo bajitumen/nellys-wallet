@@ -38,34 +38,53 @@ def available_sources(user: User) -> list[str]:
     return sorted({(item.institution_name or "Unknown") for item in user.items})
 
 
-def available_months(user: User, session, source: str | None = None) -> list[dict]:
-    if not user.items:
-        return []
-    items_by_id = {it.id: it for it in user.items}
+def items_by_source(user: User, source: str | None = None) -> dict:
+    items = {it.id: it for it in user.items}
     if source:
-        items_by_id = {
-            i: it for i, it in items_by_id.items()
+        items = {
+            i: it for i, it in items.items()
             if (it.institution_name or "Unknown") == source
         }
-        if not items_by_id:
-            return []
-    # SQLite-only — swap to to_char on Postgres.
-    month_col = func.strftime("%Y-%m", Transaction.date)
-    rows = (
-        session.query(month_col)
+    return items
+
+
+def available_months(
+    user: User, session, source: str | None = None, scope: str = "spending",
+) -> list[dict]:
+    if not user.items:
+        return []
+    items = items_by_source(user, source)
+    if source and not items:
+        return []
+    # Resolve override per row so the dropdown matches the totals' category
+    # routing — without this, a re-categorized row's month appears in totals
+    # but not in the dropdown (or vice versa).
+    sign_filter = Transaction.amount > 0 if scope == "spending" else Transaction.amount < 0
+    tx_rows = (
+        session.query(Transaction)
         .filter(
             Transaction.user_id == user.id,
-            Transaction.item_id.in_(items_by_id),
-            *rules_mod.build_scope_filter("spending"),
+            Transaction.item_id.in_(items),
+            sign_filter,
             Transaction.is_internal_transfer.is_(False),
         )
-        .distinct()
-        .order_by(month_col.desc())
         .all()
     )
+    overrides_by_tx = _load_overrides(
+        user.id, [t.plaid_transaction_id for t in tx_rows], session,
+    )
+    in_scope = pfc.is_spend_category if scope == "spending" else pfc.is_strict_income
+    months: set[str] = set()
+    for tx in tx_rows:
+        ov = overrides_by_tx.get(tx.plaid_transaction_id)
+        if ov and ov.dismissed:
+            continue
+        resolved = (ov.category_override if ov and ov.category_override else None) or tx.pfc_primary
+        if resolved and in_scope(resolved):
+            months.add(tx.date.strftime("%Y-%m"))
     return [
         {"value": m, "label": datetime.strptime(m, "%Y-%m").strftime("%B %Y")}
-        for (m,) in rows if m
+        for m in sorted(months, reverse=True)
     ]
 
 
@@ -128,13 +147,6 @@ def _apply_spend_override(tx: Transaction, override: TransactionOverride | None)
     if not dismissed and not pfc.is_spend_category(category):
         return None
     return category, amount, split_percentage, detailed, dismissed
-
-
-def _fetch_raw_transactions(client, item, start: date, end: date) -> dict:
-    return _fetch_raw_transactions_snapshot(
-        client, item.institution_name or "Unknown", item.get_access_token(),
-        start, end,
-    )
 
 
 def _fetch_raw_transactions_snapshot(
@@ -454,14 +466,9 @@ def _fetch_last_month_uncached(
         "prev_month_change_pct": None,
     }
 
-    items_by_id = {it.id: it for it in user.items}
-    if source:
-        items_by_id = {
-            i: it for i, it in items_by_id.items()
-            if (it.institution_name or "Unknown") == source
-        }
-        if not items_by_id:
-            return out
+    items_by_id = items_by_source(user, source)
+    if source and not items_by_id:
+        return out
 
     prev_start, prev_end = previous_month_window(start, end)
     tx_rows = (

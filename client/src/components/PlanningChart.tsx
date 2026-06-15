@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { InlineDropdown, type DropdownOption } from "./InlineDropdown";
+import { formatUsdWhole as formatUsd } from "../lib/format";
 
 export type ProjectionAccount = {
   id: string;
@@ -23,10 +24,6 @@ const H = 220;
 const PAD_X = 8;
 const PAD_Y = 14;
 
-function formatUsd(n: number): string {
-  const sign = n < 0 ? "-" : "";
-  return sign + "$" + Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
-}
 
 function monthLabel(idx: number): string {
   if (idx === 0) return "Today";

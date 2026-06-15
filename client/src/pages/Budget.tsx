@@ -9,6 +9,7 @@ import { AnimatedUsd } from "../components/AnimatedNumber";
 import { StackedBar } from "../components/StackedBar";
 import { ApiError, getJson, postJson } from "../lib/api";
 import { clientCurrentMonth, scrollToAnchor } from "../lib/scrollToTransactions";
+import { formatUsd } from "../lib/format";
 
 type Subitem = { code: string; label: string; amount: number; actual: number };
 type Group = {
@@ -26,10 +27,6 @@ type BudgetData = {
   month_label: string;
   total_spent: number;
 };
-
-function formatUsd(n: number): string {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
-}
 
 export default function BudgetPage() {
   const [searchParams] = useSearchParams();

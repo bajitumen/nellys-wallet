@@ -10,9 +10,11 @@ export function useSorted<T, K extends string>(
 ) {
   const [sort, setSort] = useState<SortState<K>>(initial);
 
-  // Pin the accessors object on first render: callers pass a fresh literal
-  // each render, which would otherwise bust the memo and re-sort every time.
+  // Refresh accessors each render so a closure over up-stream values (e.g.
+  // a pct accessor over data.total) doesn't sort on a stale snapshot. The
+  // ref is read inside the memo, so updating it doesn't bust the memo.
   const accessorsRef = useRef(accessors);
+  accessorsRef.current = accessors;
 
   const sorted = useMemo(() => {
     const accessor = accessorsRef.current[sort.key];

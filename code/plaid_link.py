@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import threading
+import time
 
 import jwt
 import plaid
@@ -29,7 +30,8 @@ def _webhook_url() -> str | None:
     return f"{config.APP_PUBLIC_URL.rstrip('/')}/plaid/webhook"
 
 
-_webhook_key_cache: dict[str, dict] = {}
+_WEBHOOK_KEY_TTL = 3600.0
+_webhook_key_cache: dict[str, tuple[float, dict]] = {}
 _webhook_key_lock = threading.Lock()
 
 
@@ -44,10 +46,15 @@ def _plaid_admin_client() -> plaid_api.PlaidApi | None:
 
 
 def _fetch_webhook_key(key_id: str) -> dict | None:
+    now = time.monotonic()
     with _webhook_key_lock:
         cached = _webhook_key_cache.get(key_id)
         if cached is not None:
-            return cached
+            ts, key = cached
+            if now - ts < _WEBHOOK_KEY_TTL:
+                return key
+            # Drop the stale entry — Plaid may have retired the key.
+            _webhook_key_cache.pop(key_id, None)
     client = _plaid_admin_client()
     if client is None:
         return None
@@ -61,7 +68,7 @@ def _fetch_webhook_key(key_id: str) -> dict | None:
         return None
     key = resp.key.to_dict()
     with _webhook_key_lock:
-        _webhook_key_cache[key_id] = key
+        _webhook_key_cache[key_id] = (now, key)
     return key
 
 

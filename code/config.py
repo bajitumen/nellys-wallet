@@ -70,10 +70,20 @@ APP_PUBLIC_URL = os.environ.get("APP_PUBLIC_URL", "").strip()
 SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
 
 # Plaid creds used for webhook signature key fetch (one shared admin client,
-# not the per-user dashboard creds). Required in prod to receive webhooks.
+# not the per-user dashboard creds). Required when a public webhook URL is
+# exposed, otherwise every webhook 401s silently.
 PLAID_ADMIN_CLIENT_ID = os.environ.get("PLAID_ADMIN_CLIENT_ID", "").strip()
 PLAID_ADMIN_SECRET = os.environ.get("PLAID_ADMIN_SECRET", "").strip()
-PLAID_ENV = os.environ.get("PLAID_ENV", "production").strip()
+if IS_PRODUCTION and APP_PUBLIC_URL and not (PLAID_ADMIN_CLIENT_ID and PLAID_ADMIN_SECRET):
+    raise RuntimeError(
+        "PLAID_ADMIN_CLIENT_ID and PLAID_ADMIN_SECRET are required when "
+        "APP_PUBLIC_URL is set — webhook signature verification needs them."
+    )
+PLAID_ENV = os.environ.get("PLAID_ENV", "production").strip().lower()
+if PLAID_ENV not in ("production", "sandbox"):
+    raise RuntimeError(
+        f"PLAID_ENV must be 'production' or 'sandbox', got {PLAID_ENV!r}."
+    )
 
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
 os.makedirs(INSTANCE_DIR, exist_ok=True)

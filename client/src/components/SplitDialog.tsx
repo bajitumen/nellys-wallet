@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useModal } from "../lib/useModal";
+import { formatUsd } from "../lib/format";
 
 type Props = {
   open: boolean;
@@ -8,13 +9,6 @@ type Props = {
   onClose: () => void;
   onSave: (amount: number, splitPercentage: number) => void;
 };
-
-function formatUsd(n: number): string {
-  return n.toLocaleString("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  });
-}
 
 export function SplitDialog({ open, amount, onClose, onSave }: Props) {
   const [value, setValue] = useState("");

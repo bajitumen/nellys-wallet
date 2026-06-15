@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { InlineDropdown, type DropdownOption } from "./InlineDropdown";
+import { formatUsdWhole as formatUsd } from "../lib/format";
 
 export type SeriesPoint = { ts: number; value: number };
 export type SeriesOption = {
@@ -22,11 +23,6 @@ const HEIGHT = 150;
 const PAD_X = 4;
 const PAD_Y = 10;
 
-function formatUsd(n: number): string {
-  return n.toLocaleString("en-US", {
-    style: "currency", currency: "USD", maximumFractionDigits: 0,
-  });
-}
 
 function rangeStartTs(rangeKey: typeof RANGES[number]["key"]): number | null {
   const now = Math.floor(Date.now() / 1000);

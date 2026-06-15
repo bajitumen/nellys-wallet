@@ -72,24 +72,24 @@ def pair_internal_transfers(
     paired = 0
     used_in_ids: set[int] = set()
     window = timedelta(days=window_days)
+    # Global gap-sorted assignment: enumerate every legal (OUT, IN) candidate
+    # within window, sort by gap, consume greedily. Prevents an earlier OUT
+    # from stealing the closer IN and leaving a real transfer unmatched.
+    candidate_pairs: list[tuple[timedelta, Transaction, Transaction]] = []
     for o in outs:
-        candidates = ins_by_amt.get(_amt_key(o), [])
-        best: Transaction | None = None
-        best_gap: timedelta | None = None
-        for c in candidates:
-            if c.id in used_in_ids:
-                continue
+        for c in ins_by_amt.get(_amt_key(o), []):
             gap = abs(c.date - o.date)
-            if gap > window:
-                continue
-            if best is None or gap < best_gap:
-                best = c
-                best_gap = gap
-        if best is None:
+            if gap <= window:
+                candidate_pairs.append((gap, o, c))
+    candidate_pairs.sort(key=lambda p: (p[0], p[1].id, p[2].id))
+    used_out_ids: set[int] = set()
+    for _, o, c in candidate_pairs:
+        if o.id in used_out_ids or c.id in used_in_ids:
             continue
         o.is_internal_transfer = True
-        best.is_internal_transfer = True
-        used_in_ids.add(best.id)
+        c.is_internal_transfer = True
+        used_out_ids.add(o.id)
+        used_in_ids.add(c.id)
         paired += 2
     if paired:
         # Sessions are autoflush=False; flush so later filters see the writes.

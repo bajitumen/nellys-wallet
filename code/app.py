@@ -1047,13 +1047,7 @@ def api_rules_list(session, user):
             "conditions_logic": r.conditions_logic,
             "action_label": rules_mod.action_label(r),
         }
-        side = rules_mod.rule_side(r)
-        if side == "both":
-            rules_by_tab["both"].append(d)
-        elif side == "spending":
-            rules_by_tab["spending"].append(d)
-        elif side == "income":
-            rules_by_tab["income"].append(d)
+        rules_by_tab[rules_mod.rule_side(r)].append(d)
     rules_by_id = rules_mod.rules_by_id_dict(
         user.id, session, [r.id for r in rule_rows],
     )

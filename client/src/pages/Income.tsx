@@ -17,6 +17,7 @@ import {
   RuleModal, type ExistingRule, type Primary, type RuleMatchOptions,
 } from "../components/RuleModal";
 import { ApiError, getJson, postJson } from "../lib/api";
+import { formatUsd, shortDate } from "../lib/format";
 
 type Payer = { name: string; total: number; count: number; color: string };
 type Tx = {
@@ -50,14 +51,6 @@ type IncomeData = {
   rule_match_options: RuleMatchOptions;
   rules_by_id: Record<string, ExistingRule>;
 };
-
-function formatUsd(n: number): string {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
-}
-function shortDate(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
-}
 
 export default function IncomePage() {
   const [searchParams] = useSearchParams();

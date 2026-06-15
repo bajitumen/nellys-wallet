@@ -48,10 +48,6 @@ export function InlineDropdown({
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
-      // Bail if focus isn't inside this dropdown — a doc-wide listener
-      // would otherwise hijack every keystroke and let Enter fire an
-      // unintended selection from any focused element on the page.
-      if (!wrapRef.current?.contains(document.activeElement)) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
       if (e.key === "Escape") {
@@ -73,11 +69,14 @@ export function InlineDropdown({
         setTyped((p) => p + e.key);
       }
     }
+    const wrap = wrapRef.current;
     document.addEventListener("click", onDocClick);
-    document.addEventListener("keydown", onKey);
+    // Listener on the wrapper, not document — keystrokes outside this
+    // dropdown never reach onKey, so they can't be preventDefault'd.
+    wrap?.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("click", onDocClick);
-      document.removeEventListener("keydown", onKey);
+      wrap?.removeEventListener("keydown", onKey);
     };
   }, [open, typed, visibleOptions, onChange]);
 

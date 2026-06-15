@@ -1,14 +1,17 @@
 import hashlib
 import logging
 from collections import defaultdict
-from datetime import date, datetime
-
-from sqlalchemy import func
 
 import rules as rules_mod
 from cache import KeyedCache
 from models import Transaction, TransactionOverride, User
-from spending import _load_overrides, previous_month_window, resolve_month
+from spending import (
+    _load_overrides,
+    available_months as _available_months,
+    items_by_source,
+    previous_month_window,
+    resolve_month,
+)
 
 log = logging.getLogger(__name__)
 
@@ -36,34 +39,7 @@ def clear_cache() -> None:
 
 
 def available_months(user: User, session, source: str | None = None) -> list[dict]:
-    if not user.items:
-        return []
-    items_by_id = {it.id: it for it in user.items}
-    if source:
-        items_by_id = {
-            i: it for i, it in items_by_id.items()
-            if (it.institution_name or "Unknown") == source
-        }
-        if not items_by_id:
-            return []
-    # SQLite-only — swap to to_char on Postgres.
-    month_col = func.strftime("%Y-%m", Transaction.date)
-    rows = (
-        session.query(month_col)
-        .filter(
-            Transaction.user_id == user.id,
-            Transaction.item_id.in_(items_by_id),
-            *rules_mod.build_scope_filter("income"),
-            Transaction.is_internal_transfer.is_(False),
-        )
-        .distinct()
-        .order_by(month_col.desc())
-        .all()
-    )
-    return [
-        {"value": m, "label": datetime.strptime(m, "%Y-%m").strftime("%B %Y")}
-        for (m,) in rows if m
-    ]
+    return _available_months(user, session, source, scope="income")
 
 
 def income_amount_with_override(
@@ -111,14 +87,9 @@ def _fetch_uncached(user, source, session, start, end, month_str, month_label):
         "daily_avg": 0.0, "prev_month_change_pct": None,
     }
 
-    items_by_id = {it.id: it for it in user.items}
-    if source:
-        items_by_id = {
-            i: it for i, it in items_by_id.items()
-            if (it.institution_name or "Unknown") == source
-        }
-        if not items_by_id:
-            return out
+    items_by_id = items_by_source(user, source)
+    if source and not items_by_id:
+        return out
 
     prev_start, prev_end = previous_month_window(start, end)
     # Filter to amount<0 then route by RESOLVED category — matches

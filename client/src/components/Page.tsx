@@ -29,18 +29,6 @@ export function Page({ heading, title, children }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const clerkEnabled = useClerkEnabled();
-  const clerk = clerkEnabled ? useClerk() : null;
-  // Drop cached financial data the moment the client-side session disappears
-  // so the next sign-in never flashes a previous user's numbers.
-  useEffect(() => {
-    if (!clerk) return;
-    const unsub = clerk.addListener((res: { user?: unknown }) => {
-      if (!res.user) qc.clear();
-    });
-    return () => {
-      if (typeof unsub === "function") unsub();
-    };
-  }, [clerk, qc]);
   const { open, setOpen } = useSidebar();
   const me = useQuery<{ last_sync_label: string | null }>({
     queryKey: ["me"],
@@ -122,15 +110,34 @@ export function Page({ heading, title, children }: Props) {
           </button>
           <AddAccountButton />
           {clerkEnabled && (
-            <SignedIn>
-              <div className="header-user-button">
-                <UserButton />
-              </div>
-            </SignedIn>
+            <>
+              <ClerkSessionWatcher />
+              <SignedIn>
+                <div className="header-user-button">
+                  <UserButton />
+                </div>
+              </SignedIn>
+            </>
           )}
         </div>
       </div>
       {children}
     </>
   );
+}
+
+function ClerkSessionWatcher() {
+  const qc = useQueryClient();
+  const clerk = useClerk();
+  // Drop cached financial data the moment the client-side session
+  // disappears so the next sign-in never flashes a previous user's numbers.
+  useEffect(() => {
+    const unsub = clerk.addListener((res: { user?: unknown }) => {
+      if (!res.user) qc.clear();
+    });
+    return () => {
+      if (typeof unsub === "function") unsub();
+    };
+  }, [clerk, qc]);
+  return null;
 }

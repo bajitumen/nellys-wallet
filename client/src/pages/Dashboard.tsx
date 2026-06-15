@@ -6,6 +6,7 @@ import { NetWorthChart, type SeriesPoint, type SeriesOption } from "../component
 import { CashflowChart, type MonthRow } from "../components/CashflowChart";
 import { AnimatedUsd } from "../components/AnimatedNumber";
 import { ApiError, getJson } from "../lib/api";
+import { formatUsd } from "../lib/format";
 
 type Account = {
   institution: string;
@@ -35,10 +36,6 @@ type OverviewData = {
   networth_series_data: Record<string, SeriesPoint[]>;
   networth_series_options: SeriesOption[];
 };
-
-function formatUsd(n: number): string {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
-}
 
 export default function DashboardPage() {
   const q = useQuery<OverviewData, ApiError>({
