@@ -397,10 +397,21 @@ def _sync_transactions_locked(user, session, days, out):
         out["removed"] = removed_count
 
     rules_mod.apply_rules_to_new_transactions(user.id, new_inserts, session)
-    # Recompute split overrides — a 50%-of-$100 stored value no longer
-    # matches after Plaid corrects the amount to $120.
-    if amount_changed_rows:
-        rules_mod._recompute_overrides_for_txs(user.id, amount_changed_rows, session)
+    # Re-evaluate every tx in the sync window against current rules. Catches
+    # matcher-semantics changes (a deploy that broadens what a rule matches),
+    # newly-cleaned merchant names from Plaid, and amount corrections — the
+    # user just hits Refresh and existing rules pick up what they should.
+    sync_window_txs = (
+        session.query(Transaction)
+        .filter(
+            Transaction.user_id == user.id,
+            Transaction.date >= start,
+            Transaction.date <= end,
+        )
+        .all()
+    )
+    if sync_window_txs:
+        rules_mod._recompute_overrides_for_txs(user.id, sync_window_txs, session)
 
     transfers_mod.pair_internal_transfers(user.id, session)
 

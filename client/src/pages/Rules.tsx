@@ -89,7 +89,14 @@ function RulesView({
 
   const del = useMutation({
     mutationFn: (id: number) => deleteJson(`/rules/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["rules"] }),
+    onSuccess: () => {
+      // Every data surface shows rule-affected rows; refetch them all so
+      // the deleted rule's effects disappear immediately instead of leaving
+      // stale "Edit rule" affordances pointing at a now-missing rule.
+      for (const key of ["rules", "spending", "income", "overview", "budget"] as const) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
+    },
     onError: (err: Error) => toast.error(`Failed to delete rule: ${err.message}`),
   });
 
@@ -200,7 +207,9 @@ function RulesView({
         onClose={() => setModalOpen(false)}
         onSaved={() => {
           setModalOpen(false);
-          qc.invalidateQueries({ queryKey: ["rules"] });
+          for (const key of ["rules", "spending", "income", "overview", "budget"] as const) {
+            qc.invalidateQueries({ queryKey: [key] });
+          }
         }}
       />
 

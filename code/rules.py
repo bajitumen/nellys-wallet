@@ -837,5 +837,13 @@ def delete_rule(user: User, rule_id: int, session) -> bool:
                 seen_ids.add(t.plaid_transaction_id)
     session.delete(row)
     session.flush()
+    # Null the FK explicitly — `ondelete="SET NULL"` only fires under
+    # PRAGMA foreign_keys=ON, which this app intentionally leaves OFF.
+    # Without this, applied_rule_id_by_tx keeps returning the deleted id,
+    # the kebab still offers "Edit rule", and the edit hits a 404.
+    session.query(TransactionOverride).filter(
+        TransactionOverride.user_id == user.id,
+        TransactionOverride.rule_id == rule_id,
+    ).update({"rule_id": None}, synchronize_session="fetch")
     _recompute_overrides_for_txs(user.id, old_txs, session)
     return True

@@ -562,7 +562,9 @@ function SpendingView({ data }: { data: SpendingData }) {
         onSaved={() => {
           setModalTx(null);
           setEditingRule(null);
-          qc.invalidateQueries({ queryKey: ["spending"] });
+          for (const key of ["rules", "spending", "income", "overview", "budget"] as const) {
+            qc.invalidateQueries({ queryKey: [key] });
+          }
         }}
       />
 

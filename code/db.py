@@ -231,6 +231,8 @@ def init_db():
                         "AND sql IS NOT NULL"
                     ))
                 ]
+                # Drop any leftover temp from a prior failed attempt.
+                conn.execute(text("DROP TABLE IF EXISTS transaction_rules_new"))
                 conn.execute(text(
                     "CREATE TABLE transaction_rules_new ("
                     "id INTEGER PRIMARY KEY, "
@@ -279,9 +281,12 @@ def init_db():
                     }:
                         continue
                     conn.execute(text(idx_sql))
-                # Detect corruption — assert before commit so the tx rolls back
-                # on the way out instead of shipping bad frames to Litestream.
-                violations = list(conn.execute(text("PRAGMA foreign_key_check")))
+                # Detect corruption from THIS rebuild only — scope the check
+                # to transaction_rules so pre-existing FK orphans elsewhere
+                # (e.g. an orphaned transactions.item_id) don't block init_db.
+                violations = list(conn.execute(text(
+                    "PRAGMA foreign_key_check(transaction_rules)"
+                )))
                 if violations:
                     raise RuntimeError(
                         f"transaction_rules rebuild left FK violations: {violations!r}"

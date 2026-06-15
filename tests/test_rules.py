@@ -649,6 +649,36 @@ def test_delete_rule_clears_rule_sourced_overrides(user_with_item, db_session):
     assert db_session.query(TransactionOverride).count() == 0
 
 
+def test_delete_rule_nulls_orphan_rule_id_on_protected_overrides(user_with_item, db_session):
+    """Manual overrides survive rule deletion, but their rule_id must be
+    nulled — otherwise the frontend keeps offering "Edit rule" pointing at
+    the deleted rule and the edit fetch 404s."""
+    import rules as rules_mod
+    from models import TransactionOverride
+    item = user_with_item.items[0]
+    _seed_tx(db_session, item, "t1", 25.0, "Venmo")
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals", "match_value": "Venmo"}],
+        "all", "dismiss", None, "all", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+    # Promote the rule's override to manual so it survives rule deletion,
+    # while still pointing at the rule via rule_id.
+    ov = db_session.query(TransactionOverride).one()
+    ov.source = "manual"
+    db_session.commit()
+    assert ov.rule_id == rule.id
+
+    rules_mod.delete_rule(user_with_item, rule.id, db_session)
+    db_session.commit()
+
+    survivor = db_session.query(TransactionOverride).one()
+    assert survivor.source == "manual"
+    assert survivor.rule_id is None, "rule_id must be nulled after rule delete"
+
+
 def test_delete_rule_preserves_manual_overrides(user_with_item, db_session):
     """Manual overrides survive rule deletion even when they overlap the rule's scope."""
     import rules as rules_mod

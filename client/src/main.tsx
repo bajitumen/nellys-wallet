@@ -7,6 +7,7 @@ import App from "./App";
 import { ClerkEnabledContext } from "./lib/clerkContext";
 import { ToastProvider } from "./components/Toast";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { KebabMenuProvider } from "./components/KebabMenu";
 import "./index.css";
 
 const clerkKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
@@ -28,9 +29,11 @@ function Root() {
       <ClerkEnabledContext.Provider value={enabled}>
         <QueryClientProvider client={queryClient}>
           <ToastProvider>
-            <BrowserRouter>
-              <App clerkEnabled={enabled} />
-            </BrowserRouter>
+            <KebabMenuProvider>
+              <BrowserRouter>
+                <App clerkEnabled={enabled} />
+              </BrowserRouter>
+            </KebabMenuProvider>
           </ToastProvider>
         </QueryClientProvider>
       </ClerkEnabledContext.Provider>

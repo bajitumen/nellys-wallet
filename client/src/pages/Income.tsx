@@ -385,7 +385,9 @@ function IncomeView({ data }: { data: IncomeData }) {
         onSaved={() => {
           setModalTx(null);
           setEditingRule(null);
-          qc.invalidateQueries({ queryKey: ["income"] });
+          for (const key of ["rules", "spending", "income", "overview", "budget"] as const) {
+            qc.invalidateQueries({ queryKey: [key] });
+          }
         }}
       />
 

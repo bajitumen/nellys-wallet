@@ -306,6 +306,56 @@ def _mock_plaid_tx(tx_id, amount, primary, date_=None, name="Merchant", detailed
     return tx
 
 
+def test_sync_reapplies_rules_to_existing_txs(user_with_item, db_session, patch_plaid):
+    """Sync must re-evaluate every tx in the window against current rules.
+
+    Covers the case where a rule was saved when matching semantics were
+    stricter — the user hits Refresh and the existing rule retroactively
+    applies to rows it would now match.
+    """
+    from datetime import date as _date
+    import rules as rules_mod
+    from models import Transaction, TransactionOverride
+    from spending import sync_transactions
+
+    item = user_with_item.items[0]
+    # Pre-existing tx: merchant_name null, name = "CHASE CREDIT CRD" (the
+    # exact case the user hit — Plaid sometimes leaves merchant_name unset).
+    db_session.add(Transaction(
+        user_id=user_with_item.id, item_id=item.id,
+        plaid_transaction_id="t_pre", date=_date.today(), amount=100.0,
+        name="CHASE CREDIT CRD", merchant_name=None,
+        pfc_primary="LOAN_PAYMENTS",
+    ))
+    db_session.commit()
+
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals",
+          "match_value": "CHASE CREDIT CRD"}],
+        "all", "dismiss", None, "spending", db_session,
+    )
+    db_session.commit()
+    # Simulate "the rule was saved under stricter matching and didn't apply
+    # to this row" by clearing any auto-created override.
+    db_session.query(TransactionOverride).delete()
+    db_session.commit()
+    assert db_session.query(TransactionOverride).count() == 0
+
+    resp = MagicMock()
+    resp.transactions = []
+    patch_plaid.transactions_get.return_value = resp
+    sync_transactions(user_with_item, db_session)
+
+    # After sync, the rule should have applied retroactively.
+    ovs = db_session.query(TransactionOverride).filter_by(
+        plaid_transaction_id="t_pre", dismissed=True,
+    ).all()
+    assert len(ovs) == 1
+    assert ovs[0].rule_id == rule.id
+    assert ovs[0].source == "rule"
+
+
 def test_sync_inserts_new_rows(user_with_item, db_session, patch_plaid):
     from models import Transaction
     from spending import sync_transactions
