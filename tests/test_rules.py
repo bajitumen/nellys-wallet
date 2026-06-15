@@ -137,6 +137,43 @@ def test_match_falls_back_to_name_when_merchant_null(user_with_item, db_session)
     assert ov.dismissed is True
 
 
+def test_merchant_rule_matches_both_merchant_name_and_name(user_with_item, db_session):
+    """The 'Merchant' dropdown mixes merchant_name + name values. A rule built
+    from either should match every tx where the displayed merchant equals the
+    rule value, regardless of which column Plaid populated."""
+    import rules as rules_mod
+    from models import Transaction, TransactionOverride
+    item = user_with_item.items[0]
+    from datetime import date as _date
+    # Row A: value in name only (merchant_name null) — typical for raw bank entries.
+    db_session.add(Transaction(
+        user_id=user_with_item.id, item_id=item.id,
+        plaid_transaction_id="a", date=_date.today(), amount=10.0,
+        name="CHASE CREDIT CRD", merchant_name=None,
+        pfc_primary="LOAN_PAYMENTS",
+    ))
+    # Row B: value in merchant_name (Plaid cleaned the raw description).
+    db_session.add(Transaction(
+        user_id=user_with_item.id, item_id=item.id,
+        plaid_transaction_id="b", date=_date.today(), amount=20.0,
+        name="OTHER", merchant_name="CHASE CREDIT CRD",
+        pfc_primary="LOAN_PAYMENTS",
+    ))
+    db_session.commit()
+    # Rule built from a row that had it in merchant_name — should still hit row A.
+    rule = rules_mod.upsert_rule(
+        user_with_item.id, "merchant_name", "CHASE CREDIT CRD",
+        "dismiss", None, db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session)
+    db_session.commit()
+    dismissed_ids = {
+        o.plaid_transaction_id for o in
+        db_session.query(TransactionOverride).filter_by(dismissed=True).all()
+    }
+    assert dismissed_ids == {"a", "b"}
+
+
 def test_set_detailed_rule(user_with_item, db_session):
     """A set_detailed rule writes detailed_override and leaves category untouched."""
     import rules as rules_mod
@@ -557,31 +594,32 @@ def test_rules_endpoint_rejects_non_integer_rule_id(client, user_with_item, db_s
 
 
 def test_null_field_does_not_match_not_equals_rule(user_with_item, db_session):
-    """A tx with NULL merchant_name must NOT match `merchant_name != X`.
+    """A tx with NULL pfc_detailed must NOT match `pfc_detailed != X`.
 
-    SQL `lower(NULL) != x` is NULL (excluded); Python must agree, otherwise the
-    same rule applies at sync time but not on retro-apply.
+    SQL `lower(NULL) != x` is NULL (excluded); the Python matcher must agree
+    so retro-apply and sync-time apply route the same rows. Using a single-
+    column field here because "merchant" is intentionally OR'd across
+    merchant_name + name (see test_merchant_rule_matches_both_merchant_name_and_name).
     """
     import rules as rules_mod
     from models import Transaction, TransactionOverride
     item = user_with_item.items[0]
-    # merchant_name is NULL; name is populated.
     db_session.add(Transaction(
         user_id=user_with_item.id, item_id=item.id, plaid_transaction_id="t1",
         date=date.today(), amount=10.0, name="ATM WITHDRAWAL",
         merchant_name=None, pfc_primary="GENERAL_MERCHANDISE",
+        pfc_detailed=None,
     ))
     db_session.commit()
 
-    # In-memory matcher: NULL merchant_name should NOT satisfy != "Starbucks".
-    cond = rules_mod._PayloadCondition("merchant_name", "not_equals", "Starbucks")
+    cond = rules_mod._PayloadCondition("pfc_detailed", "not_equals", "FOOD_AND_DRINK_COFFEE")
     tx = db_session.query(Transaction).one()
     assert rules_mod._condition_matches_tx(tx, cond) is False
 
-    # End-to-end: rule with merchant_name != Starbucks should leave the tx alone.
     rule = rules_mod.create_rule(
         user_with_item.id,
-        [{"match_field": "merchant_name", "match_op": "not_equals", "match_value": "Starbucks"}],
+        [{"match_field": "pfc_detailed", "match_op": "not_equals",
+          "match_value": "FOOD_AND_DRINK_COFFEE"}],
         "all", "dismiss", None, "all", db_session,
     )
     rules_mod.apply_rule_retroactively(rule, db_session)

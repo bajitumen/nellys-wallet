@@ -182,8 +182,31 @@ def _condition_matches_tx(tx: Transaction, cond, item_institutions=None) -> bool
         if tx.item_id is None:
             return False
         v = (item_institutions or {}).get(tx.item_id)
-    else:
-        v = getattr(tx, cond.match_field, None)
+        if v is None:
+            return False
+        target = (cond.match_value or "").lower()
+        v_lc = v.lower()
+        if cond.match_op == "not_equals":
+            return v_lc != target
+        return v_lc == target
+
+    # "Merchant" in the UI conflates merchant_name (cleaned) and name (raw
+    # bank description) — Plaid populates one or the other per tx, but the
+    # dropdown shows them as one list. Match against either so a rule built
+    # for the displayed merchant catches both cases.
+    if cond.match_field in ("merchant_name", "name"):
+        target = (cond.match_value or "").lower()
+        m = tx.merchant_name
+        n = tx.name
+        m_eq = m is not None and m.lower() == target
+        n_eq = n is not None and n.lower() == target
+        if cond.match_op == "not_equals":
+            if m is None and n is None:
+                return False
+            return not (m_eq or n_eq)
+        return m_eq or n_eq
+
+    v = getattr(tx, cond.match_field, None)
     if v is None:
         return False
     target = (cond.match_value or "").lower()
@@ -302,6 +325,22 @@ def _build_match_filter(col, op: str, value: str):
     return func.lower(col) == lowered
 
 
+def _build_merchant_filter(op: str, value: str):
+    # Mirror _condition_matches_tx: "merchant_name" and "name" both flow
+    # from the unified "Merchant" dropdown, so match either column.
+    lowered = value.lower()
+    eq = or_(
+        func.lower(Transaction.merchant_name) == lowered,
+        func.lower(Transaction.name) == lowered,
+    )
+    if op == "not_equals":
+        return and_(
+            or_(Transaction.merchant_name.isnot(None), Transaction.name.isnot(None)),
+            ~eq,
+        )
+    return eq
+
+
 def _build_conditions_filter(conditions, logic: str, user_id: int, session):
     clauses = []
     for c in conditions:
@@ -311,6 +350,9 @@ def _build_conditions_filter(conditions, logic: str, user_id: int, session):
                 clauses.append(~Transaction.item_id.in_(ids) if ids else true())
             else:
                 clauses.append(Transaction.item_id.in_(ids) if ids else false())
+            continue
+        if c.match_field in ("merchant_name", "name"):
+            clauses.append(_build_merchant_filter(c.match_op, c.match_value))
             continue
         col = _MATCH_COLUMNS.get(c.match_field)
         if col is None:
