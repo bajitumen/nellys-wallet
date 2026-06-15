@@ -63,11 +63,9 @@ if IS_PRODUCTION and not CLERK_AUTHORIZED_PARTIES:
 CLERK_JWKS_URL = os.environ.get("CLERK_JWKS_URL", "").strip()
 
 # Public origin (https://nellyswallet.com) — used to build the Plaid webhook URL.
+# Optional: without it, link tokens are minted without a webhook and ITEM_LOGIN_REQUIRED
+# events have no path home. App still serves.
 APP_PUBLIC_URL = os.environ.get("APP_PUBLIC_URL", "").strip()
-if IS_PRODUCTION and not APP_PUBLIC_URL:
-    raise RuntimeError(
-        "APP_PUBLIC_URL is required in production (used for the Plaid webhook URL)."
-    )
 
 SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
 
