@@ -1002,6 +1002,9 @@
   .networth-chart.trend-down .networth-line-real { stroke: var(--negative); }
   .networth-chart.trend-up .networth-area { fill: var(--positive); fill-opacity: 0.12; }
   .networth-chart.trend-down .networth-area { fill: var(--negative); fill-opacity: 0.12; }
+  /* Missing-day baseline: stays at $0 dashed in a dimmed color so the eye
+     reads it as "no data here," not as a real dip. */
+  .networth-line-missing { stroke: var(--text-muted); opacity: 0.45; }
   .stacked-bar {
     display: flex;
     width: 100%;

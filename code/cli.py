@@ -29,6 +29,10 @@ Commands:
   rotate-key              Re-encrypt every Plaid token under the current FERNET_KEY
                           (set FERNET_KEY_OLD to the prior key(s) first). Break-glass
                           for key rotations.
+  capture-snapshots       Write today's NetWorthSnapshot for every user. Intended
+                          as a daily cron (Render Cron Job) so the chart updates
+                          even on days the user doesn't open the site.
+                          ~1 Plaid call per linked item per user — small.
 """
 
 import os
@@ -330,6 +334,37 @@ def cmd_rotate_key():
         print("Once verified, unset FERNET_KEY_OLD.")
 
 
+def cmd_capture_snapshots():
+    # Daily cron entry point — captures today's NetWorthSnapshot for every
+    # user. Run via Render Cron Job (or any scheduler) so the chart updates
+    # on days the user doesn't visit. Idempotent: capture() deletes any
+    # existing same-day snapshot before inserting.
+    import networth
+    import providers
+    with SessionLocal() as session:
+        users = session.query(User).all()
+        ok = skipped = errored = 0
+        for user in users:
+            if not user.items:
+                skipped += 1
+                continue
+            try:
+                snap = networth.capture(user, session)
+                if snap is None:
+                    skipped += 1
+                else:
+                    ok += 1
+            except Exception:
+                errored += 1
+                import logging
+                logging.getLogger(__name__).exception(
+                    "capture-snapshots failed for user_id=%s", user.id,
+                )
+            finally:
+                providers.invalidate_cache(user.id)
+        print(f"capture-snapshots: ok={ok} skipped={skipped} errored={errored}")
+
+
 COMMANDS = {
     "init-db": cmd_init_db,
     "seed-me": cmd_seed_me,
@@ -340,6 +375,7 @@ COMMANDS = {
     "reset-items": cmd_reset_items,
     "probe-logo": cmd_probe_logo,
     "rotate-key": cmd_rotate_key,
+    "capture-snapshots": cmd_capture_snapshots,
 }
 
 

@@ -392,7 +392,17 @@ def query_txs_for_payload(
     return query_txs(user_id, cond_objs, logic, scope, session)
 
 
-def _recompute_overrides_for_txs(user_id: int, txs: list[Transaction], session) -> int:
+def _recompute_overrides_for_txs(
+    user_id: int, txs: list[Transaction], session, *, force: bool = False,
+) -> int:
+    """Recompute rule-sourced overrides for the given txs.
+
+    force=False (default, used by sync) skips txs with source='manual' so the
+    user's individual manual edits stick. force=True (used by explicit rule
+    save) overwrites manual overrides on matching txs so the just-saved rule
+    is authoritative — the user said "apply this rule," manual exceptions
+    from before the rule existed shouldn't quietly block it.
+    """
     if not txs:
         return 0
     all_rules = (
@@ -416,7 +426,7 @@ def _recompute_overrides_for_txs(user_id: int, txs: list[Transaction], session) 
     affected = 0
     for tx in txs:
         existing = existing_by_id.get(tx.plaid_transaction_id)
-        if existing is not None and existing.source == "manual":
+        if not force and existing is not None and existing.source == "manual":
             continue
         matching_for_tx = [r for r in all_rules if _tx_matches_rule(tx, r, institutions)]
         winners = _winning_rules(matching_for_tx, specificity)
@@ -444,9 +454,11 @@ def _recompute_overrides_for_txs(user_id: int, txs: list[Transaction], session) 
     return affected
 
 
-def apply_rule_retroactively(rule: TransactionRule, session) -> int:
+def apply_rule_retroactively(
+    rule: TransactionRule, session, *, force: bool = False,
+) -> int:
     txs = _query_txs_for_rule(rule, session)
-    return _recompute_overrides_for_txs(rule.user_id, txs, session)
+    return _recompute_overrides_for_txs(rule.user_id, txs, session, force=force)
 
 
 def snapshot_rule_txs(rule: TransactionRule, session) -> list[Transaction]:
@@ -538,14 +550,16 @@ def rules_by_id_dict(user_id: int, session, rule_ids: list[int]) -> dict[str, di
 
 
 def reapply_after_edit(
-    rule: TransactionRule, old_txs: list[Transaction], session,
+    rule: TransactionRule, old_txs: list[Transaction], session, *, force: bool = False,
 ) -> int:
     """Recompute overrides for tx that the rule USED to match plus tx it now matches."""
     new_txs = _query_txs_for_rule(rule, session)
     by_id: dict[int, Transaction] = {t.id: t for t in new_txs}
     for t in old_txs:
         by_id.setdefault(t.id, t)
-    return _recompute_overrides_for_txs(rule.user_id, list(by_id.values()), session)
+    return _recompute_overrides_for_txs(
+        rule.user_id, list(by_id.values()), session, force=force,
+    )
 
 
 def apply_rules_to_new_transactions(

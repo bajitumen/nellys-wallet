@@ -679,6 +679,93 @@ def test_delete_rule_nulls_orphan_rule_id_on_protected_overrides(user_with_item,
     assert survivor.rule_id is None, "rule_id must be nulled after rule delete"
 
 
+def test_rule_save_force_overrides_manual(user_with_item, db_session):
+    """When the user explicitly saves a rule, it must apply to matching txs
+    even ones that already have a manual override that would otherwise block
+    it. Manual exceptions set before the rule existed shouldn't quietly
+    block a freshly-saved dismiss."""
+    import rules as rules_mod
+    from models import Transaction, TransactionOverride
+    item = user_with_item.items[0]
+    from datetime import date as _date
+    db_session.add(Transaction(
+        user_id=user_with_item.id, item_id=item.id,
+        plaid_transaction_id="t1", date=_date.today(), amount=10.0,
+        name="CHASE CREDIT CRD", merchant_name="CHASE CREDIT CRD",
+        pfc_primary="LOAN_PAYMENTS",
+    ))
+    db_session.add(Transaction(
+        user_id=user_with_item.id, item_id=item.id,
+        plaid_transaction_id="t2", date=_date.today(), amount=20.0,
+        name="CHASE CREDIT CRD", merchant_name="CHASE CREDIT CRD",
+        pfc_primary="LOAN_PAYMENTS",
+    ))
+    # Simulate a prior manual override on t2 (e.g. the user once clicked
+    # Restore to keep this row visible). With the old non-force semantics
+    # the rule below would silently skip t2.
+    db_session.add(TransactionOverride(
+        user_id=user_with_item.id, plaid_transaction_id="t2",
+        dismissed=False, source="manual",
+    ))
+    db_session.commit()
+
+    rule = rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals",
+          "match_value": "CHASE CREDIT CRD"}],
+        "all", "dismiss", None, "spending", db_session,
+    )
+    rules_mod.apply_rule_retroactively(rule, db_session, force=True)
+    db_session.commit()
+
+    dismissed = {
+        o.plaid_transaction_id for o in
+        db_session.query(TransactionOverride).filter_by(dismissed=True).all()
+    }
+    assert dismissed == {"t1", "t2"}, (
+        "explicit rule save must override prior manual when forced"
+    )
+
+
+def test_sync_reapply_respects_manual_override(user_with_item, db_session, patch_plaid):
+    """Sync-time reapply (force=False) must NOT touch manual exceptions —
+    that's how per-tx user edits stay sticky."""
+    import rules as rules_mod
+    from models import Transaction, TransactionOverride
+    from spending import sync_transactions
+    item = user_with_item.items[0]
+    from datetime import date as _date
+    db_session.add(Transaction(
+        user_id=user_with_item.id, item_id=item.id,
+        plaid_transaction_id="m1", date=_date.today(), amount=15.0,
+        name="ManualKeep", merchant_name="ManualKeep",
+        pfc_primary="LOAN_PAYMENTS",
+    ))
+    rules_mod.create_rule(
+        user_with_item.id,
+        [{"match_field": "merchant_name", "match_op": "equals",
+          "match_value": "ManualKeep"}],
+        "all", "dismiss", None, "spending", db_session,
+    )
+    db_session.add(TransactionOverride(
+        user_id=user_with_item.id, plaid_transaction_id="m1",
+        dismissed=False, source="manual",
+    ))
+    db_session.commit()
+
+    # Plaid must still acknowledge m1 — otherwise sync's reconcile path
+    # would remove the tx entirely, masking the manual-override-skip behavior.
+    from tests.test_spending import _mock_plaid_tx
+    resp = MagicMock()
+    resp.transactions = [_mock_plaid_tx("m1", 15.0, "LOAN_PAYMENTS", name="ManualKeep")]
+    patch_plaid.transactions_get.return_value = resp
+    sync_transactions(user_with_item, db_session)
+
+    ov = db_session.query(TransactionOverride).filter_by(plaid_transaction_id="m1").one()
+    assert ov.source == "manual"
+    assert ov.dismissed is False, "sync-time reapply must respect manual exceptions"
+
+
 def test_delete_rule_preserves_manual_overrides(user_with_item, db_session):
     """Manual overrides survive rule deletion even when they overlap the rule's scope."""
     import rules as rules_mod

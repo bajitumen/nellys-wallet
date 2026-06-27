@@ -10,10 +10,15 @@ from models import AccountBalanceSnapshot, NetWorthSnapshot, User
 log = logging.getLogger(__name__)
 
 
-def capture(user: User, session) -> NetWorthSnapshot | None:
+def capture(
+    user: User, session, *, data: dict | None = None,
+) -> NetWorthSnapshot | None:
     if not user.items:
         return None
-    data = providers.fetch_all(user, force_refresh=True)
+    # Allow the caller to pass already-fetched balances so /api/overview can
+    # update today's snapshot on every visit without a second Plaid round-trip.
+    if data is None:
+        data = providers.fetch_all(user, force_refresh=True)
 
     # Healthy item ids appear in returned account rows; missing ones either
     # errored or hit reauth. Carry forward the most recent same-bucket balance

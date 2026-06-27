@@ -38,7 +38,8 @@ function rangeStartTs(rangeKey: typeof RANGES[number]["key"]): number | null {
 }
 
 type ChartGeometry = {
-  linePath: string;
+  realLinePath: string;
+  zeroLinePath: string;
   areaPath: string;
   rendered: { x: number; y: number; ts: number; value: number }[];
   firstValue: number;
@@ -57,22 +58,37 @@ function buildChart(
   for (const s of series) {
     realByDay.set(Math.floor(s.ts / DAY) * DAY, s.value);
   }
-  const allDays: { ts: number; value: number; synthetic: boolean }[] = [];
-  // Carry back from the first real snapshot so days before it draw a flat
-  // line at the earliest known value — no L-spike from baseline zeros.
-  let carried = series[0].value;
+  // Three kinds of days in the chart range:
+  //   - "pre"     : before the first real snapshot     → $0
+  //   - "real"    : has a stored snapshot              → that value
+  //   - "carried" : after first snapshot, no data      → previous real value
+  // Pre days render as a dashed $0 baseline; real + carried form a single
+  // continuous line (a step where carried takes over).
+  type Day = { ts: number; value: number; kind: "pre" | "real" | "carried" };
+  const days: Day[] = [];
+  let carried: number | null = null;
   for (let t = Math.floor(start / DAY) * DAY; t <= rangeEnd; t += DAY) {
     const real = realByDay.get(t);
-    if (real !== undefined) carried = real;
-    allDays.push({ ts: t, value: carried, synthetic: real === undefined && t < series[0].ts });
+    if (real !== undefined) {
+      carried = real;
+      days.push({ ts: t, value: real, kind: "real" });
+    } else if (carried === null) {
+      days.push({ ts: t, value: 0, kind: "pre" });
+    } else {
+      days.push({ ts: t, value: carried, kind: "carried" });
+    }
   }
-  const pathXs = allDays.map((d) => d.ts);
-  const pathYs = allDays.map((d) => d.value);
-  const xMin = pathXs[0];
+
+  const hasPrePrefix = days.some((d) => d.kind === "pre");
+  const realValues = series.map((s) => s.value);
+
+  const xMin = days[0].ts;
   const xMax = rangeEnd;
   const xSpan = Math.max(1, xMax - xMin);
-  const yMin = Math.min(...pathYs);
-  const yMax = Math.max(...pathYs);
+  // Anchor y-floor at $0 only when there ARE pre-days to show; otherwise
+  // tighten to the real range so $179k-$185k variations stay legible.
+  const yMin = hasPrePrefix ? 0 : Math.min(...realValues);
+  const yMax = Math.max(...realValues);
   const ySpan = Math.max(1, yMax - yMin);
   const plotW = WIDTH - 2 * PAD_X;
   const plotH = HEIGHT - 2 * PAD_Y;
@@ -81,31 +97,47 @@ function buildChart(
     if (yMax === yMin) return PAD_Y + plotH / 2;
     return PAD_Y + ((yMax - v) / ySpan) * plotH;
   };
-
   const baselineY = PAD_Y + plotH;
-  const points = pathXs.map((t, i) => ({ x: toX(t), y: toY(pathYs[i]) }));
-  const linePath = "M " + points.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" L ");
-  const areaPath =
-    `M ${points[0].x.toFixed(2)},${baselineY.toFixed(2)} ` +
-    points.map((p) => `L ${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ") +
-    ` L ${points[points.length - 1].x.toFixed(2)},${baselineY.toFixed(2)} Z`;
 
-  // Hover only on real snapshots — never lie about a value the user
-  // didn't actually have on a carried-back day.
-  const rendered = allDays
-    .map((d, i) => ({ synthetic: d.synthetic, i }))
-    .filter(({ synthetic }) => !synthetic)
-    .map(({ i }) => ({
-      x: toX(pathXs[i]),
-      y: toY(pathYs[i]),
-      ts: pathXs[i],
-      value: pathYs[i],
-    }));
+  // One continuous green line across every day in the range: pre days at $0,
+  // real days at their value, carried days holding the previous real value.
+  let realLinePath = "M ";
+  for (let i = 0; i < days.length; i++) {
+    const x = toX(days[i].ts).toFixed(2);
+    const y = toY(days[i].value).toFixed(2);
+    realLinePath += i === 0 ? `${x},${y} ` : `L ${x},${y} `;
+  }
+  const preLinePath = "";
 
-  const realValues = series.map((s) => s.value);
-  const firstRealValue = realValues[0];
+  // Area under the whole continuous line; pre-days at $0 sit right on the
+  // baseline, so the area there has zero height and adds no visual weight.
+  const startX = toX(days[0].ts).toFixed(2);
+  const endX = toX(days[days.length - 1].ts).toFixed(2);
+  let areaPath = `M ${startX},${baselineY.toFixed(2)} `;
+  for (const d of days) {
+    areaPath += `L ${toX(d.ts).toFixed(2)},${toY(d.value).toFixed(2)} `;
+  }
+  areaPath += `L ${endX},${baselineY.toFixed(2)} Z`;
+
+  // Every day is hoverable so the user can confirm a $0 prefix or see the
+  // value being carried forward.
+  const rendered = days.map((d, i) => ({
+    x: toX(d.ts),
+    y: toY(d.value),
+    ts: d.ts,
+    value: d.value,
+    i,
+  }));
+
+  // Trend follows what the eye actually sees. With a $0 pre-prefix the
+  // chart clearly climbs from baseline up to the current value, so use the
+  // leftmost rendered point (synthetic or real) as the trend anchor.
+  const firstValue = days[0].value;
   const lastValue = realValues[realValues.length - 1];
-  return { linePath, areaPath, rendered, firstValue: firstRealValue, lastValue };
+  return {
+    realLinePath, zeroLinePath: preLinePath, areaPath, rendered,
+    firstValue, lastValue,
+  };
 }
 
 type Props = {
@@ -271,15 +303,29 @@ export function NetWorthChart({ seriesData, seriesOptions }: Props) {
           onMouseLeave={() => setHover(null)}
         >
           <path d={chart.areaPath} className="networth-area" />
-          <path
-            d={chart.linePath}
-            className="networth-line-real"
-            fill="none"
-            strokeWidth={2.5}
-            vectorEffect="non-scaling-stroke"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
+          {chart.zeroLinePath && (
+            <path
+              d={chart.zeroLinePath}
+              className="networth-line-missing"
+              fill="none"
+              strokeWidth={1.5}
+              strokeDasharray="3 3"
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          )}
+          {chart.realLinePath && (
+            <path
+              d={chart.realLinePath}
+              className="networth-line-real"
+              fill="none"
+              strokeWidth={2.5}
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          )}
         </svg>
       ) : (
         <p className="muted" style={{ padding: "1rem 0" }}>

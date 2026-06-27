@@ -596,7 +596,7 @@ def rules_create(session, user):
                 session.query(Transaction).filter(Transaction.id.in_(old_tx_ids)).all()
                 if old_tx_ids else []
             )
-            applied = rules_mod.reapply_after_edit(rule, old_txs, session)
+            applied = rules_mod.reapply_after_edit(rule, old_txs, session, force=True)
             session.commit()
         except Exception:
             log.exception("reapply_after_edit failed for rule_id=%s", rule.id)
@@ -613,7 +613,7 @@ def rules_create(session, user):
         # apply is recoverable on next sync — commit the rule first.
         session.commit()
         try:
-            applied = rules_mod.apply_rule_retroactively(rule, session)
+            applied = rules_mod.apply_rule_retroactively(rule, session, force=True)
             session.commit()
         except Exception:
             log.exception("apply_rule_retroactively failed for rule_id=%s", rule.id)
@@ -861,6 +861,15 @@ def api_overview(session, user):
     net_total = cash_total + investment_total - credit_total
     monthly_combined = spending_mod.monthly_cashflow(user, session, n_months=12)
     has_monthly_data = any(m["spend"] > 0 or m["income"] > 0 for m in monthly_combined)
+
+    # Refresh today's snapshot so the chart's latest point matches the cards
+    # — they otherwise diverge until the user hits Refresh (which runs /sync,
+    # which is the only other path that captures snapshots).
+    if user.items and not data.get("errors"):
+        try:
+            networth_mod.capture(user, session, data=data)
+        except Exception:
+            log.exception("inline networth.capture failed user_id=%s", user.id)
 
     snapshots = networth_mod.get_snapshots(user, session)
     now_ts = int(time.time())
